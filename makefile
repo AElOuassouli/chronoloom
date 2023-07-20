@@ -1,0 +1,26 @@
+PYTHON_FILES = `(find . -iname "*.py" -not -path "./.venv/*")`
+
+install: ## Install dependencies
+	poetry install 
+
+black: ## Run Black
+	poetry run black --check --quiet $(PYTHON_FILES)
+
+black-fix: ## Run Black with automated fix
+	poetry run black $(PYTHON_FILES)
+
+ruff: ## Run Ruff
+	poetry run ruff $(PYTHON_FILES)
+
+ruff-fix: ## Run Ruff with automated fix
+	poetry run ruff --fix $(PYTHON_FILES)
+
+code-fix: ## Run all automated code fix
+	make ruff-fix
+	make black-fix
+
+run-tests : ## Run all tests
+	poetry run pytest tests/ --cov=timewrap
+
+help:
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-25s\033[0m %s\n", $$1, $$2}'

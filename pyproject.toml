@@ -6,8 +6,12 @@ authors = ["Amine El Ouassouli <a.elouassouli@gmail.com>"]
 readme = "README.md"
 
 [tool.poetry.dependencies]
-python = "^3.7"
+python = "^3.10"
 
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.4.0"
+ruff = "^0.0.278"
+black = "^23.7.0"
 
 [build-system]
 requires = ["poetry-core"]

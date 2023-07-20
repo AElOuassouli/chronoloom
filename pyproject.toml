@@ -1,5 +1,5 @@
 [tool.poetry]
-name = "timewrap"
+name = "timewarp"
 version = "0.1.0"
 description = ""
 authors = ["Amine El Ouassouli <a.elouassouli@gmail.com>"]

@@ -1,6 +1,6 @@
 import pytest
 
-from timewrap.models import TimeInterval
+from timewarp.models import TimeInterval
 
 
 @pytest.fixture

@@ -1,4 +1,4 @@
-from timewrap.models import TimeInterval
+from timewarp.models import TimeInterval
 
 
 # TODO: implement this function

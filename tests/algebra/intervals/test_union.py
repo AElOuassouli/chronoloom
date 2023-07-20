@@ -1,5 +1,5 @@
-from timewrap.algebra import interval_union
-from timewrap.models import TimeInterval
+from timewarp.algebra import interval_union
+from timewarp.models import TimeInterval
 
 
 def test_interval_union(interval_a, interval_b):

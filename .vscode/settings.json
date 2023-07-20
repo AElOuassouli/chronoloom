@@ -1,0 +1,18 @@
+{
+    "ruff.interpreter": [
+        ".venv/bin/python3.10"
+    ],
+    "ruff.path": [
+        ".venv/bin/ruff"
+    ],
+    "ruff.run": "onType",
+    "editor.formatOnSave": true,
+    "[python]": {
+        "editor.defaultFormatter": "ms-python.black-formatter"
+    },
+    "python.formatting.provider": "none",
+    "editor.codeActionsOnSave": {
+        "source.fixAll": true,
+        "source.organizeImports": true
+    }
+}

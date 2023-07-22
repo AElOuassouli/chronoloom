@@ -1,14 +1,15 @@
 PYTHON_FILES = `(find . -iname "*.py" -not -path "./.venv/*")`
 
-setup-dev-end: ## Setup development environment
+setup-dev-endgit : ## Setup development environment
 	poetry install
 	poetry run pre-commit install
 
 install: ## Install dependencies
 	poetry install 
+	poetry run maturin develop
 
 black: ## Run Black
-	poetry run black --check --quiet $(PYTHON_FILES)
+	poetry run black --check $(PYTHON_FILES)
 
 black-fix: ## Run Black with automated fix
 	poetry run black $(PYTHON_FILES)

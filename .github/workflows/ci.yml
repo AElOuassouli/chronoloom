@@ -38,6 +38,7 @@ jobs:
           path: |
             .venv
             src/timewarp/timewarp.cpython-310-darwin.so
+            ~/.cargo
           key: ${{ runner.os }}-${{ env.PACKAGE_NAME }}-${{ env.PYTHON_VERSION }}-${{ hashFiles('poetry.lock') }}
 
       - name: Install Dependencies

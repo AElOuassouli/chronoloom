@@ -10,4 +10,3 @@ repos:
     rev: 22.10.0
     hooks:
       - id: black
-        args: [--fix, --exit-non-zero-on-fix]

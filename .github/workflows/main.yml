@@ -6,29 +6,39 @@ on:
     branches: [main]
   workflow_dispatch:
 
-# A workflow run is made up of one or more jobs that can run
-# sequentially or in parallel
+env:
+  PACKAGE_NAME: "timewarp"
+  PYTHON_VERSION: "3.10"
+  POETRY_VERSION: "1.4.2"
+  POETRY_INSTALL_URL: https://install.python-poetry.org | python3 -
 jobs:
-  # This workflow contains a single job called "build"
   ci:
-    # The type of runner that the job will run on
     runs-on: ubuntu-latest
 
-    # Steps represent a sequence of tasks that will be executed as
-    # part of the job
     steps:
-      - name: Set up Python 3.10
-        uses: actions/setup-python@v4
-        with:
-          python-version: "3.10"
-
-      - name: Install Poetry
-        run: curl -sSL https://install.python-poetry.org | python3 -
-
       - name: Check-out repository
         uses: actions/checkout@v3
 
-      - name: Install package
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Cache Dependencies
+        id: cache-dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cache/pypoetry
+            .venv
+          key: ${{ runner.os }}-${{ env.PACKAGE_NAME }}-${{ env.PYTHON_VERSION }}-${{ env.POETRY_VERSION }}-${{ hashFiles('poetry.lock') }}
+
+      - name: Install Poetry ${{ env.POETRY_VERSION }}
+        if: steps.cache-dependencies.outputs.cache-hit != 'true'
+        run: curl -sSL ${{ env.POETRY_INSTALL_URL}}
+
+      - name: Install Dependencies
+        if: steps.cache-dependencies.outputs.cache-hit != 'true'
         run: make install
 
       - name: Black

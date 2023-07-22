@@ -22,11 +22,11 @@ jobs:
         with:
           python-version: "3.10"
 
-      - name: Check-out repository
-        uses: actions/checkout@v3
-
       - name: Install Poetry
         run: curl -sSL https://install.python-poetry.org | python3 -
+
+      - name: Check-out repository
+        uses: actions/checkout@v3
 
       - name: Install package
         run: make install
@@ -35,7 +35,7 @@ jobs:
         run: make black
 
       - name: Ruff
-        uses: chartboost/ruff-action@v1
+        uses: make ruff
 
-      - name: Run Tests
+      - name: Tests
         run: make run-tests

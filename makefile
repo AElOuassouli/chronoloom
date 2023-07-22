@@ -10,10 +10,10 @@ black-fix: ## Run Black with automated fix
 	poetry run black $(PYTHON_FILES)
 
 ruff: ## Run Ruff
-	poetry run ruff $(PYTHON_FILES)
+	poetry run ruff check .
 
 ruff-fix: ## Run Ruff with automated fix
-	poetry run ruff --fix $(PYTHON_FILES)
+	poetry run ruff check --fix .
 
 code-fix: ## Run all automated code fix
 	make ruff-fix

@@ -24,18 +24,20 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
+      - name: Install poetry
+        uses: snok/install-poetry@v1
+        with:
+          version: ${{ env.POETRY_VERSION }}
+          virtualenvs-create: true
+          virtualenvs-in-project: true
+
       - name: Cache Dependencies
         id: cache-dependencies
         uses: actions/cache@v3
         with:
           path: |
-            ~/.cache/pypoetry
             .venv
-          key: ${{ runner.os }}-${{ env.PACKAGE_NAME }}-${{ env.PYTHON_VERSION }}-${{ env.POETRY_VERSION }}-${{ hashFiles('poetry.lock') }}
-
-      - name: Install Poetry ${{ env.POETRY_VERSION }}
-        if: steps.cache-dependencies.outputs.cache-hit != 'true'
-        run: curl -sSL ${{ env.POETRY_INSTALL_URL}}
+          key: ${{ runner.os }}-${{ env.PACKAGE_NAME }}-${{ env.PYTHON_VERSION }}-${{ hashFiles('poetry.lock') }}
 
       - name: Install Dependencies
         if: steps.cache-dependencies.outputs.cache-hit != 'true'

@@ -1,5 +1,9 @@
 PYTHON_FILES = `(find . -iname "*.py" -not -path "./.venv/*")`
 
+setup-dev-end: ## Setup development environment
+	poetry install
+	poetry run pre-commit install
+
 install: ## Install dependencies
 	poetry install 
 

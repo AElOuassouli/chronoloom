@@ -35,7 +35,7 @@ jobs:
         run: make black
 
       - name: Ruff
-        run: make ruff
+        uses: chartboost/ruff-action@v1
 
       - name: Run Tests
         run: make run-tests

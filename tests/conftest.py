@@ -1,5 +1,4 @@
 import pytest
-
 from timewarp.models import TimeInterval
 
 

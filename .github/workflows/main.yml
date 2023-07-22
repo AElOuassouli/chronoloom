@@ -1,0 +1,53 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  PACKAGE_NAME: "timewarp"
+  PYTHON_VERSION: "3.10"
+  POETRY_VERSION: "1.4.2"
+  POETRY_INSTALL_URL: https://install.python-poetry.org | python3 -
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check-out repository
+        uses: actions/checkout@v3
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install poetry
+        uses: snok/install-poetry@v1
+        with:
+          version: ${{ env.POETRY_VERSION }}
+          virtualenvs-create: true
+          virtualenvs-in-project: true
+
+      - name: Cache Dependencies
+        id: cache-dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            .venv
+          key: ${{ runner.os }}-${{ env.PACKAGE_NAME }}-${{ env.PYTHON_VERSION }}-${{ hashFiles('poetry.lock') }}
+
+      - name: Install Dependencies
+        if: steps.cache-dependencies.outputs.cache-hit != 'true'
+        run: make install
+
+      - name: Black
+        run: make black
+
+      - name: Ruff
+        run: make ruff
+
+      - name: Tests
+        run: make run-tests

@@ -1,3 +1,7 @@
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
 [tool.poetry]
 name = "timewarp"
 version = "0.1.0"
@@ -14,7 +18,12 @@ pytest = "^7.4.0"
 ruff = "^0.0.278"
 black = "^23.7.0"
 pytest-cov = "^4.1.0"
+pre-commit = "^3.3.3"
 
-[build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+[tool.ruff]
+target-version = "py310"
+
+select = ["I"]
+
+[tool.ruff.per-file-ignores]
+"__init__.py" = ["E402"]

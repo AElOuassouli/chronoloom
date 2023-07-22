@@ -35,7 +35,7 @@ jobs:
         run: make black
 
       - name: Ruff
-        uses: make ruff
+        run: make ruff
 
       - name: Tests
         run: make run-tests

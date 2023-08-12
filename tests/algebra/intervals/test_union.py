@@ -1,6 +1,6 @@
+from timewarp._rust_lib import sum_as_int, sum_as_string
 from timewarp.algebra import interval_union
 from timewarp.models import TimeInterval
-from timewarp.timewarp import sum_as_string
 
 
 def test_interval_union(interval_a, interval_b):
@@ -13,3 +13,4 @@ def test_interval_union(interval_a, interval_b):
     ]
 
     assert sum_as_string(1, 2) == "3"
+    assert sum_as_int(1, 2) == 3

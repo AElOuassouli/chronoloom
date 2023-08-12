@@ -31,18 +31,15 @@ jobs:
           virtualenvs-create: true
           virtualenvs-in-project: true
 
-      #- name: Cache Dependencies
-      #  id: cache-dependencies
-      #  uses: actions/cache@v3
-      #  with:
-      #    path: |
-      #      .venv
-      #      src/timewarp/timewarp.cpython-310-darwin.so
-      #      ~/.cargo
-      #    key: ${{ runner.os }}-${{ env.PACKAGE_NAME }}-${{ env.PYTHON_VERSION }}-${{ hashFiles('poetry.lock') }}
+      - name: Cache Dependencies
+        id: cache-dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            .venv
+          key: ${{ runner.os }}-${{ env.PACKAGE_NAME }}-${{ env.PYTHON_VERSION }}-${{ hashFiles('poetry.lock') }}
 
       - name: Install Dependencies
-        # if: steps.cache-dependencies.outputs.cache-hit != 'true'
         run: make install
 
       - name: Black

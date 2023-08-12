@@ -358,13 +358,13 @@ virtualenv = ">=20.10.0"
 
 [[package]]
 name = "pydantic"
-version = "2.1.0"
+version = "2.1.1"
 description = "Data validation using Python type hints"
 optional = false
 python-versions = ">=3.7"
 files = [
-    {file = "pydantic-2.1.0-py3-none-any.whl", hash = "sha256:868e036da92a263da265e34f2d1ff5ad1c24d23c93e7a1e7da50cb96fa8b05e8"},
-    {file = "pydantic-2.1.0.tar.gz", hash = "sha256:80a67e716158c813c9a6c0ce936ee24577e9fbd7453d159fc79850747a9aaa76"},
+    {file = "pydantic-2.1.1-py3-none-any.whl", hash = "sha256:43bdbf359d6304c57afda15c2b95797295b702948082d4c23851ce752f21da70"},
+    {file = "pydantic-2.1.1.tar.gz", hash = "sha256:22d63db5ce4831afd16e7c58b3192d3faf8f79154980d9397d9867254310ba4b"},
 ]
 
 [package.dependencies]
@@ -664,4 +664,4 @@ test = ["covdefaults (>=2.3)", "coverage (>=7.2.7)", "coverage-enable-subprocess
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.10"
-content-hash = "4e1d39d15d8182c9d7cb4cbfbbcc24554c4d2d92db853f946d2227f367276cb8"
+content-hash = "923f1cd9c4dc76ecf6630314e503295606d00b1a8092bc00d9a052138f3cec80"

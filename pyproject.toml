@@ -13,6 +13,7 @@ classifiers = [
 
 [tool.maturin]
 features = ["pyo3/extension-module"]
+module-name = "timewarp._rust_lib"
 
 [tool.poetry]
 name = "timewarp"

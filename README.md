@@ -1,4 +1,4 @@
-# timewarp
+# chronoloom
 
 Temporal data processing library — sequences and streams, with performance-critical
 operations implemented in Rust and exposed to Python via [pyo3](https://pyo3.rs)/[maturin](https://www.maturin.rs).

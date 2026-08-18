@@ -61,12 +61,11 @@ cache-keys = [
     # build-script output under rust/target/ (e.g. target-lexicon's host.rs),
     # a moving target that self-invalidates the cache on every build.
     { file = "rust/src/**/*.rs" },
-    # The binding crate path-depends on ../../chronoloom, so a core edit
-    # changes this package's compiled extension too. Without these entries an
-    # edit to the Rust core would silently not rebuild the .so in an editable
-    # install. Drop them when the dependency moves to a crates.io version.
-    { file = "../chronoloom/Cargo.toml" },
-    { file = "../chronoloom/src/**/*.rs" },
+    # No entries for ../chronoloom: the binding depends on the released crate
+    # from crates.io, not the sibling directory, so a local core edit cannot
+    # change this package's compiled extension. Bumping the requirement in
+    # rust/Cargo.toml is what invalidates the cache, and that file is listed
+    # above.
 ]
 
 [dependency-groups]

@@ -6,17 +6,16 @@ on:
   push:
     branches: [main]
     paths:
+      # No chronoloom/** here: the binding depends on the released crate from
+      # crates.io, so an edit to the sibling core directory cannot affect this
+      # build. It only matters once rust/Cargo.toml bumps the requirement.
       - "chronoloompy/**"
-      # The binding path-depends on the core, so a core edit changes this
-      # build too. Only chronoloom's own workflow can narrow to chronoloom/**.
-      - "chronoloom/**"
       - "rust-toolchain.toml"
       - ".github/workflows/ci-chronoloompy.yml"
   pull_request:
     branches: [main]
     paths:
       - "chronoloompy/**"
-      - "chronoloom/**"
       - "rust-toolchain.toml"
       - ".github/workflows/ci-chronoloompy.yml"
   workflow_dispatch:
@@ -82,10 +81,12 @@ jobs:
       - run: uv run --no-sync pytest --cov=chronoloompy --cov-report=xml
 
   sdist:
-    # The binding path-depends on a crate OUTSIDE this package directory, so
-    # maturin must vendor ../chronoloom into the sdist. That is its most
-    # bug-prone path and nothing else here would catch a regression: wheel
-    # builds always see the real sibling directory.
+    # Kept, though it is no longer the fragile case it was: now that the binding
+    # depends on the released chronoloom crate rather than the sibling
+    # directory, maturin has no path dep to vendor and the sdist is an ordinary
+    # one. This still proves an sdist install compiles the extension from source
+    # and can resolve chronoloom from crates.io -- the path every user without a
+    # matching wheel takes.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

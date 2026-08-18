@@ -10,11 +10,20 @@ Two independently versioned and published libraries:
   never depend on pyo3; `make lint` asserts this, because being usable without
   pyo3 is the entire point of the crate.
 - `chronoloompy/` — Python library, published to PyPI. Its pyo3 binding lives
-  in `chronoloompy/rust/` and path-depends on `chronoloom`.
+  in `chronoloompy/rust/` and depends on the **released `chronoloom` crate from
+  crates.io**, not on the sibling directory.
 
 New algebra belongs in `chronoloom` so Rust and Python share one
 implementation. `chronoloompy/rust` should stay thin adapters over it, not a
 second home for logic.
+
+Because the dependency is a registry version rather than a path, exposing new
+core algebra to Python is a two-step release: land and release the core
+(`chronoloom-v*`), then bump the `chronoloom` requirement in
+`chronoloompy/rust/Cargo.toml` and release the Python side. An edit to
+`chronoloom/` does **not** reach `chronoloompy` until you do — `make test` at
+the root will happily pass with the two out of sync, because each library is
+tested against what it actually builds against.
 
 ## Changelog
 

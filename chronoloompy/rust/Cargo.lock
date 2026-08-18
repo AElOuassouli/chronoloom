@@ -5,6 +5,8 @@ version = 4
 [[package]]
 name = "chronoloom"
 version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d6cbfa80d8354d98392aecc2dc769522f2eac756913c36f632e2cf5e1e8a645d"
 
 [[package]]
 name = "chronoloompy-ext"

@@ -36,8 +36,11 @@ test: ## Run Python and binding-crate tests
 build: ## Build a release wheel into dist/
 	uv build
 
-sdist: ## Build an sdist (exercises vendoring of the ../chronoloom path dep)
-	uv run maturin sdist --out dist
+# --manifest-path matches what CI passes. Without it maturin probes ./Cargo.toml
+# first and prints a spurious "manifest path does not exist" error before
+# falling back to the path configured in pyproject.toml.
+sdist: ## Build an sdist (the install path for platforms without a wheel)
+	uv run maturin sdist --out dist --manifest-path $(CARGO_MANIFEST)
 
 publish: ## Publish to PyPI (normally done by CI on a tag)
 	uv publish

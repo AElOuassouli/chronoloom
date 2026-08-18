@@ -1,35 +1,38 @@
-PYTHON_FILES = `(find . -iname "*.py" -not -path "./.venv/*")`
+.DEFAULT_GOAL := help
+CARGO_MANIFEST := rust/Cargo.toml
 
-setup-dev-endgit : ## Setup development environment
-	poetry install
-	poetry run pre-commit install
+setup: ## Create the dev environment and install git hooks
+	uv sync
+	uv run pre-commit install
 
-clean: ## Clean all build files
-	rm -rf .venv
-	rm ./poetry.lock
+install: ## Sync the environment (rebuilds the Rust extension if needed)
+	uv sync
 
-install: ## Install dependencies 
-	poetry install
-	poetry run maturin develop
+clean: ## Remove build artifacts and caches
+	rm -rf .venv rust/target dist .pytest_cache .ruff_cache .mypy_cache .coverage
+	rm -f src/timewarp/*.so
+	find . -name __pycache__ -type d -prune -exec rm -rf {} +
 
-black: ## Run Black
-	poetry run black --check $(PYTHON_FILES)
+fmt: ## Format Python and Rust
+	uv run ruff format .
+	uv run ruff check --fix .
+	cargo fmt --manifest-path $(CARGO_MANIFEST) --all
 
-black-fix: ## Run Black with automated fix
-	poetry run black $(PYTHON_FILES)
+lint: ## Lint and type-check everything
+	uv run ruff check .
+	uv run ruff format --check .
+	uv run mypy
+	cargo fmt --manifest-path $(CARGO_MANIFEST) --all -- --check
+	cargo clippy --manifest-path $(CARGO_MANIFEST) --all-targets -- -D warnings
 
-ruff: ## Run Ruff
-	poetry run ruff check .
+test: ## Run Python and Rust tests
+	uv run pytest --cov=timewarp
+	cargo test --manifest-path $(CARGO_MANIFEST)
 
-ruff-fix: ## Run Ruff with automated fix
-	poetry run ruff check --fix .
-
-code-fix: ## Run all automated code fix
-	make ruff-fix
-	make black-fix
-
-run-tests : ## Run all tests
-	poetry run pytest tests/ --cov=timewarp
+build: ## Build a release wheel into dist/
+	uv build
 
 help:
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-25s\033[0m %s\n", $$1, $$2}'
+
+.PHONY: setup install clean fmt lint test build help

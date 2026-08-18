@@ -1,15 +1,33 @@
+//! Interval algebra kernels.
+
 use pyo3::prelude::*;
 
+/// Intersect two half-open intervals `[start, end)`.
+///
+/// Returns `None` when the intervals do not overlap.
+#[pyfunction]
+pub fn intersection(a: (i64, i64), b: (i64, i64)) -> Option<(i64, i64)> {
+    let start = a.0.max(b.0);
+    let end = a.1.min(b.1);
+    (start < end).then_some((start, end))
+}
 
-[pyfunction]
-fn intersection(sequence_a: Vec<)
+#[cfg(test)]
+mod tests {
+    use super::intersection;
 
+    #[test]
+    fn overlapping_intervals_intersect() {
+        assert_eq!(intersection((0, 5), (3, 9)), Some((3, 5)));
+    }
 
+    #[test]
+    fn disjoint_intervals_do_not_intersect() {
+        assert_eq!(intersection((0, 2), (5, 9)), None);
+    }
 
-
-#[pymodule]
-fn algebra(_py: Python, m: &PyModule) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(sum_as_string, m)?)?;
-    m.add_function(wrap_pyfunction!(sum_as_int, m)?)?;
-    Ok(())
+    #[test]
+    fn touching_intervals_do_not_intersect() {
+        assert_eq!(intersection((0, 5), (5, 9)), None);
+    }
 }

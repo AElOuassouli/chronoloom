@@ -1,5 +1,4 @@
-# Unreleased
-
+# 0.1.1 - 2026-08-18
 ## Added
 
 - Test coverage for the Rust binding via `chronoloompy._core.intersection`,

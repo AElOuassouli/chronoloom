@@ -1,6 +1,6 @@
 [project]
 name = "chronoloompy"
-version = "0.1.0"
+version = "0.1.1"
 description = "Temporal data processing primitives, backed by the chronoloom Rust crate."
 readme = "README.md"
 requires-python = ">=3.12"

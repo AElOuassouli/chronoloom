@@ -4,8 +4,12 @@ setup-dev-endgit : ## Setup development environment
 	poetry install
 	poetry run pre-commit install
 
-install: ## Install dependencies
-	poetry install 
+clean: ## Clean all build files
+	rm -rf .venv
+	rm ./poetry.lock
+
+install: ## Install dependencies 
+	poetry install
 	poetry run maturin develop
 
 black: ## Run Black

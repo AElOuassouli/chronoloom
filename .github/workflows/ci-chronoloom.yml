@@ -9,18 +9,19 @@
 name: ci-chronoloom
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "chronoloom/**"
-      - "rust-toolchain.toml"
-      - ".github/workflows/ci-chronoloom.yml"
+  # No `push: branches: [main]`. A pull_request check already runs against the
+  # merge result, so re-running on main after the merge tests an identical tree.
+  # Release commits are pushed straight to main, and cd-chronoloom.yml calls
+  # this workflow directly (below) so they are still covered -- and there the
+  # result actually gates publishing, which a parallel push-triggered run could
+  # not do.
   pull_request:
     branches: [main]
     paths:
       - "chronoloom/**"
       - "rust-toolchain.toml"
       - ".github/workflows/ci-chronoloom.yml"
+  workflow_call:
   workflow_dispatch:
 
 permissions:

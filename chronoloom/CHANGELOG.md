@@ -1,5 +1,15 @@
 # Unreleased
 
+## Fixed
+
+- Releasing now runs the full CI suite before publishing. `cd-chronoloom` calls
+  `ci-chronoloom` as a reusable workflow and gates the crates.io publish on it;
+  previously a tag published whatever it pointed at without running a single
+  test. This replaces the standalone `cargo publish --dry-run` step, which the
+  reused `package` job already performs.
+- `ci-chronoloom` no longer runs on pushes to `main`. A pull request check
+  already tests the merge result, so the post-merge run duplicated it.
+
 ## Added
 
 - Initial standalone crate, extracted from the combined `timewarp` crate that

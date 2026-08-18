@@ -101,10 +101,16 @@ def git(*args: str, capture: bool = True) -> str:
     return (result.stdout or "").strip()
 
 
+# Trailing horizontal whitespace only. `\s*$` would be wrong here: \s matches
+# newlines, and in multiline mode it happily consumes them to reach a later `$`,
+# so a heading match would swallow the blank line that follows it.
+EOL = r"[^\S\n]*$"
+
+
 def version_pattern(table: str) -> re.Pattern[str]:
     """Match the `version = "..."` belonging to `[table]`, and nothing else."""
     return re.compile(
-        rf'(?ms)^\[{re.escape(table)}\]\s*$.*?^version\s*=\s*"(?P<version>[^"]+)"',
+        rf'(?ms)^\[{re.escape(table)}\]{EOL}.*?^version\s*=\s*"(?P<version>[^"]+)"',
     )
 
 
@@ -141,7 +147,7 @@ def write_version(library: Library, new_version: str) -> None:
 def close_changelog(library: Library, new_version: str, today: str) -> None:
     """Rename the `# Unreleased` heading to this version, dated."""
     text = library.changelog.read_text(encoding="utf-8")
-    heading = re.compile(rf"(?m)^#\s*{UNRELEASED}\s*$")
+    heading = re.compile(rf"(?m)^#[^\S\n]*{UNRELEASED}{EOL}")
     if heading.search(text) is None:
         fail(
             f"{library.changelog} has no '# {UNRELEASED}' section. "

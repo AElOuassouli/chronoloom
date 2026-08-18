@@ -79,6 +79,16 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: python3 .github/scripts/changelog.py check chronoloompy/CHANGELOG.md "$VERSION"
 
+  # The full CI suite -- ruff, mypy, clippy, the pytest matrix, and the sdist
+  # round-trip -- reused rather than reimplemented, so what gates a release is
+  # exactly what gates a pull request. Publishing without this would ship
+  # whatever the tag points at, tested or not.
+  ci:
+    needs: verify
+    uses: ./.github/workflows/ci-chronoloompy.yml
+    permissions:
+      contents: read
+
   # Targets are limited to the ones a chronoloompy wheel is actually usable on.
   # The runtime dependencies in pyproject.toml (numpy, pydantic) ship no wheels
   # for x86, armv7, s390x or ppc64le, so an install there fails at dependency
@@ -206,7 +216,7 @@ jobs:
           path: chronoloompy/dist
 
   publish:
-    needs: [verify, linux, musllinux, windows, macos, sdist]
+    needs: [verify, ci, linux, musllinux, windows, macos, sdist]
     if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
     # Requires a manual approval, and scopes the PyPI trusted publisher to this

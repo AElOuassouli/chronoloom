@@ -77,14 +77,18 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: python3 .github/scripts/changelog.py check chronoloom/CHANGELOG.md "$VERSION"
 
-      # Also covered by ci-chronoloom's package job; repeated here because that
-      # workflow is path-filtered and may not have run on this commit.
-      - name: Dry-run the publish
-        working-directory: chronoloom
-        run: cargo publish --dry-run
+  # The full CI suite -- fmt, clippy, the no-pyo3 assertion, tests, and the
+  # crates.io packaging dry-run -- reused rather than reimplemented, so what
+  # gates a release is exactly what gates a pull request. Publishing without
+  # this would ship whatever the tag points at, tested or not.
+  ci:
+    needs: verify
+    uses: ./.github/workflows/ci-chronoloom.yml
+    permissions:
+      contents: read
 
   publish:
-    needs: verify
+    needs: [verify, ci]
     if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
     # Requires a manual approval, and scopes the crates.io trusted publisher to

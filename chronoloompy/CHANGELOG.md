@@ -1,4 +1,20 @@
+# Unreleased
+
+## Fixed
+
+- Releasing now runs the full CI suite before publishing. `cd-chronoloompy`
+  calls `ci-chronoloompy` as a reusable workflow and gates the PyPI publish on
+  it; previously a tag published whatever it pointed at without running a single
+  test.
+- `ci-chronoloompy` no longer runs on pushes to `main`. A pull request check
+  already tests the merge result, so the post-merge run duplicated it — and on a
+  release push it produced a second, confusingly identical run that could not
+  gate anything.
+- The release script no longer deletes the blank line after the changelog
+  heading it rewrites (`\s*` matched the following newline).
+
 # 0.1.1 - 2026-08-18
+
 ## Added
 
 - Test coverage for the Rust binding via `chronoloompy._core.intersection`,

@@ -1,0 +1,75 @@
+# CI for the standalone Rust library. Split from the chronoloompy workflow so
+# each project's `paths:` filter is native to GitHub Actions -- per-job
+# filtering inside a single workflow would need a third-party action.
+#
+# NOTE: a filtered-out workflow reports no checks at all. If branch protection
+# is enabled, do not mark these jobs as required directly; require an
+# always-running aggregator instead, or protection will block PRs that touch
+# only the Python side.
+name: ci-chronoloom
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "chronoloom/**"
+      - "rust-toolchain.toml"
+      - ".github/workflows/ci-chronoloom.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "chronoloom/**"
+      - "rust-toolchain.toml"
+      - ".github/workflows/ci-chronoloom.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: "1"
+
+defaults:
+  run:
+    working-directory: chronoloom
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: chronoloom
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --all-targets -- -D warnings
+      # This crate's entire value is that Rust consumers get it without pyo3,
+      # which one convenience #[pyfunction] would silently undo.
+      - name: Assert the crate stays free of pyo3
+        run: |
+          if cargo tree --quiet --edges normal | grep -q pyo3; then
+            echo "::error::pyo3 leaked into chronoloom's dependency tree"
+            echo "::error::bindings belong in chronoloompy/rust, not here"
+            exit 1
+          fi
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: chronoloom
+      - run: cargo test
+
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: chronoloom
+      # Catches broken crates.io metadata before a tag makes the version
+      # permanent -- published versions can never be reused.
+      - run: cargo publish --dry-run

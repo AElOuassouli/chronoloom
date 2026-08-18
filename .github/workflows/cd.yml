@@ -1,14 +1,19 @@
-# Generated from `maturin generate-ci github --manifest-path rust/Cargo.toml`,
-# then pruned: the free-threaded (python3.14t) build steps were removed since
-# this project ships abi3 (CPython-only, no free-threading) wheels, and action
-# refs were pinned to their current major versions. Re-run the generator and
-# re-apply these two changes when maturin's template changes.
+# Wheel matrix generated from `maturin generate-ci github`, then pruned: the
+# free-threaded (python3.14t) build steps were removed since this project ships
+# abi3 (CPython-only, no free-threading) wheels, and action refs were pinned to
+# their current major versions. Re-run the generator and re-apply these changes
+# when maturin's template changes.
+#
+# The two libraries version and release independently, so tags are prefixed:
+#   chronoloom-v0.1.0    -> publishes the Rust crate to crates.io
+#   chronoloompy-v0.1.0  -> builds wheels and publishes to PyPI
+# An unprefixed `v*` tag intentionally does nothing.
 name: cd
 
 on:
   push:
     branches: [main]
-    tags: ["v*"]
+    tags: ["chronoloom-v*", "chronoloompy-v*"]
   pull_request:
   workflow_dispatch:
 
@@ -41,6 +46,7 @@ jobs:
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
+          working-directory: chronoloompy
           target: ${{ matrix.platform.target }}
           args: --release --out dist --manifest-path rust/Cargo.toml
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
@@ -49,7 +55,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: wheels-linux-${{ matrix.platform.target }}
-          path: dist
+          path: chronoloompy/dist
 
   musllinux:
     runs-on: ${{ matrix.platform.runner }}
@@ -72,6 +78,7 @@ jobs:
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
+          working-directory: chronoloompy
           target: ${{ matrix.platform.target }}
           args: --release --out dist --manifest-path rust/Cargo.toml
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
@@ -80,7 +87,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: wheels-musllinux-${{ matrix.platform.target }}
-          path: dist
+          path: chronoloompy/dist
 
   windows:
     runs-on: ${{ matrix.platform.runner }}
@@ -105,6 +112,7 @@ jobs:
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
+          working-directory: chronoloompy
           target: ${{ matrix.platform.target }}
           args: --release --out dist --manifest-path rust/Cargo.toml
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
@@ -112,7 +120,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: wheels-windows-${{ matrix.platform.target }}
-          path: dist
+          path: chronoloompy/dist
 
   macos:
     runs-on: ${{ matrix.platform.runner }}
@@ -131,6 +139,7 @@ jobs:
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
+          working-directory: chronoloompy
           target: ${{ matrix.platform.target }}
           args: --release --out dist --manifest-path rust/Cargo.toml
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
@@ -138,7 +147,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: wheels-macos-${{ matrix.platform.target }}
-          path: dist
+          path: chronoloompy/dist
 
   sdist:
     runs-on: ubuntu-latest
@@ -147,18 +156,19 @@ jobs:
       - name: Build sdist
         uses: PyO3/maturin-action@v1
         with:
+          working-directory: chronoloompy
           command: sdist
           args: --out dist --manifest-path rust/Cargo.toml
       - name: Upload sdist
         uses: actions/upload-artifact@v7
         with:
           name: wheels-sdist
-          path: dist
+          path: chronoloompy/dist
 
-  release:
-    name: Release
+  release-pypi:
+    name: Release chronoloompy to PyPI
     runs-on: ubuntu-latest
-    if: ${{ startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' }}
+    if: ${{ startsWith(github.ref, 'refs/tags/chronoloompy-v') || github.event_name == 'workflow_dispatch' }}
     needs: [linux, musllinux, windows, macos, sdist]
     permissions:
       id-token: write # trusted publishing to PyPI
@@ -171,8 +181,31 @@ jobs:
         with:
           subject-path: "wheels-*/*"
       - name: Install uv
-        if: ${{ startsWith(github.ref, 'refs/tags/') }}
+        if: ${{ startsWith(github.ref, 'refs/tags/chronoloompy-v') }}
         uses: astral-sh/setup-uv@v10.0.1
       - name: Publish to PyPI
-        if: ${{ startsWith(github.ref, 'refs/tags/') }}
+        if: ${{ startsWith(github.ref, 'refs/tags/chronoloompy-v') }}
         run: uv publish --trusted-publishing always 'wheels-*/*'
+
+  release-crates-io:
+    name: Release chronoloom to crates.io
+    runs-on: ubuntu-latest
+    # Deliberately independent of the wheel chain: the crate and the wheels are
+    # separate artifacts on separate tags, so neither blocks the other.
+    if: ${{ startsWith(github.ref, 'refs/tags/chronoloom-v') }}
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: chronoloom
+    steps:
+      - uses: actions/checkout@v7
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: chronoloom
+      # Requires a CARGO_REGISTRY_TOKEN repository secret (Settings > Secrets
+      # and variables > Actions). crates.io versions are permanent, so the
+      # ci-chronoloom `package` job dry-runs this on every core change.
+      - run: cargo publish --token "$CARGO_REGISTRY_TOKEN"
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}

@@ -20,26 +20,35 @@ repos:
   # Everything else runs through `uv run` / `cargo` so uv.lock and
   # rust-toolchain.toml stay the single source of truth for versions -- no
   # separate `rev:` pin to drift out of sync with pyproject.toml.
+  #
+  # pre-commit always runs hooks from the repo root, but the Python project now
+  # lives in chronoloompy/. Hooks that receive filenames use `--project` (sets
+  # the uv project WITHOUT changing cwd, so the repo-root-relative paths
+  # pre-commit passes stay valid); hooks that take no filenames use
+  # `--directory` (changes cwd, so their config's relative paths resolve).
   - repo: local
     hooks:
       # ---------- commit stage: formatting only, must stay fast ----------
       - id: ruff-check
         name: ruff check (autofix)
-        entry: uv run --no-sync ruff check --force-exclude --fix --exit-non-zero-on-fix
+        entry:
+          uv run --project chronoloompy --no-sync ruff check --force-exclude
+          --fix --exit-non-zero-on-fix
         language: system
         types_or: [python, pyi]
         require_serial: true
 
       - id: ruff-format
         name: ruff format
-        entry: uv run --no-sync ruff format --force-exclude
+        entry:
+          uv run --project chronoloompy --no-sync ruff format --force-exclude
         language: system
         types_or: [python, pyi]
         require_serial: true
 
       - id: cargo-fmt
         name: cargo fmt
-        entry: cargo fmt --manifest-path rust/Cargo.toml --all
+        entry: make fmt-rust
         language: system
         types: [rust]
         pass_filenames: false
@@ -47,7 +56,7 @@ repos:
       # ---------- push stage: correctness, may be slow ----------
       - id: cargo-clippy
         name: cargo clippy
-        entry: cargo clippy --manifest-path rust/Cargo.toml --all-targets -- -D warnings
+        entry: make lint-rust
         language: system
         types: [rust]
         pass_filenames: false
@@ -55,7 +64,7 @@ repos:
 
       - id: cargo-test
         name: cargo test
-        entry: cargo test --manifest-path rust/Cargo.toml
+        entry: make test-rust
         language: system
         types: [rust]
         pass_filenames: false
@@ -63,7 +72,7 @@ repos:
 
       - id: mypy
         name: mypy (strict)
-        entry: uv run --frozen mypy
+        entry: uv run --directory chronoloompy --frozen mypy
         language: system
         types_or: [python, pyi]
         pass_filenames: false
@@ -71,7 +80,7 @@ repos:
 
       - id: pytest
         name: pytest
-        entry: uv run --frozen pytest
+        entry: uv run --directory chronoloompy --frozen pytest
         language: system
         pass_filenames: false
         always_run: true

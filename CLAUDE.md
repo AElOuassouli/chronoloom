@@ -30,9 +30,28 @@ Never run `git commit` or `git push`. The user runs these themselves.
 
 ## Releasing
 
-Release tags are prefixed per library: `chronoloom-v*` publishes the crate to
-crates.io, `chronoloompy-v*` builds wheels and publishes to PyPI. An unprefixed
-`v*` tag does nothing.
+Release tags are prefixed per library and each drives its own workflow:
+`chronoloom-v*` publishes the crate to crates.io via
+`.github/workflows/cd-chronoloom.yml`, `chronoloompy-v*` builds wheels and
+publishes to PyPI via `.github/workflows/cd-chronoloompy.yml`. An unprefixed `v*`
+tag does nothing. Both publish with Trusted Publishing (OIDC) — there are no
+registry tokens in repository secrets — and both pause for a manual approval in
+the `crates-io` / `pypi` GitHub environments.
+
+To cut a release:
+
+1. Bump the version in `chronoloom/Cargo.toml` **or**
+   `chronoloompy/pyproject.toml` (the version in `chronoloompy/rust/Cargo.toml`
+   is inert and is not the release version).
+2. In that library's `CHANGELOG.md`, rename the `# Unreleased` heading to
+   `# <version> - <YYYY-MM-DD>`.
+3. Land it on `main`, then tag that commit and push the tag.
+
+Before publishing, the workflow refuses the release if the tagged commit is not
+on `main`, if the tag does not match the manifest version, or if the changelog
+has no section for that version. That section also becomes the GitHub Release
+notes, so keep the `# <version>` / `## Added|Fixed|Removed` shape intact —
+`.github/scripts/changelog.py` parses it.
 
 ## Before finishing a task or plan
 

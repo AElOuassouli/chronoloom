@@ -1,5 +1,8 @@
 [package]
 name = "chronoloompy-ext"
+# NOT the release version. maturin builds the wheel from [project].version in
+# ../pyproject.toml, which is also what the cd-chronoloompy tag guard checks.
+# This one is inert -- the crate is never published anywhere.
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.83"

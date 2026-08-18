@@ -7,6 +7,18 @@ PROJECTS := chronoloom chronoloompy
 CORE_MANIFEST := chronoloom/Cargo.toml
 EXT_MANIFEST := chronoloompy/rust/Cargo.toml
 
+# pyo3's build script locates its interpreter from $VIRTUAL_ENV, so whatever
+# venv happens to be active in the caller's shell hijacks the binding build --
+# including a stale one still pointing at a path that no longer exists (an
+# activated shell keeps its old export across a directory rename). PYO3_PYTHON
+# takes precedence over $VIRTUAL_ENV, so pin it to the Python library's own
+# venv. Empty when there is no venv -- the Rust-only CI jobs never create one
+# and must keep using pyo3's own discovery.
+EXT_VENV_PYTHON := $(wildcard $(CURDIR)/chronoloompy/.venv/bin/python)
+ifneq ($(EXT_VENV_PYTHON),)
+export PYO3_PYTHON := $(EXT_VENV_PYTHON)
+endif
+
 define for_each
 	@for p in $(PROJECTS); do \
 		printf '\033[1m==> %s\033[0m\n' "$$p"; \

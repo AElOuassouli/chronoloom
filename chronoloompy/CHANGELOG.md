@@ -16,6 +16,10 @@
   shared with Rust consumers instead of being locked inside the binding layer.
 - `pyproject.toml` metadata consolidated into a single PEP 621 `[project]` table;
   runtime dependencies now actually ship in built wheels.
+- The make targets that build the binding now pin `PYO3_PYTHON` to this
+  package's own `.venv`. pyo3 otherwise resolves its interpreter from
+  `$VIRTUAL_ENV`, so an unrelated -- or stale, after a directory rename --
+  activated venv would break `cargo clippy`/`cargo test` and the pre-push hooks.
 
 ## Removed
 

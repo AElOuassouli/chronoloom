@@ -1,6 +1,14 @@
 .DEFAULT_GOAL := help
 CARGO_MANIFEST := rust/Cargo.toml
 
+# See the note in the repo-root makefile: pin pyo3 to this package's venv so an
+# unrelated or stale $VIRTUAL_ENV cannot hijack the binding build. Inherited
+# from the root makefile when invoked via `make -C`, set here for direct use.
+VENV_PYTHON := $(wildcard $(CURDIR)/.venv/bin/python)
+ifneq ($(VENV_PYTHON),)
+export PYO3_PYTHON := $(VENV_PYTHON)
+endif
+
 install: ## Sync the environment (rebuilds the Rust extension if needed)
 	uv sync
 

@@ -8,6 +8,9 @@
   (Python and Rust) on push.
 - Rust unit tests and a `cargo clippy`/`cargo test` CI job.
 - mypy strict type checking.
+- `make release-fix` / `release-minor` / `release-major` (and
+  `make chronoloompy-release-*` from the repo root) bump the version, date the
+  changelog, refresh `uv.lock`, then commit and tag. Nothing is pushed.
 - Release automation: a `chronoloompy-v*` tag builds the wheel matrix and
   publishes to PyPI via Trusted Publishing (OIDC, no stored token) after a manual
   approval, attaching a build-provenance attestation and cutting a GitHub Release
@@ -19,8 +22,15 @@
 - The Rust core is now the standalone [`chronoloom`](../chronoloom) crate,
   consumed through a thin pyo3 binding in `rust/`. Algebra implemented there is
   shared with Rust consumers instead of being locked inside the binding layer.
+  The binding depends on `chronoloom = "0.1"` from crates.io rather than on the
+  sibling directory, so every wheel contains core code matching a published
+  crate version and the sdist no longer vendors an out-of-tree path dependency.
 - `pyproject.toml` metadata consolidated into a single PEP 621 `[project]` table;
   runtime dependencies now actually ship in built wheels.
+- `maturin sdist` no longer prints a spurious `manifest path does not exist`
+  error or a missing-metadata warning. The `sdist` make target now passes
+  `--manifest-path` as CI does, and the binding crate declares the package
+  metadata `cargo package --list` expects.
 - The make targets that build the binding now pin `PYO3_PYTHON` to this
   package's own `.venv`. pyo3 otherwise resolves its interpreter from
   `$VIRTUAL_ENV`, so an unrelated -- or stale, after a directory rename --

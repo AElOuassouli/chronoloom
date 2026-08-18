@@ -58,7 +58,30 @@ test-rust: ## Run both crates' Rust tests
 	cargo test --manifest-path $(CORE_MANIFEST)
 	cargo test --manifest-path $(EXT_MANIFEST)
 
+# Releases deliberately do NOT use for_each. The two libraries are versioned and
+# tagged independently, and a tag releases exactly one of them, so every target
+# here names its library. Each bumps the version, dates the changelog's
+# Unreleased section, refreshes the lockfile, then commits and tags -- without
+# pushing. See .github/scripts/release.py.
+chronoloom-release-fix: ## Release chronoloom: bump patch, commit and tag
+	$(MAKE) --no-print-directory -C chronoloom release-fix
+
+chronoloom-release-minor: ## Release chronoloom: bump minor, commit and tag
+	$(MAKE) --no-print-directory -C chronoloom release-minor
+
+chronoloom-release-major: ## Release chronoloom: bump major, commit and tag
+	$(MAKE) --no-print-directory -C chronoloom release-major
+
+chronoloompy-release-fix: ## Release chronoloompy: bump patch, commit and tag
+	$(MAKE) --no-print-directory -C chronoloompy release-fix
+
+chronoloompy-release-minor: ## Release chronoloompy: bump minor, commit and tag
+	$(MAKE) --no-print-directory -C chronoloompy release-minor
+
+chronoloompy-release-major: ## Release chronoloompy: bump major, commit and tag
+	$(MAKE) --no-print-directory -C chronoloompy release-major
+
 help:
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-25s\033[0m %s\n", $$1, $$2}'
 
-.PHONY: setup fmt lint test clean fmt-rust lint-rust test-rust help
+.PHONY: setup fmt lint test clean fmt-rust lint-rust test-rust chronoloom-release-fix chronoloom-release-minor chronoloom-release-major chronoloompy-release-fix chronoloompy-release-minor chronoloompy-release-major help

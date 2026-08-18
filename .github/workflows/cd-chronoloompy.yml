@@ -1,0 +1,262 @@
+# Release workflow for the Python library. Split from cd-chronoloom.yml so a
+# crate release does not build wheels and a wheel release does not touch
+# crates.io -- the tag prefix alone decides which library is being released.
+#
+#   chronoloompy-v0.1.0  ->  this workflow  ->  PyPI
+#
+# Authentication is PyPI Trusted Publishing (OIDC), scoped to the `pypi`
+# environment below. No API token is stored anywhere.
+#
+# The wheel matrix started from `maturin generate-ci github` and was pruned
+# twice: free-threaded (python3.14t) steps are gone because this project ships
+# abi3 wheels, and the exotic targets are gone -- see the comment on the linux
+# job. Re-run the generator and re-apply both cuts when maturin's template
+# changes.
+#
+# There is deliberately no `pull_request` trigger. CD releases; CI proves the
+# code works. A cross-platform build failure is cheap here because every wheel
+# job is a `needs:` of publish, so it stops the release before anything reaches
+# PyPI -- delete the tag, fix, re-tag. Use workflow_dispatch to run this matrix
+# on demand before tagging.
+name: cd-chronoloompy
+
+on:
+  push:
+    tags: ["chronoloompy-v*"]
+  workflow_dispatch:
+
+# No cancel-in-progress: interrupting a release halfway through is worse than
+# running two of them.
+concurrency: cd-chronoloompy-${{ github.ref }}
+
+permissions:
+  contents: read
+
+jobs:
+  # Everything that can reject a bad release, before anything becomes permanent.
+  # A PyPI filename can never be reused, even after deleting the release.
+  verify:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # merge-base needs real history; the default shallow clone has none.
+          fetch-depth: 0
+
+      # The environment's "deployment branches and tags" rule matches the tag's
+      # own name and says nothing about which branch the commit lives on, so
+      # this is a separate control, not a duplicate of it.
+      - name: Refuse to release a commit that is not on main
+        if: github.ref_type == 'tag'
+        run: |
+          git fetch --no-tags --quiet origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::$GITHUB_REF_NAME points at a commit that is not on main"
+            exit 1
+          fi
+
+      # Without this a mis-typed tag publishes whatever version pyproject.toml
+      # happens to hold, under a tag that claims otherwise. Note that the
+      # version in chronoloompy/rust/Cargo.toml is NOT the release version --
+      # maturin reads [project].version from pyproject.toml.
+      - name: Check the tag matches pyproject.toml
+        id: version
+        if: github.ref_type == 'tag'
+        run: |
+          tag="${GITHUB_REF_NAME#chronoloompy-v}"
+          have=$(python3 -c 'import tomllib, pathlib; print(tomllib.loads(pathlib.Path("chronoloompy/pyproject.toml").read_text())["project"]["version"])')
+          if [ "$tag" != "$have" ]; then
+            echo "::error::tag says $tag but chronoloompy/pyproject.toml says $have"
+            exit 1
+          fi
+          echo "version=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Check the changelog has an entry for this version
+        if: github.ref_type == 'tag'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: python3 .github/scripts/changelog.py check chronoloompy/CHANGELOG.md "$VERSION"
+
+  # Targets are limited to the ones a chronoloompy wheel is actually usable on.
+  # The runtime dependencies in pyproject.toml (numpy, pydantic) ship no wheels
+  # for x86, armv7, s390x or ppc64le, so an install there fails at dependency
+  # resolution however good our own wheel is. abi3-py312 means one wheel per
+  # target covers every supported Python.
+  linux:
+    needs: verify
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        target: [x86_64, aarch64]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          working-directory: chronoloompy
+          target: ${{ matrix.target }}
+          args: --release --out dist --manifest-path rust/Cargo.toml
+          sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
+          manylinux: auto
+      - uses: actions/upload-artifact@v7
+        with:
+          name: wheels-linux-${{ matrix.target }}
+          path: chronoloompy/dist
+
+  musllinux:
+    needs: verify
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        target: [x86_64, aarch64]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          working-directory: chronoloompy
+          target: ${{ matrix.target }}
+          args: --release --out dist --manifest-path rust/Cargo.toml
+          sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
+          manylinux: musllinux_1_2
+      - uses: actions/upload-artifact@v7
+        with:
+          name: wheels-musllinux-${{ matrix.target }}
+          path: chronoloompy/dist
+
+  windows:
+    needs: verify
+    runs-on: ${{ matrix.platform.runner }}
+    strategy:
+      matrix:
+        platform:
+          - runner: windows-latest
+            target: x64
+            python_arch: x64
+          - runner: windows-11-arm
+            target: aarch64
+            python_arch: arm64
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+          architecture: ${{ matrix.platform.python_arch }}
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          working-directory: chronoloompy
+          target: ${{ matrix.platform.target }}
+          args: --release --out dist --manifest-path rust/Cargo.toml
+          sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
+      - uses: actions/upload-artifact@v7
+        with:
+          name: wheels-windows-${{ matrix.platform.target }}
+          path: chronoloompy/dist
+
+  macos:
+    needs: verify
+    runs-on: ${{ matrix.platform.runner }}
+    strategy:
+      matrix:
+        platform:
+          - runner: macos-15-intel
+            target: x86_64
+          - runner: macos-latest
+            target: aarch64
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          working-directory: chronoloompy
+          target: ${{ matrix.platform.target }}
+          args: --release --out dist --manifest-path rust/Cargo.toml
+          sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
+      - uses: actions/upload-artifact@v7
+        with:
+          name: wheels-macos-${{ matrix.platform.target }}
+          path: chronoloompy/dist
+
+  sdist:
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build sdist
+        uses: PyO3/maturin-action@v1
+        with:
+          working-directory: chronoloompy
+          command: sdist
+          args: --out dist --manifest-path rust/Cargo.toml
+      - uses: actions/upload-artifact@v7
+        with:
+          name: wheels-sdist
+          path: chronoloompy/dist
+
+  publish:
+    needs: [verify, linux, musllinux, windows, macos, sdist]
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    # Requires a manual approval, and scopes the PyPI trusted publisher to this
+    # job. A wrong tag is declined here rather than yanked later.
+    environment: pypi
+    permissions:
+      id-token: write # OIDC, for both trusted publishing and attestation
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: wheels-*
+          merge-multiple: true
+          path: dist
+      - name: Generate build provenance attestation
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: "dist/*"
+      - uses: astral-sh/setup-uv@v10.0.1
+      # `--trusted-publishing always` fails loudly if OIDC is not configured,
+      # rather than silently falling back to looking for a token.
+      - name: Publish to PyPI
+        run: uv publish --trusted-publishing always dist/*
+
+  release:
+    needs: [verify, publish]
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the GitHub Release
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: wheels-*
+          merge-multiple: true
+          path: dist
+      - name: Build release notes from the changelog
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          python3 .github/scripts/changelog.py extract \
+            chronoloompy/CHANGELOG.md "$VERSION" > notes.md
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "chronoloompy $VERSION" \
+            --notes-file notes.md \
+            --verify-tag \
+            dist/*

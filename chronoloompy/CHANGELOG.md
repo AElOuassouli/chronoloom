@@ -8,6 +8,11 @@
   (Python and Rust) on push.
 - Rust unit tests and a `cargo clippy`/`cargo test` CI job.
 - mypy strict type checking.
+- Release automation: a `chronoloompy-v*` tag builds the wheel matrix and
+  publishes to PyPI via Trusted Publishing (OIDC, no stored token) after a manual
+  approval, attaching a build-provenance attestation and cutting a GitHub Release
+  from this changelog. The tag is rejected unless its commit is on `main`, its
+  version matches `pyproject.toml`, and this file documents it.
 
 ## Fixed
 
@@ -33,10 +38,10 @@
 - pyo3 0.19 / GIL-Ref API (upgraded to 0.29 with the `Bound` API and abi3, so one
   wheel now covers all supported Python versions instead of one per version).
 
-# (v.0.0.1)
+# 0.0.1
 
 - Time point and interval models
 
-# version v0.0.0
+# 0.0.0
 
 - Sets up the project.

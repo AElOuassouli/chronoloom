@@ -1,0 +1,130 @@
+# Release workflow for the standalone Rust crate. Split from cd-chronoloompy.yml
+# so a crate release does not drag the whole wheel matrix along with it -- the
+# tag prefix alone decides which library is being released.
+#
+#   chronoloom-v0.1.0  ->  this workflow  ->  crates.io
+#
+# Authentication is Trusted Publishing (OIDC): rust-lang/crates-io-auth-action
+# exchanges the job's identity token for a 30-minute crates.io token, so there is
+# no long-lived CARGO_REGISTRY_TOKEN secret sitting on a public repository.
+# crates.io has no equivalent of PyPI's "pending publisher", so the crate had to
+# be published manually once before the trusted publisher could be configured.
+name: cd-chronoloom
+
+on:
+  push:
+    tags: ["chronoloom-v*"]
+  workflow_dispatch:
+
+# No cancel-in-progress: interrupting a release halfway through is worse than
+# running two of them.
+concurrency: cd-chronoloom-${{ github.ref }}
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: "1"
+
+jobs:
+  # Everything that can reject a bad release, before anything becomes permanent.
+  # crates.io versions can never be reused or replaced.
+  verify:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # merge-base needs real history; the default shallow clone has none.
+          fetch-depth: 0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: chronoloom
+
+      # The environment's "deployment branches and tags" rule matches the tag's
+      # own name and says nothing about which branch the commit lives on, so
+      # this is a separate control, not a duplicate of it.
+      - name: Refuse to release a commit that is not on main
+        if: github.ref_type == 'tag'
+        run: |
+          git fetch --no-tags --quiet origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::$GITHUB_REF_NAME points at a commit that is not on main"
+            exit 1
+          fi
+
+      # Without this a mis-typed tag publishes whatever version the manifest
+      # happens to hold, under a tag that claims otherwise -- unfixable after
+      # the fact.
+      - name: Check the tag matches Cargo.toml
+        id: version
+        if: github.ref_type == 'tag'
+        run: |
+          tag="${GITHUB_REF_NAME#chronoloom-v}"
+          have=$(cargo metadata --manifest-path chronoloom/Cargo.toml --no-deps \
+                 --format-version 1 | jq -r '.packages[] | select(.name=="chronoloom") | .version')
+          if [ "$tag" != "$have" ]; then
+            echo "::error::tag says $tag but chronoloom/Cargo.toml says $have"
+            exit 1
+          fi
+          echo "version=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Check the changelog has an entry for this version
+        if: github.ref_type == 'tag'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: python3 .github/scripts/changelog.py check chronoloom/CHANGELOG.md "$VERSION"
+
+      # Also covered by ci-chronoloom's package job; repeated here because that
+      # workflow is path-filtered and may not have run on this commit.
+      - name: Dry-run the publish
+        working-directory: chronoloom
+        run: cargo publish --dry-run
+
+  publish:
+    needs: verify
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    # Requires a manual approval, and scopes the crates.io trusted publisher to
+    # this job. A wrong tag is declined here rather than un-published later.
+    environment: crates-io
+    permissions:
+      id-token: write # OIDC token exchanged for a crates.io token
+    steps:
+      - uses: actions/checkout@v7
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: chronoloom
+      - uses: rust-lang/crates-io-auth-action@v1
+        id: auth
+      - name: Publish to crates.io
+        working-directory: chronoloom
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+        run: cargo publish
+
+  release:
+    needs: [verify, publish]
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the GitHub Release
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build release notes from the changelog
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          python3 .github/scripts/changelog.py extract \
+            chronoloom/CHANGELOG.md "$VERSION" > notes.md
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "chronoloom $VERSION" \
+            --notes-file notes.md \
+            --verify-tag

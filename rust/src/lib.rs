@@ -13,7 +13,7 @@ fn sum_as_int(a: usize, b: usize) -> PyResult<usize> {
 
 /// A Python module implemented in Rust.
 #[pymodule]
-fn _rust_lib(_py: Python, m: &PyModule) -> PyResult<()> {
+fn _timewarp(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(sum_as_string, m)?)?;
     m.add_function(wrap_pyfunction!(sum_as_int, m)?)?;
     Ok(())

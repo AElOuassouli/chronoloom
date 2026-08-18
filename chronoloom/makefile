@@ -27,7 +27,16 @@ publish: ## Publish to crates.io (needs CARGO_REGISTRY_TOKEN)
 clean: ## Remove build artifacts
 	cargo clean
 
+release-fix: ## Bump the patch version, close the changelog, commit and tag
+	@python3 ../.github/scripts/release.py chronoloom fix
+
+release-minor: ## Bump the minor version, close the changelog, commit and tag
+	@python3 ../.github/scripts/release.py chronoloom minor
+
+release-major: ## Bump the major version, close the changelog, commit and tag
+	@python3 ../.github/scripts/release.py chronoloom major
+
 help:
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-25s\033[0m %s\n", $$1, $$2}'
 
-.PHONY: fmt lint test check-publish publish clean help
+.PHONY: fmt lint test check-publish publish clean release-fix release-minor release-major help

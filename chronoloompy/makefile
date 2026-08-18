@@ -45,7 +45,16 @@ sdist: ## Build an sdist (the install path for platforms without a wheel)
 publish: ## Publish to PyPI (normally done by CI on a tag)
 	uv publish
 
+release-fix: ## Bump the patch version, close the changelog, commit and tag
+	@python3 ../.github/scripts/release.py chronoloompy fix
+
+release-minor: ## Bump the minor version, close the changelog, commit and tag
+	@python3 ../.github/scripts/release.py chronoloompy minor
+
+release-major: ## Bump the major version, close the changelog, commit and tag
+	@python3 ../.github/scripts/release.py chronoloompy major
+
 help:
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-25s\033[0m %s\n", $$1, $$2}'
 
-.PHONY: install clean fmt lint test build sdist publish help
+.PHONY: install clean fmt lint test build sdist publish release-fix release-minor release-major help

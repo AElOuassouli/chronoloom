@@ -47,14 +47,23 @@ tag does nothing. Both publish with Trusted Publishing (OIDC) — there are no
 registry tokens in repository secrets — and both pause for a manual approval in
 the `crates-io` / `pypi` GitHub environments.
 
-To cut a release:
+To cut a release, from a clean checkout of `main`, run one of:
 
-1. Bump the version in `chronoloom/Cargo.toml` **or**
-   `chronoloompy/pyproject.toml` (the version in `chronoloompy/rust/Cargo.toml`
-   is inert and is not the release version).
-2. In that library's `CHANGELOG.md`, rename the `# Unreleased` heading to
-   `# <version> - <YYYY-MM-DD>`.
-3. Land it on `main`, then tag that commit and push the tag.
+```sh
+make chronoloom-release-fix      # or -minor / -major
+make chronoloompy-release-fix    # or -minor / -major
+```
+
+(equivalently `make -C <library> release-fix` from inside a library). Each bumps
+the version in that library's manifest, dates its changelog's `# Unreleased`
+heading, refreshes the lockfile — both `uv.lock` and `chronoloom/Cargo.lock`
+embed the version, and CI runs with `UV_LOCKED=1` — then commits and creates an
+annotated tag. There is deliberately no combined target: the libraries version
+independently and a tag releases exactly one of them.
+
+Nothing is pushed; the command prints the `git push` to run, and the command to
+undo. Releases must be cut from `main` with a clean tree and a non-empty
+`# Unreleased` section — the script refuses otherwise, before touching any file.
 
 Before publishing, the workflow refuses the release if the tagged commit is not
 on `main`, if the tag does not match the manifest version, or if the changelog

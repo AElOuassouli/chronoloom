@@ -8,6 +8,9 @@
   (Python and Rust) on push.
 - Rust unit tests and a `cargo clippy`/`cargo test` CI job.
 - mypy strict type checking.
+- `make release-fix` / `release-minor` / `release-major` (and
+  `make chronoloompy-release-*` from the repo root) bump the version, date the
+  changelog, refresh `uv.lock`, then commit and tag. Nothing is pushed.
 - Release automation: a `chronoloompy-v*` tag builds the wheel matrix and
   publishes to PyPI via Trusted Publishing (OIDC, no stored token) after a manual
   approval, attaching a build-provenance attestation and cutting a GitHub Release

@@ -1,6 +1,6 @@
 {
     "ruff.interpreter": [
-        ".venv/bin/python3.10"
+        ".venv/bin/python"
     ],
     "ruff.path": [
         ".venv/bin/ruff"
@@ -8,7 +8,7 @@
     "ruff.run": "onType",
     "editor.formatOnSave": true,
     "[python]": {
-        "editor.defaultFormatter": "ms-python.black-formatter"
+        "editor.defaultFormatter": "charliermarsh.ruff"
     },
     "python.formatting.provider": "none",
     "editor.codeActionsOnSave": {

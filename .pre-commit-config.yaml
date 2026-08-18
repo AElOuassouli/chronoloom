@@ -1,12 +1,78 @@
-repos:
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    # Ruff version.
-    rev: v0.0.279
-    hooks:
-      - id: ruff
-        args: [--fix, --exit-non-zero-on-fix]
+default_install_hook_types: [pre-commit, pre-push]
+default_stages: [pre-commit]
+minimum_pre_commit_version: "4.0.0"
+fail_fast: false
 
-  - repo: https://github.com/psf/black
-    rev: 23.7.0
+repos:
+  # Stateless upstream hygiene hooks -- no version-drift risk against uv.lock.
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
     hooks:
-      - id: black
+      - id: check-added-large-files
+        args: [--maxkb=512]
+      - id: check-merge-conflict
+      - id: check-toml
+      - id: check-yaml
+      - id: end-of-file-fixer
+      - id: mixed-line-ending
+      - id: trailing-whitespace
+
+  # Everything else runs through `uv run` / `cargo` so uv.lock and
+  # rust-toolchain.toml stay the single source of truth for versions -- no
+  # separate `rev:` pin to drift out of sync with pyproject.toml.
+  - repo: local
+    hooks:
+      # ---------- commit stage: formatting only, must stay fast ----------
+      - id: ruff-check
+        name: ruff check (autofix)
+        entry: uv run --no-sync ruff check --force-exclude --fix --exit-non-zero-on-fix
+        language: system
+        types_or: [python, pyi]
+        require_serial: true
+
+      - id: ruff-format
+        name: ruff format
+        entry: uv run --no-sync ruff format --force-exclude
+        language: system
+        types_or: [python, pyi]
+        require_serial: true
+
+      - id: cargo-fmt
+        name: cargo fmt
+        entry: cargo fmt --manifest-path rust/Cargo.toml --all
+        language: system
+        types: [rust]
+        pass_filenames: false
+
+      # ---------- push stage: correctness, may be slow ----------
+      - id: cargo-clippy
+        name: cargo clippy
+        entry: cargo clippy --manifest-path rust/Cargo.toml --all-targets -- -D warnings
+        language: system
+        types: [rust]
+        pass_filenames: false
+        stages: [pre-push]
+
+      - id: cargo-test
+        name: cargo test
+        entry: cargo test --manifest-path rust/Cargo.toml
+        language: system
+        types: [rust]
+        pass_filenames: false
+        stages: [pre-push]
+
+      - id: mypy
+        name: mypy (strict)
+        entry: uv run --frozen mypy
+        language: system
+        types_or: [python, pyi]
+        pass_filenames: false
+        stages: [pre-push]
+
+      - id: pytest
+        name: pytest
+        entry: uv run --frozen pytest
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]

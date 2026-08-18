@@ -1,16 +1,34 @@
-import numpy as np
-from pydantic import BaseModel
+"""Sequence models backed by NumPy structured arrays."""
 
-from timewarp.models import TimePointEvent
+from collections.abc import Sequence
+
+import numpy as np
+from pydantic import BaseModel, ConfigDict
+
+from timewarp.models.primitives import TimePointEvent
+
+SEQUENCE_DTYPE = np.dtype([("timestamp", np.int64), ("value", np.float64)])
 
 
 class TimePointSequence(BaseModel):
+    """A time-ordered sequence of point events, stored as a NumPy array."""
+
+    model_config = ConfigDict(arbitrary_types_allowed=True, frozen=True)
+
     sequence: np.ndarray
     attribute: str | None = None
 
-    def __init__(self, sequence: list[TimePointEvent], attribute: str):
-        self.sequence = np.array(
-            [(point.timestamp, point.value) for point in sequence],
-            dtype=[("timestamp", int), ("value", float)],
+    @classmethod
+    def from_events(
+        cls,
+        events: Sequence[TimePointEvent],
+        attribute: str | None = None,
+    ) -> "TimePointSequence":
+        """Build a sequence from a list of point events."""
+        return cls(
+            sequence=np.array(
+                [(event.timestamp, event.value) for event in events],
+                dtype=SEQUENCE_DTYPE,
+            ),
+            attribute=attribute,
         )
-        self.attribute = attribute

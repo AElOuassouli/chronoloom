@@ -1,49 +1,145 @@
-[tool.poetry]
-name = "timewarp"
-version = "0.1.0"
-description = ""
-authors = ["Amine El Ouassouli <a.elouassouli@gmail.com>"]
-readme = "README.md"
-
-[tool.poetry.dependencies]
-python = "^3.12"
-pydantic = "^2.1.1"
-numpy = "^1.26.4"
-
-[tool.poetry.group.dev.dependencies]
-pytest = "^7.4.3"
-ruff = "^0.1.4"
-black = "^23.7.0"
-pytest-cov = "^4.1.0"
-pre-commit = "^3.3.3"
-maturin = "^1.2.0"
-
-[tool.poetry.build]
-generate-setup-file = false
-
-
 [project]
 name = "timewarp"
-requires-python = ">=3.10"
+version = "0.1.0"
+description = "Temporal data processing primitives with a Rust core."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Amine El Ouassouli", email = "a.elouassouli@gmail.com" }]
+keywords = ["time-series", "temporal", "intervals", "streams", "rust"]
 classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
     "Programming Language :: Rust",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: Implementation :: CPython",
-    "Programming Language :: Python :: Implementation :: PyPy",
+    "Typing :: Typed",
 ]
+dependencies = ["pydantic>=2.13.4,<3", "numpy>=2.5.2,<3"]
+
+[project.urls]
+Homepage = "https://github.com/AElOuassouli/timewarp"
+Repository = "https://github.com/AElOuassouli/timewarp"
+Changelog = "https://github.com/AElOuassouli/timewarp/blob/main/CHANGELOG.md"
+
+[build-system]
+# >=1.9.4 sets PYO3_BUILD_EXTENSION_MODULE itself; see [tool.maturin] below.
+requires = ["maturin>=1.14.1,<2.0"]
+build-backend = "maturin"
 
 [tool.maturin]
-features = ["pyo3/extension-module"]
+manifest-path = "rust/Cargo.toml"
+python-source = "src"
 module-name = "timewarp._timewarp"
+profile = "release"
+# Editable installs (what `uv sync` performs) use the dev profile so the inner
+# loop is not a full optimized Rust build. Requires maturin >= 1.10.
+editable-profile = "dev"
+# NOTE: `features = ["pyo3/extension-module"]` intentionally absent. Since pyo3
+# 0.28 that feature is superseded by PYO3_BUILD_EXTENSION_MODULE, which maturin
+# sets automatically. Re-adding it disables libpython linking for *all* targets
+# and breaks `cargo test` / `cargo clippy --all-targets`.
 
+[tool.uv]
+required-version = ">=0.9"
+# uv's default rebuild heuristic only watches pyproject.toml/setup.py/setup.cfg,
+# so a .rs edit would otherwise never trigger a rebuild. Setting cache-keys
+# REPLACES the defaults, hence pyproject.toml is listed again here.
+# Do not use `{ dir = "rust" }` -- it would walk rust/target/ and rebuild always.
+cache-keys = [
+    { file = "pyproject.toml" },
+    { file = "rust/Cargo.toml" },
+    { file = "rust/Cargo.lock" },
+    # Scoped to src/, not `rust/**/*.rs` -- that would also match generated
+    # build-script output under rust/target/ (e.g. target-lexicon's host.rs),
+    # a moving target that self-invalidates the cache on every build.
+    { file = "rust/src/**/*.rs" },
+]
+
+[dependency-groups]
+dev = [
+    "maturin>=1.14.1,<2",
+    "mypy>=2.3.1",
+    "pre-commit>=4.6.2",
+    "pytest>=9.1.1",
+    "pytest-cov>=7.0",
+    "ruff>=0.16.3",
+]
 
 [tool.ruff]
 target-version = "py312"
-select = ["I"]
+line-length = 88
+src = ["src", "tests"]
+extend-exclude = ["rust/target"]
 
-[tool.ruff.per-file-ignores]
-"__init__.py" = ["E402"]
+[tool.ruff.lint]
+select = [
+    "F",    # pyflakes
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "I",    # isort
+    "N",    # pep8-naming
+    "D",    # pydocstyle
+    "UP",   # pyupgrade
+    "ANN",  # flake8-annotations
+    "S",    # flake8-bandit
+    "B",    # flake8-bugbear
+    "A",    # flake8-builtins
+    "C4",   # flake8-comprehensions
+    "PT",   # flake8-pytest-style
+    "RET",  # flake8-return
+    "SIM",  # flake8-simplify
+    "TID",  # flake8-tidy-imports
+    "TC",   # flake8-type-checking
+    "ARG",  # flake8-unused-arguments
+    "PTH",  # flake8-use-pathlib
+    "PL",   # pylint
+    "NPY",  # numpy-specific rules
+    "PERF", # perflint
+    "FURB", # refurb
+    "RUF",  # ruff-specific rules
+]
+ignore = [
+    "D203",   # conflicts with D211 (blank line before class)
+    "D213",   # conflicts with D212 (multi-line summary position)
+    "ANN401", # explicit Any is meaningful for event payloads
+]
 
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["D104"]
+"tests/**" = ["D", "S101", "ANN", "PLR2004", "ARG"]
 
-[build-system]
-requires = ["maturin>=1.1,<2.0"]
-build-backend = "maturin"
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.format]
+docstring-code-format = true
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["src", "tests"]
+mypy_path = ["src"]
+plugins = ["pydantic.mypy"]
+warn_unreachable = true
+enable_error_code = ["ignore-without-code", "redundant-expr", "truthy-bool"]
+
+[[tool.mypy.overrides]]
+module = ["tests.*"]
+disallow_untyped_defs = false
+
+[tool.pytest.ini_options]
+minversion = "9.0"
+testpaths = ["tests"]
+addopts = "-ra --strict-markers --strict-config"
+filterwarnings = ["error"]
+
+[tool.coverage.run]
+source = ["timewarp"]
+branch = true
+
+[tool.coverage.report]
+exclude_also = ["if TYPE_CHECKING:", "raise NotImplementedError"]

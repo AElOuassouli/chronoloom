@@ -1,20 +1,26 @@
+//! Native acceleration kernels for the `timewarp` package.
+
 use pyo3::prelude::*;
 
-/// Formats the sum of two numbers as string.
+mod algebra;
+
+/// Format the sum of two numbers as a string.
 #[pyfunction]
-fn sum_as_string(a: usize, b: usize) -> PyResult<String> {
-    Ok((a + b).to_string())
+fn sum_as_string(a: usize, b: usize) -> String {
+    (a + b).to_string()
 }
 
+/// Return the sum of two numbers.
 #[pyfunction]
-fn sum_as_int(a: usize, b: usize) -> PyResult<usize> {
-    Ok(a+b)
+fn sum_as_int(a: usize, b: usize) -> usize {
+    a + b
 }
 
-/// A Python module implemented in Rust.
+/// Rust extension module, imported from Python as `timewarp._timewarp`.
 #[pymodule]
-fn _timewarp(_py: Python, m: &PyModule) -> PyResult<()> {
+fn _timewarp(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(sum_as_string, m)?)?;
     m.add_function(wrap_pyfunction!(sum_as_int, m)?)?;
+    m.add_function(wrap_pyfunction!(algebra::intersection, m)?)?;
     Ok(())
 }

@@ -1,28 +1,61 @@
 # chronoloom
 
-Temporal data processing library — sequences and streams, with performance-critical
-operations implemented in Rust and exposed to Python via [pyo3](https://pyo3.rs)/[maturin](https://www.maturin.rs).
+Temporal data processing — sequences, intervals, and the algebra over them —
+shipped as two independently versioned and published libraries.
 
-## Development setup
+| Library | Language | Registry | Source |
+| --- | --- | --- | --- |
+| `chronoloom` | Rust | [crates.io](https://crates.io/crates/chronoloom) | [`chronoloom/`](chronoloom) |
+| `chronoloompy` | Python | [PyPI](https://pypi.org/project/chronoloompy/) | [`chronoloompy/`](chronoloompy) |
 
-Requires [uv](https://docs.astral.sh/uv/) and a Rust toolchain (managed automatically
-via `rust-toolchain.toml` if you have [rustup](https://rustup.rs) installed).
+[`chronoloom`](chronoloom) holds the algebra and has **no pyo3 dependency**, so
+any Rust project can depend on it. [`chronoloompy`](chronoloompy) wraps it
+through a thin pyo3 binding ([`chronoloompy/rust`](chronoloompy/rust)) and adds
+a Python-native layer — pydantic models today, more later.
+
+New algebra belongs in `chronoloom`, so that Rust and Python share one
+implementation rather than diverging.
+
+## Development
+
+Requires [uv](https://docs.astral.sh/uv/) and a Rust toolchain (managed
+automatically via `rust-toolchain.toml` if you have [rustup](https://rustup.rs)).
 
 ```sh
-make setup   # uv sync + install git hooks (pre-commit and pre-push)
+make setup   # build the env and install git hooks
+make fmt     # format both libraries
+make lint    # lint and type-check both libraries
+make test    # test both libraries
 ```
 
-Common tasks:
+Each library also has its own makefile with the same targets, if you want to
+work on just one:
 
 ```sh
-make fmt     # format Python (ruff) and Rust (cargo fmt)
-make lint    # ruff check, ruff format --check, mypy, cargo fmt --check, cargo clippy
-make test    # pytest + cargo test
-make build   # build a release wheel into dist/
+make -C chronoloom test
+make -C chronoloompy test
 ```
 
-`uv run <cmd>` is the general-purpose inner loop (`uv run pytest`, `uv run python`, ...).
-The Rust extension rebuilds automatically when `rust/**/*.rs` or `rust/Cargo.toml` change.
+Git hooks (installed by `make setup`) run formatting on every commit, and
+formatting, linting, type-checking, and both test suites on every push.
 
-Git hooks (installed by `make setup`) run formatting on every commit, and formatting,
-linting, type-checking, and both test suites on every push.
+## Releasing
+
+The two libraries release independently, distinguished by tag prefix:
+
+| Tag | Effect |
+| --- | --- |
+| `chronoloom-v0.1.0` | publishes the Rust crate to crates.io |
+| `chronoloompy-v0.1.0` | builds wheels and publishes to PyPI |
+
+An unprefixed `v*` tag intentionally does nothing.
+
+PyPI uses trusted publishing (no secret needed). **crates.io requires a
+`CARGO_REGISTRY_TOKEN` repository secret** — add it under Settings → Secrets and
+variables → Actions before the first `chronoloom-v*` tag. Every change to the
+core also runs `cargo publish --dry-run` in CI, since published crate versions
+are permanent and cannot be reused.
+
+## License
+
+MIT — see [LICENSE](LICENSE).

@@ -1,0 +1,28 @@
+[package]
+name = "chronoloompy-ext"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.83"
+# Never published to crates.io: this crate's only export is a #[pymodule], so
+# it is useless to Rust consumers. It ships as a compiled .so inside PyPI
+# wheels, built by maturin. Rust users depend on `chronoloom` directly.
+publish = false
+
+[lib]
+# Must exactly match the last segment of `module-name` in ../pyproject.toml and
+# the #[pymodule] fn name in src/lib.rs, or maturin emits a .so that Python
+# cannot import under the expected name.
+name = "_core"
+# rlib is required for `cargo test` / `cargo clippy --all-targets` to link;
+# cdylib is what maturin packages into the Python wheel.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# TODO: switch to `chronoloom = "0.1"` from crates.io once the core is first
+# released. A path dep keeps adding-a-core-function-and-exposing-it to a single
+# edit-compile cycle while the core is still a scaffold, but it has two costs:
+# a published wheel can carry core code matching no published chronoloom
+# version, and maturin has to vendor a sibling crate into the sdist, which is
+# its most bug-prone path (PyO3/maturin#579, #838).
+chronoloom = { path = "../../chronoloom" }
+pyo3 = { version = "0.29.2", features = ["abi3-py312"] }

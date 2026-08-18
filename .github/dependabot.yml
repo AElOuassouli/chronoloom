@@ -2,11 +2,15 @@
 # package ecosystems to update and where the package manifests are located.
 # Please see the documentation for all configuration options:
 # https://docs.github.com/github/administering-a-repository/configuration-options-for-dependency-updates
+#
+# Directories match the two-library layout: chronoloom/ is the standalone crate,
+# chronoloompy/ is the Python library and chronoloompy/rust/ its pyo3 binding.
+# Each cargo manifest has its own lockfile, so each needs its own entry.
 
 version: 2
 updates:
   - package-ecosystem: "uv"
-    directory: "/"
+    directory: "/chronoloompy" # pyproject.toml + uv.lock
     schedule:
       interval: "weekly"
     groups:
@@ -14,7 +18,12 @@ updates:
         dependency-type: "development"
 
   - package-ecosystem: "cargo"
-    directory: "/rust" # rust/Cargo.toml, not a root Cargo.toml
+    directory: "/chronoloom" # standalone crate; must never gain a pyo3 dep
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "cargo"
+    directory: "/chronoloompy/rust" # pyo3 binding
     schedule:
       interval: "weekly"
 

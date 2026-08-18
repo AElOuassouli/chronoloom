@@ -1,0 +1,16 @@
+[package]
+name = "chronoloom"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.83"
+description = "Set algebra over time points and intervals."
+license = "MIT"
+repository = "https://github.com/AElOuassouli/chronoloom"
+readme = "README.md"
+keywords = ["time-series", "temporal", "interval", "algebra"]
+categories = ["date-and-time", "data-structures"]
+
+# No dependencies -- and in particular no pyo3. Python bindings live in
+# ../chronoloompy/rust, which depends on this crate; nothing here may depend on
+# them. `make lint` asserts this invariant.
+[dependencies]

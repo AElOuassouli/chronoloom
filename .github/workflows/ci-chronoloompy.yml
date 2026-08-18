@@ -1,0 +1,106 @@
+# CI for the Python library and its pyo3 binding. See the note in
+# ci-chronoloom.yml about branch protection and filtered-out workflows.
+name: ci-chronoloompy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "chronoloompy/**"
+      # The binding path-depends on the core, so a core edit changes this
+      # build too. Only chronoloom's own workflow can narrow to chronoloom/**.
+      - "chronoloom/**"
+      - "rust-toolchain.toml"
+      - ".github/workflows/ci-chronoloompy.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "chronoloompy/**"
+      - "chronoloom/**"
+      - "rust-toolchain.toml"
+      - ".github/workflows/ci-chronoloompy.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  UV_LOCKED: "1" # fail instead of silently re-locking a stale uv.lock
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: "1"
+
+defaults:
+  run:
+    working-directory: chronoloompy
+
+jobs:
+  lint-python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          enable-cache: true
+      - run: uv sync
+      - run: uv run --no-sync ruff check --output-format=github .
+      - run: uv run --no-sync ruff format --check .
+      - run: uv run --no-sync mypy
+
+  lint-rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: chronoloompy/rust
+      - run: cargo fmt --manifest-path rust/Cargo.toml --all -- --check
+      - run: cargo clippy --manifest-path rust/Cargo.toml --all-targets -- -D warnings
+      - run: cargo test --manifest-path rust/Cargo.toml
+
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            python-version: "3.12"
+          - os: ubuntu-latest
+            python-version: "3.13"
+          - os: macos-latest
+            python-version: "3.12"
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          enable-cache: true
+          python-version: ${{ matrix.python-version }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: chronoloompy/rust
+      - run: uv sync
+      - run: uv run --no-sync pytest --cov=chronoloompy --cov-report=xml
+
+  sdist:
+    # The binding path-depends on a crate OUTSIDE this package directory, so
+    # maturin must vendor ../chronoloom into the sdist. That is its most
+    # bug-prone path and nothing else here would catch a regression: wheel
+    # builds always see the real sibling directory.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          enable-cache: true
+      - run: uv sync
+      - run: uv run --no-sync maturin sdist --out dist
+      - name: Install from the sdist in a clean environment
+        working-directory: ${{ github.workspace }}
+        run: |
+          uv venv /tmp/sdist-check
+          # --no-binary forces chronoloompy to be built from the sdist rather
+          # than a wheel, while the index still supplies pydantic/numpy.
+          VIRTUAL_ENV=/tmp/sdist-check uv pip install \
+            --find-links chronoloompy/dist --no-binary chronoloompy chronoloompy
+          /tmp/sdist-check/bin/python -c \
+            "from chronoloompy import _core; assert _core.intersection((0,5),(3,9)) == (3,5); print('sdist OK')"

@@ -3,14 +3,39 @@
 Set algebra over time points and intervals — a small, dependency-free Rust
 library.
 
-Intervals are `(start, end)` pairs of `i64` timestamps and are **half-open**:
-`start` is included, `end` is excluded. Two intervals that merely touch
-(`[0, 5)` and `[5, 9)`) therefore do not overlap.
+Intervals are **half-open**: `start` is included, `end` is excluded. Two
+intervals that merely touch (`[0, 5)` and `[5, 9)`) therefore do not overlap.
 
 ```toml
 [dependencies]
-chronoloom = "0.1"
+chronoloom = "0.2"
 ```
+
+## Primitives
+
+Two event shapes make up the vocabulary, both generic over the value they carry
+— a measurement, a label, a set of tags, or nothing at all (`()`):
+
+- `TimePointEvent` anchors a value to a single instant, with no duration.
+- `TimeIntervalEvent` attaches a value to a span of time. Construction is
+  validated, so `end` is always strictly after `start` and a span is never
+  empty.
+
+```rust
+use chronoloom::{TimeIntervalEvent, TimePointEvent};
+
+let reading = TimePointEvent::new(1_700_000_000, 21.5_f64);
+assert_eq!(reading.timestamp(), 1_700_000_000);
+
+let phase = TimeIntervalEvent::new(0, 60, "warm-up").unwrap();
+assert_eq!(phase.duration(), 60);
+
+assert!(TimeIntervalEvent::span(5, 5).is_err());
+```
+
+## Algebra
+
+Set operations work on `(start, end)` pairs of `i64` timestamps.
 
 ```rust
 use chronoloom::algebra::intersection;

@@ -1,3 +1,21 @@
+# Unreleased
+
+## Added
+
+- `primitives`, the event vocabulary the rest of the library builds on. Both
+  shapes are generic over the value they carry, so a payload can be a
+  measurement, a label, a set of tags, or nothing at all (`()`).
+- `primitives::TimePointEvent`, a value anchored to a single instant with no
+  duration.
+- `primitives::TimeIntervalEvent`, a value attached to a half-open span
+  `[start, end)`. Construction is validated: `end` must be strictly after
+  `start`, so empty and inverted spans are rejected and every interval covers
+  at least one instant. `TimeIntervalEvent::span` builds the valueless case.
+- `primitives::IntervalError`, the validation failure returned by those
+  constructors, implementing `Display` and `std::error::Error`.
+- `primitives::Timestamp`, an alias for `i64` naming the crate's time unit.
+- The three types and the error are re-exported at the crate root.
+
 # 0.2.0 - 2026-08-20
 
 ## Fixed

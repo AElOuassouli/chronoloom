@@ -4,7 +4,7 @@ Set algebra over time points and intervals — a small, dependency-free Rust
 library.
 
 Intervals are **half-open**: `start` is included, `end` is excluded. Two
-intervals that merely touch (`[0, 5)` and `[5, 9)`) therefore do not overlap.
+intervals that merely touch (`[0, 5)` and `[5, 9)`) therefore share no instant.
 
 ```toml
 [dependencies]
@@ -33,16 +33,31 @@ assert_eq!(phase.duration(), 60);
 assert!(TimeIntervalEvent::span(5, 5).is_err());
 ```
 
-## Algebra
+## Operations
 
-Set operations work on `(start, end)` pairs of `i64` timestamps.
+Two intervals can be intersected — the span where both are active — or united —
+the spans covered by either, merged when nothing separates them.
 
 ```rust
-use chronoloom::algebra::intersection;
+use chronoloom::TimeIntervalEvent;
 
-assert_eq!(intersection((0, 5), (3, 9)), Some((3, 5)));
-assert_eq!(intersection((0, 2), (5, 9)), None);
+let a = TimeIntervalEvent::new(0, 5, "a").unwrap();
+let b = TimeIntervalEvent::new(5, 9, "b").unwrap();
+
+// Half-open, so touching intervals share no instant.
+assert_eq!(a.intersection(&b), None);
+
+// But together they cover exactly [0, 9), so they merge.
+assert_eq!(a.union(&b), vec![TimeIntervalEvent::span(0, 9).unwrap()]);
+
+// A real gap keeps them apart, always ordered by start.
+let far = TimeIntervalEvent::new(20, 30, "c").unwrap();
+assert_eq!(a.union(&far).len(), 2);
 ```
+
+Both work on the time dimension only: they accept intervals carrying different
+kinds of value, consume neither, and return valueless spans. Reattach a value
+with `map` if the result needs to mean something.
 
 ## Python
 

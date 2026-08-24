@@ -2,12 +2,17 @@
 
 from typing import Any
 
-from pydantic import BaseModel, PositiveInt
+from pydantic import BaseModel
 
 
 class TimePointEvent(BaseModel):
-    """A single timestamped observation, optionally carrying an attribute."""
+    """A value observed at a single instant, with no duration.
 
-    timestamp: PositiveInt
+    Any timestamp is valid, including zero and negative ones — the epoch is the
+    caller's to choose.
+
+    Mirrors `chronoloom::primitives::TimePointEvent` on the Rust side.
+    """
+
+    timestamp: int
     value: Any
-    attribute: str | None = None

@@ -9,11 +9,14 @@
 
 use pyo3::prelude::*;
 
-mod algebra;
-
 /// Rust extension module, imported from Python as `chronoloompy._core`.
+///
+/// Currently exports nothing. `chronoloom` moved its interval operations off
+/// the free-function `algebra` module and onto `TimeIntervalEvent`, and this
+/// binding compiles against the *published* crate — see the `chronoloom`
+/// requirement in `Cargo.toml`. Adapters return once that requirement names a
+/// release carrying the new API.
 #[pymodule]
-fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(algebra::intersection, m)?)?;
+fn _core(_m: &Bound<'_, PyModule>) -> PyResult<()> {
     Ok(())
 }

@@ -104,5 +104,10 @@ jobs:
           # than a wheel, while the index still supplies pydantic/numpy.
           VIRTUAL_ENV=/tmp/sdist-check uv pip install \
             --find-links chronoloompy/dist --no-binary chronoloompy chronoloompy
+          # `_core` exports nothing while the binding waits on a chronoloom
+          # release carrying the new API, so importing it is the assertion:
+          # it only succeeds if the extension compiled and loaded under the
+          # name the wheel declares. The model import covers the pure-Python
+          # half of the package.
           /tmp/sdist-check/bin/python -c \
-            "from chronoloompy import _core; assert _core.intersection((0,5),(3,9)) == (3,5); print('sdist OK')"
+            "from chronoloompy import _core; from chronoloompy.models import TimeIntervalEvent; assert TimeIntervalEvent(start_timestamp=0, end_timestamp=5).end_timestamp == 5; print('sdist OK')"

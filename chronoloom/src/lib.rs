@@ -26,13 +26,31 @@
 //! # Intervals are half-open
 //!
 //! An interval spans `[start, end)` — `start` is included, `end` is excluded.
-//! Two intervals that merely touch (`[0, 5)` and `[5, 9)`) therefore do not
-//! overlap. A span is also never empty: `end` must be strictly after `start`.
+//! Two intervals that merely touch (`[0, 5)` and `[5, 9)`) therefore share no
+//! instant, and so do not intersect. A span is also never empty: `end` must be
+//! strictly after `start`.
 //!
 //! ```
-//! use chronoloom::algebra::intersection;
+//! use chronoloom::TimeIntervalEvent;
 //!
-//! assert_eq!(intersection((0, 5), (3, 9)), Some((3, 5)));
+//! let a = TimeIntervalEvent::new(0, 5, "a")?;
+//! let b = TimeIntervalEvent::new(5, 9, "b")?;
+//!
+//! assert_eq!(a.intersection(&b), None);
+//! # Ok::<(), chronoloom::IntervalError>(())
+//! ```
+//!
+//! Union takes the opposite view of the same fact: those two intervals together
+//! cover exactly `[0, 9)` with no instant missing, so they merge.
+//!
+//! ```
+//! use chronoloom::TimeIntervalEvent;
+//!
+//! let a = TimeIntervalEvent::new(0, 5, "a")?;
+//! let b = TimeIntervalEvent::new(5, 9, "b")?;
+//!
+//! assert_eq!(a.union(&b), vec![TimeIntervalEvent::span(0, 9)?]);
+//! # Ok::<(), chronoloom::IntervalError>(())
 //! ```
 //!
 //! Python bindings are published separately as [`chronoloompy`] on PyPI.
@@ -41,7 +59,6 @@
 
 #![warn(missing_docs)]
 
-pub mod algebra;
 pub mod primitives;
 
 pub use primitives::{IntervalError, TimeIntervalEvent, TimePointEvent, Timestamp};

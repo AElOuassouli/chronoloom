@@ -21,10 +21,28 @@
 - `TimeIntervalEvent::union`, the spans covered by either interval: one when
   they combine, two — ordered by start — when a gap keeps them apart.
   Intervals that touch combine, since `[0, 5)` and `[5, 9)` together cover
-  exactly `[0, 9)`.
-
-Both operations work on the time dimension only: they accept intervals carrying
-different kinds of value, consume neither, and return valueless spans.
+  exactly `[0, 9)`. Both operations work on the time dimension only: they
+  accept intervals carrying different kinds of value, consume neither, and
+  return valueless spans.
+- `sequences`, holding ordered collections of events.
+- `sequences::TimePointSequence`, a collection of point events that is always
+  in time order however the events arrive. Events sit contiguously, sorted by
+  timestamp, so lookups binary-search that maintained order rather than
+  scanning, and adding an event that belongs at the end — the usual case for
+  events arriving in time order — costs no shifting at all. Several events may
+  share an instant, where they keep the order they were added; `len` counts
+  events and `instant_count` counts instants.
+- Window and neighbour queries on that sequence: `range` over any Rust range,
+  `first` / `last`, `before` / `after` (both bounds inclusive), and `nearest`,
+  which returns the closest event in either direction and breaks a tie toward
+  the earlier one.
+- Slice and positional access: `as_slice`, `get` (by instant) and `range` both
+  return slices of the sequence itself rather than copies, and `nth` plus an
+  `Index<usize>` impl read by position in constant time.
+- `FromIterator`, `Extend`, and `IntoIterator` for `TimePointSequence`, owned
+  and borrowed. `FromIterator` sorts once instead of inserting one event at a
+  time, and `Extend` reorders only when the additions actually broke the order.
+- `TimePointSequence` is re-exported at the crate root.
 
 ## Removed
 

@@ -23,6 +23,30 @@
 //! # Ok::<(), chronoloom::IntervalError>(())
 //! ```
 //!
+//! # Sequences
+//!
+//! [`TimePointSequence`] collects point events and keeps them in time order
+//! however they arrive. Events sit contiguously, sorted by timestamp, so
+//! lookups and windows binary-search that order rather than scanning, and a
+//! window comes back as a real slice.
+//!
+//! ```
+//! use chronoloom::{TimePointEvent, TimePointSequence};
+//!
+//! let readings: TimePointSequence<f64> = [
+//!     TimePointEvent::new(30, 3.0),
+//!     TimePointEvent::new(10, 1.0),
+//!     TimePointEvent::new(20, 2.0),
+//! ]
+//! .into_iter()
+//! .collect();
+//!
+//! let window: Vec<i64> = readings.range(10..30).iter().map(|e| e.timestamp()).collect();
+//! assert_eq!(window, [10, 20]);
+//!
+//! assert_eq!(readings.nearest(28).map(|e| e.timestamp()), Some(30));
+//! ```
+//!
 //! # Intervals are half-open
 //!
 //! An interval spans `[start, end)` — `start` is included, `end` is excluded.
@@ -60,5 +84,7 @@
 #![warn(missing_docs)]
 
 pub mod primitives;
+pub mod sequences;
 
 pub use primitives::{IntervalError, TimeIntervalEvent, TimePointEvent, Timestamp};
+pub use sequences::TimePointSequence;

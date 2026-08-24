@@ -40,8 +40,11 @@ make test      # pytest + cargo test
 make build     # release wheel into dist/
 ```
 
-The extension rebuilds automatically when `rust/**/*.rs`, `rust/Cargo.toml`,
-or the `../chronoloom` sources change — see `cache-keys` in `pyproject.toml`.
+The extension rebuilds automatically when `rust/**/*.rs`, `rust/Cargo.toml`, or
+`rust/Cargo.lock` change — see `cache-keys` in `pyproject.toml`. Editing
+`../chronoloom` does **not** rebuild it: the binding depends on the released
+crate from crates.io, so a local core change only reaches Python once it is
+published and `rust/Cargo.toml` requires that version.
 
 Run `make setup` from the repository root once to install the git hooks.
 

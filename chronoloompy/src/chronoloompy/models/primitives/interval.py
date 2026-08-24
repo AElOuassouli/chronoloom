@@ -1,17 +1,31 @@
 """The interval event primitive: a value attached to a span of time."""
 
-from typing import Any
+from typing import Any, Self
 
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 
 class TimeIntervalEvent(BaseModel):
-    """A half-open time interval, optionally carrying an attribute."""
+    """A value attached to the half-open span `[start, end)`.
+
+    `start_timestamp` is included and `end_timestamp` is excluded, so two
+    intervals that merely touch share no instant. The span is never empty:
+    `end_timestamp` must be strictly after `start_timestamp`, which rules out
+    both empty and inverted intervals.
+
+    Mirrors `chronoloom::primitives::TimeIntervalEvent` on the Rust side.
+    """
 
     start_timestamp: int
     end_timestamp: int
-    attribute: Any | None = None
-    left_open: bool = False
-    right_open: bool = True
+    value: Any | None = None
 
-    ## TODO: add validator to ensure that start_timestamp < end_timestamp
+    @model_validator(mode="after")
+    def _reject_empty_spans(self) -> Self:
+        if self.end_timestamp <= self.start_timestamp:
+            message = (
+                f"interval end ({self.end_timestamp}) must be strictly after "
+                f"its start ({self.start_timestamp})"
+            )
+            raise ValueError(message)
+        return self

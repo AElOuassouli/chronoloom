@@ -15,6 +15,23 @@
   constructors, implementing `Display` and `std::error::Error`.
 - `primitives::Timestamp`, an alias for `i64` naming the crate's time unit.
 - The three types and the error are re-exported at the crate root.
+- `TimeIntervalEvent::intersection`, the span where both intervals are active,
+  or `None` where they never are. Intervals that merely touch share no instant
+  and so do not intersect.
+- `TimeIntervalEvent::union`, the spans covered by either interval: one when
+  they combine, two — ordered by start — when a gap keeps them apart.
+  Intervals that touch combine, since `[0, 5)` and `[5, 9)` together cover
+  exactly `[0, 9)`.
+
+Both operations work on the time dimension only: they accept intervals carrying
+different kinds of value, consume neither, and return valueless spans.
+
+## Removed
+
+- The `algebra` module, and with it `algebra::intersection`. Intersection now
+  lives on the primitive as `TimeIntervalEvent::intersection`, so the half-open
+  rule has a single definition instead of one for tuples and one for events.
+  Callers holding `(start, end)` pairs build a `TimeIntervalEvent` first.
 
 # 0.2.0 - 2026-08-20
 

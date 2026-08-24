@@ -207,6 +207,113 @@ impl<T> TimeIntervalEvent<T> {
             value: f(self.value),
         }
     }
+
+    /// The span where both intervals are active, or `None` where they never
+    /// are.
+    ///
+    /// Because intervals are half-open, two that merely touch share no instant
+    /// and so do not intersect — `[0, 5)` ends just before `[5, 9)` begins.
+    ///
+    /// ```
+    /// use chronoloom::primitives::TimeIntervalEvent;
+    ///
+    /// let a = TimeIntervalEvent::new(0, 5, "a")?;
+    /// let b = TimeIntervalEvent::new(3, 9, "b")?;
+    ///
+    /// assert_eq!(a.intersection(&b), Some(TimeIntervalEvent::span(3, 5)?));
+    ///
+    /// let touching = TimeIntervalEvent::new(5, 9, "c")?;
+    /// assert_eq!(a.intersection(&touching), None);
+    ///
+    /// let apart = TimeIntervalEvent::new(20, 30, "d")?;
+    /// assert_eq!(a.intersection(&apart), None);
+    /// # Ok::<(), chronoloom::primitives::IntervalError>(())
+    /// ```
+    ///
+    /// The two intervals need not carry the same kind of value, and neither
+    /// value is consumed. The result carries no value at all — reattach one
+    /// with [`map`] if the overlap needs to mean something.
+    ///
+    /// ```
+    /// use chronoloom::primitives::TimeIntervalEvent;
+    ///
+    /// let measured = TimeIntervalEvent::new(0, 5, 21.5_f64)?;
+    /// let labelled = TimeIntervalEvent::new(3, 9, String::from("warm-up"))?;
+    ///
+    /// let both = measured.intersection(&labelled).unwrap();
+    /// assert_eq!(both.map(|()| "overlap").value(), &"overlap");
+    /// # Ok::<(), chronoloom::primitives::IntervalError>(())
+    /// ```
+    ///
+    /// [`map`]: TimeIntervalEvent::map
+    #[must_use]
+    pub fn intersection<U>(&self, other: &TimeIntervalEvent<U>) -> Option<TimeIntervalEvent<()>> {
+        let start = self.start.max(other.start);
+        let end = self.end.min(other.end);
+
+        (start < end).then(|| TimeIntervalEvent::raw(start, end))
+    }
+
+    /// The spans covered by either interval: one when they combine, two when
+    /// they stay apart.
+    ///
+    /// Intervals combine when they overlap **and** when they merely touch,
+    /// since `[0, 5)` and `[5, 9)` together cover exactly `[0, 9)` with no
+    /// instant missing. Only a real gap keeps them separate.
+    ///
+    /// ```
+    /// use chronoloom::primitives::TimeIntervalEvent;
+    ///
+    /// let a = TimeIntervalEvent::new(0, 5, "a")?;
+    ///
+    /// let overlapping = TimeIntervalEvent::new(3, 9, "b")?;
+    /// assert_eq!(a.union(&overlapping), vec![TimeIntervalEvent::span(0, 9)?]);
+    ///
+    /// let touching = TimeIntervalEvent::new(5, 9, "c")?;
+    /// assert_eq!(a.union(&touching), vec![TimeIntervalEvent::span(0, 9)?]);
+    /// # Ok::<(), chronoloom::primitives::IntervalError>(())
+    /// ```
+    ///
+    /// Intervals separated by a gap come back unmerged, always ordered by
+    /// start, whichever one the method was called on.
+    ///
+    /// ```
+    /// use chronoloom::primitives::TimeIntervalEvent;
+    ///
+    /// let early = TimeIntervalEvent::new(0, 2, "a")?;
+    /// let late = TimeIntervalEvent::new(5, 9, "b")?;
+    /// let apart = vec![
+    ///     TimeIntervalEvent::span(0, 2)?,
+    ///     TimeIntervalEvent::span(5, 9)?,
+    /// ];
+    ///
+    /// assert_eq!(early.union(&late), apart);
+    /// assert_eq!(late.union(&early), apart);
+    /// # Ok::<(), chronoloom::primitives::IntervalError>(())
+    /// ```
+    ///
+    /// As with [`intersection`], the two intervals need not carry the same kind
+    /// of value, neither value is consumed, and the resulting spans carry none.
+    ///
+    /// [`intersection`]: TimeIntervalEvent::intersection
+    #[must_use]
+    pub fn union<U>(&self, other: &TimeIntervalEvent<U>) -> Vec<TimeIntervalEvent<()>> {
+        if self.start <= other.end && other.start <= self.end {
+            let start = self.start.min(other.start);
+            let end = self.end.max(other.end);
+
+            return vec![TimeIntervalEvent::raw(start, end)];
+        }
+
+        let mine = TimeIntervalEvent::raw(self.start, self.end);
+        let theirs = TimeIntervalEvent::raw(other.start, other.end);
+
+        if self.start <= other.start {
+            vec![mine, theirs]
+        } else {
+            vec![theirs, mine]
+        }
+    }
 }
 
 impl TimeIntervalEvent<()> {
@@ -232,6 +339,19 @@ impl TimeIntervalEvent<()> {
     /// [`new`]: TimeIntervalEvent::new
     pub fn span(start: Timestamp, end: Timestamp) -> Result<Self, IntervalError> {
         Self::new(start, end, ())
+    }
+
+    /// Build a span whose bounds are already known to be valid.
+    ///
+    /// Deliberately private and unvalidated: the caller must have proven
+    /// `start < end`, otherwise the non-empty invariant is broken. Every use
+    /// derives its bounds from intervals that already uphold it.
+    const fn raw(start: Timestamp, end: Timestamp) -> Self {
+        Self {
+            start,
+            end,
+            value: (),
+        }
     }
 }
 
@@ -365,6 +485,135 @@ mod tests {
             error.to_string(),
             "interval end (0) must be strictly after its start (9)"
         );
+    }
+
+    /// Shorthand for the valueless spans both operations return.
+    fn span(start: i64, end: i64) -> TimeIntervalEvent<()> {
+        TimeIntervalEvent::span(start, end).expect("test bounds are ordered")
+    }
+
+    #[test]
+    fn overlapping_intervals_intersect_on_the_shared_span() {
+        let a = span(0, 5);
+        let b = span(3, 9);
+
+        assert_eq!(a.intersection(&b), Some(span(3, 5)));
+        assert_eq!(b.intersection(&a), Some(span(3, 5)));
+    }
+
+    #[test]
+    fn a_contained_interval_intersects_to_itself() {
+        let outer = span(0, 10);
+        let inner = span(3, 5);
+
+        assert_eq!(outer.intersection(&inner), Some(span(3, 5)));
+        assert_eq!(inner.intersection(&outer), Some(span(3, 5)));
+    }
+
+    #[test]
+    fn an_interval_intersects_itself() {
+        let a = span(0, 5);
+
+        assert_eq!(a.intersection(&a), Some(span(0, 5)));
+    }
+
+    #[test]
+    fn touching_intervals_do_not_intersect() {
+        let a = span(0, 5);
+        let b = span(5, 9);
+
+        assert_eq!(a.intersection(&b), None);
+        assert_eq!(b.intersection(&a), None);
+    }
+
+    #[test]
+    fn disjoint_intervals_do_not_intersect() {
+        let a = span(0, 2);
+        let b = span(5, 9);
+
+        assert_eq!(a.intersection(&b), None);
+        assert_eq!(b.intersection(&a), None);
+    }
+
+    #[test]
+    fn intersection_handles_negative_bounds() {
+        let a = span(-10, -2);
+        let b = span(-5, 5);
+
+        assert_eq!(a.intersection(&b), Some(span(-5, -2)));
+    }
+
+    #[test]
+    fn overlapping_intervals_unite_into_one_span() {
+        let a = span(0, 5);
+        let b = span(3, 9);
+
+        assert_eq!(a.union(&b), vec![span(0, 9)]);
+        assert_eq!(b.union(&a), vec![span(0, 9)]);
+    }
+
+    #[test]
+    fn touching_intervals_unite_into_one_span() {
+        let a = span(0, 5);
+        let b = span(5, 9);
+
+        assert_eq!(a.union(&b), vec![span(0, 9)]);
+        assert_eq!(b.union(&a), vec![span(0, 9)]);
+    }
+
+    #[test]
+    fn a_contained_interval_unites_into_the_outer_span() {
+        let outer = span(0, 10);
+        let inner = span(3, 5);
+
+        assert_eq!(outer.union(&inner), vec![span(0, 10)]);
+        assert_eq!(inner.union(&outer), vec![span(0, 10)]);
+    }
+
+    #[test]
+    fn an_interval_unites_with_itself_into_itself() {
+        let a = span(0, 5);
+
+        assert_eq!(a.union(&a), vec![span(0, 5)]);
+    }
+
+    #[test]
+    fn disjoint_intervals_stay_apart_ordered_by_start() {
+        let early = span(0, 2);
+        let late = span(5, 9);
+        let apart = vec![span(0, 2), span(5, 9)];
+
+        assert_eq!(early.union(&late), apart);
+        assert_eq!(late.union(&early), apart);
+    }
+
+    #[test]
+    fn union_yields_one_span_or_two_and_never_more() {
+        let a = span(0, 5);
+
+        assert_eq!(a.union(&span(3, 9)).len(), 1);
+        assert_eq!(a.union(&span(5, 9)).len(), 1);
+        assert_eq!(a.union(&span(20, 30)).len(), 2);
+    }
+
+    #[test]
+    fn union_handles_negative_bounds() {
+        let a = span(-10, -5);
+        let b = span(-5, 0);
+
+        assert_eq!(a.union(&b), vec![span(-10, 0)]);
+    }
+
+    #[test]
+    fn operations_combine_intervals_carrying_different_value_types() {
+        let measured = TimeIntervalEvent::new(0, 5, 21.5_f64).expect("0 < 5");
+        let labelled = TimeIntervalEvent::new(3, 9, String::from("warm-up")).expect("3 < 9");
+
+        assert_eq!(measured.intersection(&labelled), Some(span(3, 5)));
+        assert_eq!(measured.union(&labelled), vec![span(0, 9)]);
+
+        assert_eq!(measured.value(), &21.5);
+        assert_eq!(labelled.value(), "warm-up");
     }
 
     #[test]

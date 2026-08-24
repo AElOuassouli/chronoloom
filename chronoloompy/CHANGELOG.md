@@ -1,6 +1,35 @@
 # Unreleased
 
+## Added
+
+- `TimeIntervalEvent` now validates its bounds: `end_timestamp` must be
+  strictly after `start_timestamp`, so empty and inverted spans are rejected
+  instead of being silently accepted.
+- Tests for both primitive models, and a smoke test proving the compiled
+  `_core` extension imports.
+
+## Removed
+
+- `chronoloompy._core.intersection`, and the pyo3 adapter behind it. The
+  `chronoloom` crate moved interval operations off its free-function `algebra`
+  module and onto `TimeIntervalEvent`; `_core` exports nothing until the
+  binding's `chronoloom` requirement names a release carrying that API.
+- `chronoloompy.algebra`, including the unimplemented `interval_union` and
+  `interval_intersection` stubs. Interval algebra is implemented once in
+  `chronoloom` and will reach Python through the binding, not as a second
+  Python implementation.
+- `TimeIntervalEvent.left_open` and `TimeIntervalEvent.right_open`. The core is
+  half-open only, so configurable endpoints described a model the algebra never
+  had.
+- The `attribute` field on both primitives, folded into `value`. Two payload
+  fields with overlapping meaning invited events that carried their data in
+  whichever one the caller happened to pick.
+
 ## Fixed
+
+- `TimePointEvent.timestamp` accepts any integer rather than only positive
+  ones, matching the Rust core: the epoch is the caller's to choose, so
+  negative timestamps are ordinary.
 
 - Releasing now runs the full CI suite before publishing. `cd-chronoloompy`
   calls `ci-chronoloompy` as a reusable workflow and gates the PyPI publish on

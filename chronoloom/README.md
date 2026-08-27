@@ -33,6 +33,40 @@ assert_eq!(phase.duration(), 60);
 assert!(TimeIntervalEvent::span(5, 5).is_err());
 ```
 
+## Sequences
+
+`TimePointSequence` collects point events and keeps them in time order however
+they arrive. Events sit contiguously in one `Vec`, sorted by timestamp, so
+lookups and windows binary-search that maintained order rather than scanning,
+and a window comes back as a real slice. Adding an event that belongs at the
+end — the usual case for events arriving in time order — costs no shifting at
+all. Several events may share an instant, where they keep the order they were
+added.
+
+```rust
+use chronoloom::{TimePointEvent, TimePointSequence};
+
+let readings = TimePointSequence::from_events(vec![
+    TimePointEvent::new(30, 3.0),
+    TimePointEvent::new(10, 1.0),
+    TimePointEvent::new(20, 2.0),
+]);
+
+// Ordered however the events arrived.
+let seen: Vec<i64> = readings.iter().map(|e| e.timestamp()).collect();
+assert_eq!(seen, [10, 20, 30]);
+
+// Any Rust range works, and a window is a slice of the sequence itself.
+let window: &[TimePointEvent<f64>] = readings.range(10..30);
+assert_eq!(window.len(), 2);
+
+// The closest event in either direction, when the exact instant is missing.
+assert_eq!(readings.nearest(28).map(|e| e.timestamp()), Some(30));
+```
+
+`before` and `after` answer the same question one-sidedly, and both bounds are
+inclusive — an event landing exactly on the instant is the answer.
+
 ## Operations
 
 Two intervals can be intersected — the span where both are active — or united —

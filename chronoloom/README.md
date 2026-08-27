@@ -93,6 +93,36 @@ Because the timeline is normalized, `len` counts the spans left after merging �
 not the number inserted — and two sequences are equal exactly when they cover
 the same instants, however they were built.
 
+Two timelines combine with the usual set algebra. Both operands are borrowed and
+left untouched; each operation returns a new sequence. Since both are already
+ordered, each is a single pass over the two — linear, with no sorting.
+
+```rust
+use chronoloom::{TimeIntervalEvent, TimeIntervalSequence};
+
+let up = TimeIntervalSequence::from_spans(vec![
+    TimeIntervalEvent::span(0, 100).unwrap(),
+]);
+let maintenance = TimeIntervalSequence::from_spans(vec![
+    TimeIntervalEvent::span(10, 20).unwrap(),
+    TimeIntervalEvent::span(30, 40).unwrap(),
+]);
+
+// Up, but not in maintenance.
+let serving = up.difference(&maintenance);
+let bounds: Vec<(i64, i64)> = serving.iter().map(|s| s.bounds()).collect();
+assert_eq!(bounds, [(0, 10), (20, 30), (40, 100)]);
+
+// Everything in maintenance happened while up.
+assert_eq!(up.intersection(&maintenance), maintenance);
+
+// Both operands are untouched and still usable.
+assert_eq!(up.union(&maintenance), up);
+```
+
+`symmetric_difference` is the XOR: the instants covered by exactly one of the
+two timelines.
+
 ## Operations on a pair of intervals
 
 Two `TimeIntervalEvent`s can be intersected — the span where both are active —
@@ -122,9 +152,10 @@ with `map` if the result needs to mean something.
 ## Not here yet
 
 The wider algebra is still to come — window and containment queries over a
-sequence, coverage and gaps, set operations between whole sequences, and
-carrying values through any of them. What exists today is the vocabulary, the
-two sequence shapes, and the pair-wise interval operations above.
+sequence, coverage and gaps, complement, the same set algebra for
+`TimePointSequence`, and carrying values through any of it. What exists today is
+the vocabulary, the two sequence shapes, the pair-wise interval operations, and
+the set algebra between two interval timelines.
 
 Every code block in this file is compiled and run by `make test`, so what is
 documented here is what is implemented.

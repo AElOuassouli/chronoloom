@@ -104,26 +104,25 @@ impl TimeIntervalSequence {
     pub fn from_spans(mut spans: Vec<TimeIntervalEvent<()>>) -> Self {
         spans.sort_by_key(TimeIntervalEvent::start);
 
-        // Sweep once, folding each span into the one being built whenever they
-        // overlap or touch. The sort guarantees every span that can merge with
-        // the current one comes next, so a single pass is enough.
+        // Sweep once, folding each span into the one still open. The sort
+        // guarantees every span that can merge with the current one comes next,
+        // so a single pass is enough.
         let mut normalized: Vec<TimeIntervalEvent<()>> = Vec::with_capacity(spans.len());
         for span in spans {
-            match normalized.pop() {
-                // Overlapping or touching the span still being built: widen it.
-                Some(open) if span.start() <= open.end() => normalized.push(
-                    TimeIntervalEvent::raw(open.start(), open.end().max(span.end())),
-                ),
-                // A real gap, so the previous span is finished.
-                Some(open) => {
-                    normalized.push(open);
-                    normalized.push(span);
-                }
-                None => normalized.push(span),
-            }
+            absorb(&mut normalized, span);
         }
 
-        Self { spans: normalized }
+        Self::from_normalized(normalized)
+    }
+
+    /// Wrap spans that are already in canonical form.
+    ///
+    /// Private and unchecked: the caller must have produced them sorted,
+    /// disjoint, and non-touching. Every use here either folds through
+    /// [`absorb`] or walks two already-normalized sequences in order, both of
+    /// which produce canonical output — so re-sorting would be wasted work.
+    fn from_normalized(spans: Vec<TimeIntervalEvent<()>>) -> Self {
+        Self { spans }
     }
 
     /// Consume the sequence and return its spans, earliest first.
@@ -437,6 +436,246 @@ impl TimeIntervalSequence {
     pub fn contains(&self, timestamp: Timestamp) -> bool {
         self.at(timestamp).is_some()
     }
+
+    /// The instants covered by **either** timeline.
+    ///
+    /// Both operands are borrowed and left untouched; the result is a new
+    /// sequence. Spans that touch across the two merge, as they would within
+    /// one: `[0, 5)` here and `[5, 9)` there become `[0, 9)`.
+    ///
+    /// Both sequences are already ordered, so this is a single pass over the
+    /// two — linear in their combined length, with no sorting.
+    ///
+    /// ```
+    /// use chronoloom::primitives::TimeIntervalEvent;
+    /// use chronoloom::sequences::TimeIntervalSequence;
+    ///
+    /// let up = TimeIntervalSequence::from_spans(vec![TimeIntervalEvent::span(0, 5)?]);
+    /// let extra = TimeIntervalSequence::from_spans(vec![
+    ///     TimeIntervalEvent::span(5, 9)?,
+    ///     TimeIntervalEvent::span(20, 30)?,
+    /// ]);
+    ///
+    /// let either = up.union(&extra);
+    /// let bounds: Vec<(i64, i64)> = either.iter().map(TimeIntervalEvent::bounds).collect();
+    /// assert_eq!(bounds, [(0, 9), (20, 30)]);
+    ///
+    /// // Neither operand changed.
+    /// assert_eq!(up.len(), 1);
+    /// assert_eq!(extra.len(), 2);
+    /// # Ok::<(), chronoloom::primitives::IntervalError>(())
+    /// ```
+    #[must_use]
+    pub fn union(&self, other: &Self) -> Self {
+        // At most every span from both sides survives, so this capacity is an
+        // exact upper bound.
+        let mut spans = Vec::with_capacity(self.spans.len() + other.spans.len());
+        let (mut i, mut j) = (0, 0);
+
+        loop {
+            // Take whichever side starts earlier. A tie can go either way,
+            // since the two will merge regardless.
+            let next = match (self.spans.get(i), other.spans.get(j)) {
+                (Some(mine), Some(theirs)) => {
+                    if mine.start() <= theirs.start() {
+                        i += 1;
+                        *mine
+                    } else {
+                        j += 1;
+                        *theirs
+                    }
+                }
+                (Some(mine), None) => {
+                    i += 1;
+                    *mine
+                }
+                (None, Some(theirs)) => {
+                    j += 1;
+                    *theirs
+                }
+                (None, None) => break,
+            };
+
+            absorb(&mut spans, next);
+        }
+
+        Self::from_normalized(spans)
+    }
+
+    /// The instants covered by **both** timelines.
+    ///
+    /// Both operands are borrowed and left untouched; the result is a new
+    /// sequence. Because spans are half-open, timelines that merely touch share
+    /// no instant and so intersect to nothing.
+    ///
+    /// A single pass over the two, linear in their combined length.
+    ///
+    /// ```
+    /// use chronoloom::primitives::TimeIntervalEvent;
+    /// use chronoloom::sequences::TimeIntervalSequence;
+    ///
+    /// let up = TimeIntervalSequence::from_spans(vec![TimeIntervalEvent::span(0, 100)?]);
+    /// let busy = TimeIntervalSequence::from_spans(vec![
+    ///     TimeIntervalEvent::span(10, 20)?,
+    ///     TimeIntervalEvent::span(30, 40)?,
+    /// ]);
+    ///
+    /// // Everything busy happened while up, so the overlap is `busy` exactly.
+    /// assert_eq!(up.intersection(&busy), busy);
+    ///
+    /// let touching = TimeIntervalSequence::from_spans(vec![TimeIntervalEvent::span(100, 200)?]);
+    /// assert!(up.intersection(&touching).is_empty());
+    /// # Ok::<(), chronoloom::primitives::IntervalError>(())
+    /// ```
+    #[must_use]
+    pub fn intersection(&self, other: &Self) -> Self {
+        let mut spans = Vec::new();
+        let (mut i, mut j) = (0, 0);
+
+        while let (Some(mine), Some(theirs)) = (self.spans.get(i), other.spans.get(j)) {
+            // What the pair shares is the primitive's business, not this loop's.
+            if let Some(overlap) = mine.intersection(theirs) {
+                spans.push(overlap);
+            }
+
+            // Whichever ends first cannot reach anything still to come, so it is
+            // safe to drop. That is the entire trick.
+            if mine.end() < theirs.end() {
+                i += 1;
+            } else {
+                j += 1;
+            }
+        }
+
+        Self::from_normalized(spans)
+    }
+
+    /// The instants covered by this timeline but **not** by `other`.
+    ///
+    /// Both operands are borrowed and left untouched; the result is a new
+    /// sequence. A span of `other` landing inside one of ours splits it in two.
+    ///
+    /// A single pass over the two, linear in their combined length.
+    ///
+    /// ```
+    /// use chronoloom::primitives::TimeIntervalEvent;
+    /// use chronoloom::sequences::TimeIntervalSequence;
+    ///
+    /// let up = TimeIntervalSequence::from_spans(vec![TimeIntervalEvent::span(0, 100)?]);
+    /// let maintenance = TimeIntervalSequence::from_spans(vec![
+    ///     TimeIntervalEvent::span(10, 20)?,
+    ///     TimeIntervalEvent::span(30, 40)?,
+    /// ]);
+    ///
+    /// let serving = up.difference(&maintenance);
+    /// let bounds: Vec<(i64, i64)> = serving.iter().map(TimeIntervalEvent::bounds).collect();
+    /// assert_eq!(bounds, [(0, 10), (20, 30), (40, 100)]);
+    /// # Ok::<(), chronoloom::primitives::IntervalError>(())
+    /// ```
+    #[must_use]
+    pub fn difference(&self, other: &Self) -> Self {
+        // `cursor` is the first instant of the current span not yet accounted
+        // for. Starting it needs a first span, so an empty timeline is done
+        // before the loop begins.
+        let Some(first) = self.spans.first() else {
+            return Self::new();
+        };
+
+        let mut spans = Vec::new();
+        let (mut i, mut j) = (0, 0);
+        let mut cursor = first.start();
+
+        while let Some(mine) = self.spans.get(i) {
+            match other.spans.get(j) {
+                // Nothing of `other` reaches into what is left of this span.
+                Some(theirs) if theirs.start() < mine.end() => {
+                    if theirs.end() <= cursor {
+                        // Already behind the cursor, so it covers nothing new.
+                        j += 1;
+                        continue;
+                    }
+
+                    if cursor < theirs.start() {
+                        spans.push(TimeIntervalEvent::raw(cursor, theirs.start()));
+                    }
+                    // The guard above established `theirs.end() > cursor`, so
+                    // this only ever moves the cursor forward.
+                    cursor = theirs.end();
+
+                    if cursor >= mine.end() {
+                        // This span is fully accounted for, but `theirs` may
+                        // still reach into the next one.
+                        i += 1;
+                    } else {
+                        j += 1;
+                    }
+                }
+                _ => {
+                    if cursor < mine.end() {
+                        spans.push(TimeIntervalEvent::raw(cursor, mine.end()));
+                    }
+                    i += 1;
+                }
+            }
+
+            // Every new span starts uncovered.
+            if let Some(next) = self.spans.get(i) {
+                cursor = cursor.max(next.start());
+            }
+        }
+
+        Self::from_normalized(spans)
+    }
+
+    /// The instants covered by exactly **one** of the two timelines.
+    ///
+    /// The set-algebra XOR: an instant belongs to the result when it is in this
+    /// timeline or the other, but not both. Both operands are borrowed and left
+    /// untouched.
+    ///
+    /// Composed as `(self - other) ∪ (other - self)`, so still linear in the
+    /// combined length.
+    ///
+    /// ```
+    /// use chronoloom::primitives::TimeIntervalEvent;
+    /// use chronoloom::sequences::TimeIntervalSequence;
+    ///
+    /// let a = TimeIntervalSequence::from_spans(vec![TimeIntervalEvent::span(0, 10)?]);
+    /// let b = TimeIntervalSequence::from_spans(vec![TimeIntervalEvent::span(5, 15)?]);
+    ///
+    /// let only_one = a.symmetric_difference(&b);
+    /// let bounds: Vec<(i64, i64)> = only_one.iter().map(TimeIntervalEvent::bounds).collect();
+    /// assert_eq!(bounds, [(0, 5), (10, 15)]);
+    ///
+    /// // Exactly the instants where the two disagree.
+    /// assert!(only_one.contains(2));
+    /// assert!(!only_one.contains(7));
+    /// # Ok::<(), chronoloom::primitives::IntervalError>(())
+    /// ```
+    #[must_use]
+    pub fn symmetric_difference(&self, other: &Self) -> Self {
+        self.difference(other).union(&other.difference(self))
+    }
+}
+
+/// Fold `span` into an already-normalized `normalized`, merging when the two
+/// combine.
+///
+/// `span` must start at or after the last span in `normalized`, which every
+/// caller guarantees by walking its input in order. Whether two spans combine,
+/// and into what, is [`TimeIntervalEvent::merged`]'s decision — this exists so
+/// the sequence never restates that rule.
+fn absorb(normalized: &mut Vec<TimeIntervalEvent<()>>, span: TimeIntervalEvent<()>) {
+    match normalized.pop() {
+        Some(open) => match open.merged(&span) {
+            Some(merged) => normalized.push(merged),
+            None => {
+                normalized.push(open);
+                normalized.push(span);
+            }
+        },
+        None => normalized.push(span),
+    }
 }
 
 impl FromIterator<TimeIntervalEvent<()>> for TimeIntervalSequence {
@@ -549,6 +788,9 @@ mod tests {
     use super::TimeIntervalSequence;
     use crate::primitives::TimeIntervalEvent;
 
+    /// A pair of operands, each as its `(start, end)` bounds.
+    type OperandShapes<'a> = (&'a [(i64, i64)], &'a [(i64, i64)]);
+
     /// A span, for tests where the bounds are known good.
     fn span(start: i64, end: i64) -> TimeIntervalEvent<()> {
         TimeIntervalEvent::span(start, end).expect("test bounds are ordered")
@@ -582,6 +824,37 @@ mod tests {
     /// The bounds a sequence reads, in order.
     fn bounds(sequence: &TimeIntervalSequence) -> Vec<(i64, i64)> {
         sequence.iter().map(TimeIntervalEvent::bounds).collect()
+    }
+
+    /// Assert an operation means what it claims, one instant at a time.
+    ///
+    /// Rather than trusting a hand-written list of expected spans — which can
+    /// encode the very off-by-one it is meant to catch — this checks that the
+    /// result covers exactly the instants the boolean rule says it should,
+    /// across the whole range the operands touch and a margin either side.
+    fn assert_covers(
+        result: &TimeIntervalSequence,
+        a: &TimeIntervalSequence,
+        b: &TimeIntervalSequence,
+        rule: impl Fn(bool, bool) -> bool,
+    ) {
+        assert_normalized(result);
+
+        for timestamp in -5..=105 {
+            assert_eq!(
+                result.contains(timestamp),
+                rule(a.contains(timestamp), b.contains(timestamp)),
+                "instant {timestamp} is on the wrong side of the result",
+            );
+        }
+    }
+
+    /// Every operation, checked against its boolean rule on the same operands.
+    fn assert_all_operations(a: &TimeIntervalSequence, b: &TimeIntervalSequence) {
+        assert_covers(&a.union(b), a, b, |x, y| x || y);
+        assert_covers(&a.intersection(b), a, b, |x, y| x && y);
+        assert_covers(&a.difference(b), a, b, |x, y| x && !y);
+        assert_covers(&a.symmetric_difference(b), a, b, |x, y| x ^ y);
     }
 
     /// The invariant every method must restore: sorted, disjoint, and with no
@@ -854,6 +1127,210 @@ mod tests {
         assert_normalized(&uptime);
 
         assert_eq!(bounds(&uptime), [(0, 20)]);
+    }
+
+    #[test]
+    fn every_operation_means_what_it_says_on_varied_shapes() {
+        // Overlapping, nested, touching, disjoint, and interleaved operands,
+        // each checked instant by instant against its boolean rule.
+        let shapes: [OperandShapes<'_>; 8] = [
+            (&[(0, 10)], &[(5, 15)]),
+            (&[(0, 100)], &[(10, 20), (30, 40)]),
+            (&[(0, 5)], &[(5, 9)]),
+            (&[(0, 5)], &[(20, 30)]),
+            (&[(0, 10), (20, 30)], &[(5, 25)]),
+            (&[(0, 20)], &[(5, 10)]),
+            (&[(0, 10), (20, 30), (40, 50)], &[(5, 15), (25, 45)]),
+            (&[(10, 20)], &[(10, 20)]),
+        ];
+
+        for (left, right) in shapes {
+            let a = from_spans(left.iter().copied());
+            let b = from_spans(right.iter().copied());
+
+            assert_all_operations(&a, &b);
+            assert_all_operations(&b, &a);
+        }
+    }
+
+    #[test]
+    fn every_operation_handles_an_empty_operand_on_either_side() {
+        let a = from_spans([(0, 10), (20, 30)]);
+        let empty = TimeIntervalSequence::new();
+
+        assert_all_operations(&a, &empty);
+        assert_all_operations(&empty, &a);
+        assert_all_operations(&empty, &empty);
+    }
+
+    #[test]
+    fn touching_sequences_unite_but_never_intersect() {
+        let a = from_spans([(0, 5)]);
+        let b = from_spans([(5, 9)]);
+
+        assert_eq!(bounds(&a.union(&b)), [(0, 9)]);
+        assert!(a.intersection(&b).is_empty());
+        assert_eq!(bounds(&a.difference(&b)), [(0, 5)]);
+        assert_eq!(bounds(&a.symmetric_difference(&b)), [(0, 9)]);
+    }
+
+    #[test]
+    fn one_long_span_against_many_short_ones() {
+        let up = from_spans([(0, 100)]);
+        let busy = from_spans([(10, 20), (30, 40)]);
+
+        assert_eq!(up.intersection(&busy), busy);
+        assert_eq!(
+            bounds(&up.difference(&busy)),
+            [(0, 10), (20, 30), (40, 100)]
+        );
+        assert_eq!(up.union(&busy), up);
+        assert_eq!(
+            bounds(&up.symmetric_difference(&busy)),
+            [(0, 10), (20, 30), (40, 100)]
+        );
+    }
+
+    #[test]
+    fn a_span_straddling_two_of_ours_carves_both() {
+        // `theirs` reaches past the end of the first span into the second, so
+        // `difference` must advance its own index without dropping `theirs`.
+        let mine = from_spans([(0, 10), (20, 30)]);
+        let theirs = from_spans([(5, 25)]);
+
+        assert_eq!(bounds(&mine.difference(&theirs)), [(0, 5), (25, 30)]);
+        assert_all_operations(&mine, &theirs);
+    }
+
+    #[test]
+    fn operations_leave_both_operands_untouched() {
+        let a = from_spans([(0, 10), (20, 30)]);
+        let b = from_spans([(5, 25)]);
+        let (a_before, b_before) = (a.clone(), b.clone());
+
+        let _ = a.union(&b);
+        let _ = a.intersection(&b);
+        let _ = a.difference(&b);
+        let _ = a.symmetric_difference(&b);
+
+        assert_eq!(a, a_before);
+        assert_eq!(b, b_before);
+
+        // And both are still usable for further work.
+        assert_eq!(a.union(&b), a_before.union(&b_before));
+    }
+
+    #[test]
+    fn operations_are_commutative_where_they_should_be() {
+        let a = from_spans([(0, 10), (20, 30)]);
+        let b = from_spans([(5, 25), (40, 50)]);
+
+        assert_eq!(a.union(&b), b.union(&a));
+        assert_eq!(a.intersection(&b), b.intersection(&a));
+        assert_eq!(a.symmetric_difference(&b), b.symmetric_difference(&a));
+
+        // Difference is the one that is not.
+        assert_ne!(a.difference(&b), b.difference(&a));
+    }
+
+    #[test]
+    fn operations_against_itself_collapse() {
+        let a = from_spans([(0, 10), (20, 30)]);
+
+        assert_eq!(a.union(&a), a);
+        assert_eq!(a.intersection(&a), a);
+        assert!(a.difference(&a).is_empty());
+        assert!(a.symmetric_difference(&a).is_empty());
+    }
+
+    #[test]
+    fn the_empty_sequence_is_the_identity_it_should_be() {
+        let a = from_spans([(0, 10), (20, 30)]);
+        let empty = TimeIntervalSequence::new();
+
+        assert_eq!(a.union(&empty), a);
+        assert!(a.intersection(&empty).is_empty());
+        assert_eq!(a.difference(&empty), a);
+        assert!(empty.difference(&a).is_empty());
+        assert_eq!(a.symmetric_difference(&empty), a);
+    }
+
+    #[test]
+    fn absorption_laws_hold() {
+        let a = from_spans([(0, 10), (20, 30)]);
+        let b = from_spans([(5, 25)]);
+
+        assert_eq!(a.union(&a.intersection(&b)), a);
+        assert_eq!(a.intersection(&a.union(&b)), a);
+    }
+
+    #[test]
+    fn intersection_distributes_over_union_and_the_dual() {
+        let a = from_spans([(0, 20), (40, 60)]);
+        let b = from_spans([(10, 30)]);
+        let c = from_spans([(15, 50)]);
+
+        assert_eq!(
+            a.intersection(&b.union(&c)),
+            a.intersection(&b).union(&a.intersection(&c)),
+        );
+        assert_eq!(
+            a.union(&b.intersection(&c)),
+            a.union(&b).intersection(&a.union(&c)),
+        );
+    }
+
+    #[test]
+    fn de_morgan_holds_relative_to_the_left_operand() {
+        let a = from_spans([(0, 60)]);
+        let b = from_spans([(10, 30)]);
+        let c = from_spans([(20, 50)]);
+
+        assert_eq!(
+            a.difference(&b.union(&c)),
+            a.difference(&b).intersection(&a.difference(&c))
+        );
+        assert_eq!(
+            a.difference(&b.intersection(&c)),
+            a.difference(&b).union(&a.difference(&c))
+        );
+    }
+
+    #[test]
+    fn the_operations_agree_with_each_other() {
+        let a = from_spans([(0, 10), (20, 30), (40, 50)]);
+        let b = from_spans([(5, 25), (45, 60)]);
+
+        // Symmetric difference is everything covered, minus what both share.
+        assert_eq!(
+            a.symmetric_difference(&b),
+            a.union(&b).difference(&a.intersection(&b)),
+        );
+        // What is only ours, plus what we share, is everything of ours.
+        assert_eq!(a.difference(&b).union(&a.intersection(&b)), a);
+    }
+
+    #[test]
+    fn operations_handle_negative_bounds() {
+        let a = from_spans([(-20, -10), (-5, 5)]);
+        let b = from_spans([(-15, 0)]);
+
+        assert_eq!(bounds(&a.union(&b)), [(-20, 5)]);
+        assert_eq!(bounds(&a.intersection(&b)), [(-15, -10), (-5, 0)]);
+        assert_eq!(bounds(&a.difference(&b)), [(-20, -15), (0, 5)]);
+    }
+
+    #[test]
+    fn operations_survive_the_timestamp_extremes() {
+        let widest = from_spans([(i64::MIN, i64::MAX)]);
+        let middle = from_spans([(-1, 1)]);
+
+        assert_eq!(widest.union(&middle), widest);
+        assert_eq!(widest.intersection(&middle), middle);
+        assert_eq!(
+            bounds(&widest.difference(&middle)),
+            [(i64::MIN, -1), (1, i64::MAX)]
+        );
     }
 
     #[test]

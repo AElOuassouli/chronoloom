@@ -64,6 +64,18 @@
   `FromIterator` / `Extend` / `IntoIterator` / `Index` impls, mirroring
   `TimePointSequence` wherever the two shapes agree.
 - Both sequences are re-exported at the crate root.
+- Set algebra between two `TimeIntervalSequence`s: `union` (either timeline),
+  `intersection` (both), `difference` (this one but not the other), and
+  `symmetric_difference` (exactly one — the XOR). Every operation borrows both
+  operands, leaves them untouched, and returns a new sequence.
+- Because both timelines are already normalized, each operation is a single
+  pass over the two with no sorting — linear in their combined length. Results
+  come back normalized by construction, so nothing is re-sorted either.
+- `TimeIntervalEvent::merged`, the single span covering two intervals, or
+  `None` when a gap separates them. The non-allocating counterpart to `union`,
+  which now delegates to it — so whether two intervals combine, and into what,
+  has one definition. Completes the trio with `intersection`: what two
+  intervals share, what they cover together, and the unconditional answer.
 
 ## Removed
 

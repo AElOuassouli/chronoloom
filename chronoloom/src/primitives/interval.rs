@@ -343,10 +343,15 @@ impl TimeIntervalEvent<()> {
 
     /// Build a span whose bounds are already known to be valid.
     ///
-    /// Deliberately private and unvalidated: the caller must have proven
+    /// Crate-internal and unvalidated: the caller must have proven
     /// `start < end`, otherwise the non-empty invariant is broken. Every use
-    /// derives its bounds from intervals that already uphold it.
-    const fn raw(start: Timestamp, end: Timestamp) -> Self {
+    /// derives its bounds from intervals that already uphold it — the interval
+    /// operations here, and the merging in [`sequences`]. Validating again
+    /// would be dead code, and an `expect` would add a panic path that can
+    /// never fire.
+    ///
+    /// [`sequences`]: crate::sequences
+    pub(crate) const fn raw(start: Timestamp, end: Timestamp) -> Self {
         Self {
             start,
             end,

@@ -47,7 +47,23 @@
   and borrowed. `FromIterator` takes the `from_events` path, so collecting also
   sorts once instead of inserting one event at a time, and `Extend` reorders
   only when the additions actually broke the order.
-- `TimePointSequence` is re-exported at the crate root.
+- `sequences::TimeIntervalSequence`, the other sequence shape: one state over
+  time, as the spans during which it was active. Every span means the same
+  thing, so the sequence carries no per-span value — when state values are
+  modelled they will belong to the sequence as a whole.
+- That timeline is kept **normalized**: sorted by start, pairwise disjoint, and
+  with no two spans left touching. Overlapping *and touching* spans merge as
+  they arrive, since `[0, 5)` and `[5, 9)` together cover exactly `[0, 9)` —
+  the same rule `TimeIntervalEvent::union` applies to a pair. Consequently
+  `len` counts the spans remaining after merging rather than the number
+  inserted, and two sequences are equal exactly when they cover the same
+  instants, however they were built.
+- `TimeIntervalSequence::from_spans` / `into_spans`, `insert` (merging),
+  `remove` by position, `at` and `contains` for whether the state was active at
+  an instant, plus `as_slice`, `nth`, `first` / `last`, `iter`, and the
+  `FromIterator` / `Extend` / `IntoIterator` / `Index` impls, mirroring
+  `TimePointSequence` wherever the two shapes agree.
+- Both sequences are re-exported at the crate root.
 
 ## Removed
 

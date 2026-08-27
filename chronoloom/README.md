@@ -67,10 +67,36 @@ assert_eq!(readings.nearest(28).map(|e| e.timestamp()), Some(30));
 `before` and `after` answer the same question one-sidedly, and both bounds are
 inclusive — an event landing exactly on the instant is the answer.
 
-## Operations
+`TimeIntervalSequence` is the other shape: **one state over time**, as the spans
+during which it was active. Every span means the same thing, so there is no
+per-span value. Overlapping and touching spans merge as they arrive, keeping the
+timeline a canonical, disjoint description of which instants are covered.
 
-Two intervals can be intersected — the span where both are active — or united —
-the spans covered by either, merged when nothing separates them.
+```rust
+use chronoloom::{TimeIntervalEvent, TimeIntervalSequence};
+
+let mut uptime = TimeIntervalSequence::new();
+uptime.insert(TimeIntervalEvent::span(0, 5).unwrap());
+uptime.insert(TimeIntervalEvent::span(20, 30).unwrap());
+
+// Touching [0, 5) leaves no instant between them, so they merge.
+uptime.insert(TimeIntervalEvent::span(5, 9).unwrap());
+assert_eq!(uptime[0].bounds(), (0, 9));
+
+// A span reaching across the gap swallows both.
+uptime.insert(TimeIntervalEvent::span(7, 25).unwrap());
+assert_eq!(uptime.len(), 1);
+assert!(uptime.contains(12));
+```
+
+Because the timeline is normalized, `len` counts the spans left after merging —
+not the number inserted — and two sequences are equal exactly when they cover
+the same instants, however they were built.
+
+## Operations on a pair of intervals
+
+Two `TimeIntervalEvent`s can be intersected — the span where both are active —
+or united — the spans covered by either, merged when nothing separates them.
 
 ```rust
 use chronoloom::TimeIntervalEvent;
@@ -92,6 +118,16 @@ assert_eq!(a.union(&far).len(), 2);
 Both work on the time dimension only: they accept intervals carrying different
 kinds of value, consume neither, and return valueless spans. Reattach a value
 with `map` if the result needs to mean something.
+
+## Not here yet
+
+The wider algebra is still to come — window and containment queries over a
+sequence, coverage and gaps, set operations between whole sequences, and
+carrying values through any of them. What exists today is the vocabulary, the
+two sequence shapes, and the pair-wise interval operations above.
+
+Every code block in this file is compiled and run by `make test`, so what is
+documented here is what is implemented.
 
 ## Python
 

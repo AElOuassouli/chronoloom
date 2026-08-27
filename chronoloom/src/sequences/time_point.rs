@@ -38,10 +38,11 @@ use crate::primitives::{TimePointEvent, Timestamp};
 ///   search stays logarithmic; the shift is a `memmove`, so it runs at memory
 ///   bandwidth rather than chasing pointers.
 ///
-/// Building from an existing collection through [`FromIterator`] sorts once
-/// rather than inserting one event at a time, so prefer `collect` to a loop of
-/// [`insert`] when the events are already in hand.
+/// When the events already exist, build with [`from_events`] rather than a loop
+/// of [`insert`]: it sorts once, in place, instead of finding a home for each
+/// event in turn. [`collect`][Iterator::collect] takes the same path.
 ///
+/// [`from_events`]: TimePointSequence::from_events
 /// [`insert`]: TimePointSequence::insert
 /// [`remove`]: TimePointSequence::remove
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -64,6 +65,80 @@ impl<T> TimePointSequence<T> {
     #[must_use]
     pub const fn new() -> Self {
         Self { events: Vec::new() }
+    }
+
+    /// Build a sequence from events already in hand.
+    ///
+    /// The usual way to create one when the data exists up front rather than
+    /// arriving over time. The events may be in any order; they are sorted
+    /// once, in place, reusing the `Vec` you pass rather than building a second
+    /// one. Events sharing an instant keep the order they appear in.
+    ///
+    /// Already-ordered input costs only a scan to confirm it — the sort
+    /// recognises a sorted run and does no work — so there is no reason to
+    /// reach for anything else when the data comes out of a time-ordered file
+    /// or query.
+    ///
+    /// ```
+    /// use chronoloom::primitives::TimePointEvent;
+    /// use chronoloom::sequences::TimePointSequence;
+    ///
+    /// let readings = TimePointSequence::from_events(vec![
+    ///     TimePointEvent::new(30, 3.0),
+    ///     TimePointEvent::new(10, 1.0),
+    ///     TimePointEvent::new(20, 2.0),
+    /// ]);
+    ///
+    /// let order: Vec<i64> = readings.iter().map(|e| e.timestamp()).collect();
+    /// assert_eq!(order, [10, 20, 30]);
+    /// ```
+    ///
+    /// Anything iterable works through [`collect`][Iterator::collect], which
+    /// goes through this same path:
+    ///
+    /// ```
+    /// use chronoloom::primitives::TimePointEvent;
+    /// use chronoloom::sequences::TimePointSequence;
+    ///
+    /// let readings: TimePointSequence<f64> = [
+    ///     TimePointEvent::new(20, 2.0),
+    ///     TimePointEvent::new(10, 1.0),
+    /// ]
+    /// .into_iter()
+    /// .collect();
+    ///
+    /// assert_eq!(readings.first().map(|e| e.timestamp()), Some(10));
+    /// ```
+    #[must_use]
+    pub fn from_events(mut events: Vec<TimePointEvent<T>>) -> Self {
+        // Stable, so events sharing an instant keep their given order.
+        events.sort_by_key(TimePointEvent::timestamp);
+
+        Self { events }
+    }
+
+    /// Consume the sequence and return its events, oldest first.
+    ///
+    /// The inverse of [`from_events`], and free: the sequence hands over the
+    /// `Vec` it was already holding.
+    ///
+    /// ```
+    /// use chronoloom::primitives::TimePointEvent;
+    /// use chronoloom::sequences::TimePointSequence;
+    ///
+    /// let readings = TimePointSequence::from_events(vec![
+    ///     TimePointEvent::new(20, 'b'),
+    ///     TimePointEvent::new(10, 'a'),
+    /// ]);
+    ///
+    /// let events = readings.into_events();
+    /// assert_eq!(events[0].timestamp(), 10);
+    /// ```
+    ///
+    /// [`from_events`]: TimePointSequence::from_events
+    #[must_use]
+    pub fn into_events(self) -> Vec<TimePointEvent<T>> {
+        self.events
     }
 
     /// How many events the sequence holds.
@@ -536,10 +611,7 @@ impl<T> FromIterator<TimePointEvent<T>> for TimePointSequence<T> {
     /// assert_eq!(readings.first().map(|e| e.timestamp()), Some(10));
     /// ```
     fn from_iter<I: IntoIterator<Item = TimePointEvent<T>>>(events: I) -> Self {
-        let mut events: Vec<TimePointEvent<T>> = events.into_iter().collect();
-        events.sort_by_key(TimePointEvent::timestamp);
-
-        Self { events }
+        Self::from_events(events.into_iter().collect())
     }
 }
 
@@ -659,6 +731,16 @@ mod tests {
             .collect()
     }
 
+    /// Build a sequence from `(timestamp, value)` pairs through `from_events`.
+    fn from_events<T>(events: impl IntoIterator<Item = (i64, T)>) -> TimePointSequence<T> {
+        TimePointSequence::from_events(
+            events
+                .into_iter()
+                .map(|(timestamp, value)| TimePointEvent::new(timestamp, value))
+                .collect(),
+        )
+    }
+
     /// The timestamps a sequence reads, in order.
     fn timestamps<T>(sequence: &TimePointSequence<T>) -> Vec<i64> {
         sequence.iter().map(TimePointEvent::timestamp).collect()
@@ -682,10 +764,52 @@ mod tests {
     }
 
     #[test]
-    fn insertion_and_collection_agree() {
+    fn every_construction_path_agrees() {
         let events = [(30, 'c'), (10, 'a'), (20, 'b'), (10, 'z'), (-5, 'y')];
 
         assert_eq!(inserted(events), collected(events));
+        assert_eq!(from_events(events), collected(events));
+    }
+
+    #[test]
+    fn from_events_orders_whatever_it_is_given() {
+        assert_eq!(
+            timestamps(&from_events([(30, 'c'), (10, 'a'), (20, 'b')])),
+            [10, 20, 30]
+        );
+    }
+
+    #[test]
+    fn from_events_leaves_already_ordered_input_alone() {
+        let readings = from_events([(10, 'a'), (20, 'b'), (30, 'c')]);
+
+        assert_eq!(values(&readings), ['a', 'b', 'c']);
+    }
+
+    #[test]
+    fn from_events_keeps_given_order_within_an_instant() {
+        assert_eq!(
+            values(&from_events([(20, 'd'), (10, 'c'), (10, 'a')])),
+            ['c', 'a', 'd']
+        );
+    }
+
+    #[test]
+    fn from_events_accepts_nothing() {
+        let readings: TimePointSequence<char> = TimePointSequence::from_events(vec![]);
+
+        assert!(readings.is_empty());
+        assert_eq!(readings, TimePointSequence::new());
+    }
+
+    #[test]
+    fn into_events_round_trips_from_events() {
+        let readings = from_events([(30, 'c'), (10, 'a'), (20, 'b')]);
+        let events = readings.clone().into_events();
+
+        assert_eq!(events.len(), 3);
+        assert_eq!(events[0].timestamp(), 10);
+        assert_eq!(TimePointSequence::from_events(events), readings);
     }
 
     #[test]

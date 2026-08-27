@@ -33,13 +33,11 @@
 //! ```
 //! use chronoloom::{TimePointEvent, TimePointSequence};
 //!
-//! let readings: TimePointSequence<f64> = [
+//! let readings = TimePointSequence::from_events(vec![
 //!     TimePointEvent::new(30, 3.0),
 //!     TimePointEvent::new(10, 1.0),
 //!     TimePointEvent::new(20, 2.0),
-//! ]
-//! .into_iter()
-//! .collect();
+//! ]);
 //!
 //! let window: Vec<i64> = readings.range(10..30).iter().map(|e| e.timestamp()).collect();
 //! assert_eq!(window, [10, 20]);

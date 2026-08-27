@@ -39,9 +39,14 @@
 - Slice and positional access: `as_slice`, `get` (by instant) and `range` both
   return slices of the sequence itself rather than copies, and `nth` plus an
   `Index<usize>` impl read by position in constant time.
+- `TimePointSequence::from_events` and `into_events`, for building a sequence
+  from data that already exists and getting it back out. `from_events` sorts
+  the `Vec` it is given in place rather than building a second one, and leaves
+  already-ordered input alone; `into_events` hands back the `Vec` unchanged.
 - `FromIterator`, `Extend`, and `IntoIterator` for `TimePointSequence`, owned
-  and borrowed. `FromIterator` sorts once instead of inserting one event at a
-  time, and `Extend` reorders only when the additions actually broke the order.
+  and borrowed. `FromIterator` takes the `from_events` path, so collecting also
+  sorts once instead of inserting one event at a time, and `Extend` reorders
+  only when the additions actually broke the order.
 - `TimePointSequence` is re-exported at the crate root.
 
 ## Removed

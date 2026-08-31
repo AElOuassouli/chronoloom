@@ -47,7 +47,35 @@
   and borrowed. `FromIterator` takes the `from_events` path, so collecting also
   sorts once instead of inserting one event at a time, and `Extend` reorders
   only when the additions actually broke the order.
-- `TimePointSequence` is re-exported at the crate root.
+- `sequences::TimeIntervalSequence`, the other sequence shape: one state over
+  time, as the spans during which it was active. Every span means the same
+  thing, so the sequence carries no per-span value — when state values are
+  modelled they will belong to the sequence as a whole.
+- That timeline is kept **normalized**: sorted by start, pairwise disjoint, and
+  with no two spans left touching. Overlapping *and touching* spans merge as
+  they arrive, since `[0, 5)` and `[5, 9)` together cover exactly `[0, 9)` —
+  the same rule `TimeIntervalEvent::union` applies to a pair. Consequently
+  `len` counts the spans remaining after merging rather than the number
+  inserted, and two sequences are equal exactly when they cover the same
+  instants, however they were built.
+- `TimeIntervalSequence::from_spans` / `into_spans`, `insert` (merging),
+  `remove` by position, `at` and `contains` for whether the state was active at
+  an instant, plus `as_slice`, `nth`, `first` / `last`, `iter`, and the
+  `FromIterator` / `Extend` / `IntoIterator` / `Index` impls, mirroring
+  `TimePointSequence` wherever the two shapes agree.
+- Both sequences are re-exported at the crate root.
+- Set algebra between two `TimeIntervalSequence`s: `union` (either timeline),
+  `intersection` (both), `difference` (this one but not the other), and
+  `symmetric_difference` (exactly one — the XOR). Every operation borrows both
+  operands, leaves them untouched, and returns a new sequence.
+- Because both timelines are already normalized, each operation is a single
+  pass over the two with no sorting — linear in their combined length. Results
+  come back normalized by construction, so nothing is re-sorted either.
+- `TimeIntervalEvent::merged`, the single span covering two intervals, or
+  `None` when a gap separates them. The non-allocating counterpart to `union`,
+  which now delegates to it — so whether two intervals combine, and into what,
+  has one definition. Completes the trio with `intersection`: what two
+  intervals share, what they cover together, and the unconditional answer.
 
 ## Removed
 

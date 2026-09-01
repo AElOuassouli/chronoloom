@@ -57,13 +57,41 @@ use crate::primitives::{TimeIntervalEvent, Timestamp};
 /// value would belong to the sequence as a whole rather than to each span, and
 /// state values are not modelled yet.
 ///
+/// # Active duration
+///
+/// The sequence carries the total time it covers as it goes, so
+/// [`active_duration`] is a read rather than a walk. Normalization is what
+/// makes that total meaningful: because the spans are disjoint, it is their
+/// plain sum, and an instant covered by three overlapping inserts still counts
+/// once.
+///
+/// ```
+/// use chronoloom::primitives::TimeIntervalEvent;
+/// use chronoloom::sequences::TimeIntervalSequence;
+///
+/// let uptime = TimeIntervalSequence::from_spans(vec![
+///     TimeIntervalEvent::span(0, 10)?,
+///     TimeIntervalEvent::span(5, 20)?,
+///     TimeIntervalEvent::span(30, 40)?,
+/// ]);
+///
+/// // `[0, 20)` and `[30, 40)`: 20 ticks and 10, not 10 + 15 + 10.
+/// assert_eq!(uptime.active_duration(), 30);
+/// # Ok::<(), chronoloom::primitives::IntervalError>(())
+/// ```
+///
+/// [`active_duration`]: TimeIntervalSequence::active_duration
 /// [`len`]: TimeIntervalSequence::len
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default)]
 pub struct TimeIntervalSequence {
     /// Normalized: sorted by start, pairwise disjoint, and never touching — so
     /// `spans[i].end() < spans[i + 1].start()` strictly, for every adjacent
     /// pair. Every method restores this before returning.
     spans: Vec<TimeIntervalEvent<()>>,
+    /// Total ticks covered by `spans`. Disjointness makes this their plain sum,
+    /// with no instant counted twice; every method that touches `spans` updates
+    /// it in the same breath.
+    active_duration: u64,
 }
 
 impl TimeIntervalSequence {
@@ -77,7 +105,10 @@ impl TimeIntervalSequence {
     /// ```
     #[must_use]
     pub const fn new() -> Self {
-        Self { spans: Vec::new() }
+        Self {
+            spans: Vec::new(),
+            active_duration: 0,
+        }
     }
 
     /// Build a sequence from spans already in hand.
@@ -121,8 +152,19 @@ impl TimeIntervalSequence {
     /// disjoint, and non-touching. Every use here either folds through
     /// [`absorb`] or walks two already-normalized sequences in order, both of
     /// which produce canonical output — so re-sorting would be wasted work.
+    ///
+    /// The one pass this does make is totalling the duration. Every caller is
+    /// already linear in the spans, so it costs nothing asymptotically, and
+    /// funnelling them all through here means no construction path can forget.
     fn from_normalized(spans: Vec<TimeIntervalEvent<()>>) -> Self {
-        Self { spans }
+        let active_duration = spans.iter().fold(0u64, |total, span| {
+            total.checked_add(span_ticks(span)).expect(OVERFLOW)
+        });
+
+        Self {
+            spans,
+            active_duration,
+        }
     }
 
     /// Consume the sequence and return its spans, earliest first.
@@ -175,6 +217,45 @@ impl TimeIntervalSequence {
         self.spans.len()
     }
 
+    /// How much time the sequence covers in total, in the same ticks as its
+    /// bounds.
+    ///
+    /// Maintained as spans arrive and leave rather than computed on demand, so
+    /// this is a constant-time read. It counts *covered instants*, not inserted
+    /// spans: overlapping inserts contribute their union once, and touching
+    /// spans contribute the whole they merge into. An empty sequence covers
+    /// nothing and reports `0`.
+    ///
+    /// Unsigned, because a total is a magnitude, and never saturating: spans
+    /// live inside `i64` and never overlap, so the total cannot exceed
+    /// `i64::MAX - i64::MIN`, which is exactly [`u64::MAX`]. That makes `u64`
+    /// wide enough for every sequence that can be built, where
+    /// [`TimeIntervalEvent::duration`] must saturate to stay in `i64`.
+    ///
+    /// ```
+    /// use chronoloom::primitives::TimeIntervalEvent;
+    /// use chronoloom::sequences::TimeIntervalSequence;
+    ///
+    /// let mut uptime = TimeIntervalSequence::new();
+    /// assert_eq!(uptime.active_duration(), 0);
+    ///
+    /// uptime.insert(TimeIntervalEvent::span(0, 10)?);
+    /// assert_eq!(uptime.active_duration(), 10);
+    ///
+    /// // Overlapping: only the five new ticks count.
+    /// uptime.insert(TimeIntervalEvent::span(5, 15)?);
+    /// assert_eq!(uptime.active_duration(), 15);
+    ///
+    /// // Already covered: nothing to add.
+    /// uptime.insert(TimeIntervalEvent::span(2, 8)?);
+    /// assert_eq!(uptime.active_duration(), 15);
+    /// # Ok::<(), chronoloom::primitives::IntervalError>(())
+    /// ```
+    #[must_use]
+    pub const fn active_duration(&self) -> u64 {
+        self.active_duration
+    }
+
     /// Whether the sequence covers no instants at all.
     ///
     /// ```
@@ -205,10 +286,12 @@ impl TimeIntervalSequence {
     /// uptime.clear();
     ///
     /// assert!(uptime.is_empty());
+    /// assert_eq!(uptime.active_duration(), 0);
     /// # Ok::<(), chronoloom::primitives::IntervalError>(())
     /// ```
     pub fn clear(&mut self) {
         self.spans.clear();
+        self.active_duration = 0;
     }
 
     /// The whole sequence as a slice, earliest span first.
@@ -240,6 +323,9 @@ impl TimeIntervalSequence {
     /// Inserting a span already covered changes nothing. Logarithmic to locate,
     /// then a shift.
     ///
+    /// [`active_duration`] grows by the instants this span newly covers, so
+    /// re-inserting covered ground leaves it alone.
+    ///
     /// ```
     /// use chronoloom::primitives::TimeIntervalEvent;
     /// use chronoloom::sequences::TimeIntervalSequence;
@@ -258,6 +344,8 @@ impl TimeIntervalSequence {
     /// assert_eq!(uptime[0].bounds(), (0, 30));
     /// # Ok::<(), chronoloom::primitives::IntervalError>(())
     /// ```
+    ///
+    /// [`active_duration`]: TimeIntervalSequence::active_duration
     pub fn insert(&mut self, span: TimeIntervalEvent<()>) {
         // Both comparisons are non-strict, which is what makes merely touching
         // spans merge rather than sit adjacent. The invariant makes everything
@@ -270,21 +358,43 @@ impl TimeIntervalSequence {
             .partition_point(|existing| existing.start() <= span.end());
 
         if absorb_from == absorb_to {
+            // The span landed in a gap, so all of it is newly covered.
+            self.active_duration = self
+                .active_duration
+                .checked_add(span_ticks(&span))
+                .expect(OVERFLOW);
             self.spans.insert(absorb_from, span);
             return;
         }
 
         let start = self.spans[absorb_from].start().min(span.start());
         let end = self.spans[absorb_to - 1].end().max(span.end());
+        let merged = TimeIntervalEvent::raw(start, end);
 
-        self.spans
-            .splice(absorb_from..absorb_to, [TimeIntervalEvent::raw(start, end)]);
+        // The merged span covers everything the absorbed run did and possibly
+        // more, so trade the run's total for the whole. Swapping the two rather
+        // than working out what is new keeps this free of the overlap
+        // arithmetic `partition_point` already settled.
+        let absorbed = self.spans[absorb_from..absorb_to]
+            .iter()
+            .fold(0u64, |total, existing| {
+                total.checked_add(span_ticks(existing)).expect(OVERFLOW)
+            });
+        self.active_duration = self
+            .active_duration
+            .checked_sub(absorbed)
+            .expect(UNDERFLOW)
+            .checked_add(span_ticks(&merged))
+            .expect(OVERFLOW);
+
+        self.spans.splice(absorb_from..absorb_to, [merged]);
     }
 
     /// Remove the span at position `index` and return it.
     ///
     /// Removing a span from a disjoint set leaves it disjoint, so the rest of
-    /// the sequence is untouched.
+    /// the sequence is untouched. [`active_duration`] drops by exactly what the
+    /// removed span covered, since no other span shared any of it.
     ///
     /// # Panics
     ///
@@ -301,10 +411,19 @@ impl TimeIntervalSequence {
     ///
     /// assert_eq!(uptime.remove(0).bounds(), (0, 10));
     /// assert_eq!(uptime.len(), 1);
+    /// assert_eq!(uptime.active_duration(), 10);
     /// # Ok::<(), chronoloom::primitives::IntervalError>(())
     /// ```
+    ///
+    /// [`active_duration`]: TimeIntervalSequence::active_duration
     pub fn remove(&mut self, index: usize) -> TimeIntervalEvent<()> {
-        self.spans.remove(index)
+        let removed = self.spans.remove(index);
+        self.active_duration = self
+            .active_duration
+            .checked_sub(span_ticks(&removed))
+            .expect(UNDERFLOW);
+
+        removed
     }
 
     /// The span at position `index`, counting from the earliest.
@@ -658,6 +777,28 @@ impl TimeIntervalSequence {
     }
 }
 
+/// Both of these are unreachable rather than unlikely — see [`span_ticks`] for
+/// why the sum always fits, and the field doc on `active_duration` for why it
+/// always accounts for exactly the spans present. They exist so a bug in that
+/// bookkeeping surfaces here instead of as a silently wrong total.
+const OVERFLOW: &str = "covered ticks always fit in u64: spans are disjoint and bounded by i64";
+const UNDERFLOW: &str = "active_duration always accounts for every span present";
+
+/// The ticks a span covers, exactly.
+///
+/// [`TimeIntervalEvent::duration`] saturates at [`i64::MAX`] to stay in `i64`,
+/// which a running total must not do. A half-open span inside `i64` is at most
+/// `i64::MAX - i64::MIN` ticks wide — exactly [`u64::MAX`] — so `u64` holds
+/// every one of them, and the widest span reports its true width rather than a
+/// clamped one.
+fn span_ticks(span: &TimeIntervalEvent<()>) -> u64 {
+    let (start, end) = span.bounds();
+
+    // Via `i128` because the difference can exceed `i64`; the subtraction
+    // cannot be negative, since an interval always ends after it starts.
+    u64::try_from(i128::from(end) - i128::from(start)).expect("a span always ends after it starts")
+}
+
 /// Fold `span` into an already-normalized `normalized`, merging when the two
 /// combine.
 ///
@@ -677,6 +818,20 @@ fn absorb(normalized: &mut Vec<TimeIntervalEvent<()>>, span: TimeIntervalEvent<(
         None => normalized.push(span),
     }
 }
+
+impl PartialEq for TimeIntervalSequence {
+    /// Two sequences are equal exactly when they cover the same instants.
+    ///
+    /// Written out rather than derived so the spans alone decide. The duration
+    /// is a function of them — comparing it could only ever agree, or reveal a
+    /// bookkeeping bug by disagreeing, and equality is the wrong place to
+    /// discover that.
+    fn eq(&self, other: &Self) -> bool {
+        self.spans == other.spans
+    }
+}
+
+impl Eq for TimeIntervalSequence {}
 
 impl FromIterator<TimeIntervalEvent<()>> for TimeIntervalSequence {
     /// Collect spans into a sequence, in any order and overlapping freely.
@@ -785,7 +940,7 @@ impl IntoIterator for TimeIntervalSequence {
 
 #[cfg(test)]
 mod tests {
-    use super::TimeIntervalSequence;
+    use super::{span_ticks, TimeIntervalSequence};
     use crate::primitives::TimeIntervalEvent;
 
     /// A pair of operands, each as its `(start, end)` bounds.
@@ -857,8 +1012,13 @@ mod tests {
         assert_covers(&a.symmetric_difference(b), a, b, |x, y| x ^ y);
     }
 
-    /// The invariant every method must restore: sorted, disjoint, and with no
-    /// two spans left touching.
+    /// The invariants every method must restore: sorted, disjoint, with no two
+    /// spans left touching, and a duration that still totals what is there.
+    ///
+    /// The duration check lives here, rather than in tests of its own, because
+    /// every builder and every operation result already passes through this —
+    /// so a mutation path that forgets to update the cache fails the whole
+    /// suite rather than only the tests that thought to look.
     fn assert_normalized(sequence: &TimeIntervalSequence) {
         for pair in sequence.as_slice().windows(2) {
             assert!(
@@ -868,6 +1028,14 @@ mod tests {
                 pair[1].bounds(),
             );
         }
+
+        let recomputed: u64 = sequence.iter().map(span_ticks).sum();
+        assert_eq!(
+            sequence.active_duration(),
+            recomputed,
+            "active_duration disagrees with the spans {:?}",
+            bounds(sequence),
+        );
     }
 
     #[test]
@@ -1344,5 +1512,166 @@ mod tests {
 
         assert_eq!(seen, [(0, 10), (30, 40)]);
         assert_eq!(uptime.len(), 2);
+    }
+
+    #[test]
+    fn an_empty_sequence_covers_no_time() {
+        assert_eq!(TimeIntervalSequence::new().active_duration(), 0);
+        assert_eq!(TimeIntervalSequence::default().active_duration(), 0);
+        assert_eq!(from_spans([]).active_duration(), 0);
+    }
+
+    #[test]
+    fn duration_totals_the_gaps_between_spans_away() {
+        assert_eq!(from_spans([(0, 10)]).active_duration(), 10);
+        assert_eq!(from_spans([(0, 10), (30, 40)]).active_duration(), 20);
+        assert_eq!(from_spans([(-10, -4)]).active_duration(), 6);
+    }
+
+    #[test]
+    fn duration_counts_covered_instants_not_inserted_spans() {
+        // Three spans covering `[0, 20)` between them, however they arrived.
+        let overlapping = from_spans([(0, 10), (5, 15), (12, 20)]);
+        assert_eq!(overlapping.len(), 1);
+        assert_eq!(overlapping.active_duration(), 20);
+
+        // Touching spans merge, and the whole is the sum of its parts here.
+        assert_eq!(from_spans([(0, 5), (5, 9)]).active_duration(), 9);
+
+        // The same coverage built any other way agrees.
+        assert_eq!(inserted([(12, 20), (0, 10), (5, 15)]).active_duration(), 20);
+        assert_eq!(from_spans([(0, 20)]).active_duration(), 20);
+    }
+
+    #[test]
+    fn inserting_adds_only_what_was_not_covered() {
+        let mut uptime = inserted([(0, 10)]);
+        assert_eq!(uptime.active_duration(), 10);
+
+        // Into a gap: all of it is new.
+        uptime.insert(span(30, 40));
+        assert_eq!(uptime.active_duration(), 20);
+
+        // Overlapping: only the part past the existing end.
+        uptime.insert(span(5, 15));
+        assert_eq!(uptime.active_duration(), 25);
+
+        // Wholly covered: nothing new at all.
+        uptime.insert(span(2, 8));
+        assert_eq!(uptime.active_duration(), 25);
+
+        // Bridging the gap adds the gap itself, and nothing more.
+        uptime.insert(span(15, 30));
+        assert_eq!(uptime.len(), 1);
+        assert_eq!(uptime.active_duration(), 40);
+        assert_normalized(&uptime);
+    }
+
+    #[test]
+    fn a_span_swallowing_several_trades_them_for_the_whole() {
+        let mut uptime = inserted([(0, 10), (20, 30), (40, 50)]);
+        assert_eq!(uptime.active_duration(), 30);
+
+        uptime.insert(span(5, 45));
+
+        assert_eq!(bounds(&uptime), [(0, 50)]);
+        assert_eq!(uptime.active_duration(), 50);
+    }
+
+    #[test]
+    fn removing_gives_back_exactly_what_that_span_covered() {
+        let mut uptime = from_spans([(0, 10), (30, 40), (50, 55)]);
+        assert_eq!(uptime.active_duration(), 25);
+
+        uptime.remove(1);
+        assert_eq!(uptime.active_duration(), 15);
+        assert_normalized(&uptime);
+
+        uptime.remove(0);
+        assert_eq!(uptime.active_duration(), 5);
+
+        uptime.remove(0);
+        assert_eq!(uptime.active_duration(), 0);
+        assert!(uptime.is_empty());
+    }
+
+    #[test]
+    fn clearing_resets_the_duration() {
+        let mut uptime = from_spans([(0, 10), (30, 40)]);
+        uptime.clear();
+
+        assert_eq!(uptime.active_duration(), 0);
+    }
+
+    #[test]
+    fn extending_totals_the_same_as_building_at_once() {
+        let mut piecemeal = from_spans([(0, 10)]);
+        piecemeal.extend([span(5, 20), span(40, 50)]);
+
+        assert_eq!(piecemeal.active_duration(), 30);
+        assert_eq!(
+            piecemeal.active_duration(),
+            from_spans([(0, 20), (40, 50)]).active_duration(),
+        );
+    }
+
+    #[test]
+    fn the_operations_account_for_every_instant_they_move() {
+        let a = from_spans([(0, 10), (20, 30)]);
+        let b = from_spans([(5, 25)]);
+
+        // The pieces of `a` partition `a`: what it shares with `b` plus what it
+        // keeps to itself is everything it covered, with nothing double-counted.
+        assert_eq!(
+            a.intersection(&b).active_duration() + a.difference(&b).active_duration(),
+            a.active_duration(),
+        );
+
+        // Inclusion-exclusion, the same statement from the union's side.
+        assert_eq!(
+            a.union(&b).active_duration() + a.intersection(&b).active_duration(),
+            a.active_duration() + b.active_duration(),
+        );
+
+        // XOR is the union minus the shared part, counted once.
+        assert_eq!(
+            a.symmetric_difference(&b).active_duration(),
+            a.union(&b).active_duration() - a.intersection(&b).active_duration(),
+        );
+    }
+
+    #[test]
+    fn duration_is_exact_where_a_single_span_would_saturate() {
+        // `TimeIntervalEvent::duration` clamps this to `i64::MAX`; the sequence
+        // must not, and `u64` is exactly wide enough to say so.
+        let widest = from_spans([(i64::MIN, i64::MAX)]);
+        assert_eq!(widest.active_duration(), u64::MAX);
+        assert_eq!(widest.as_slice()[0].duration(), i64::MAX);
+
+        // Carving the middle out leaves everything but those two ticks.
+        let carved = widest.difference(&from_spans([(-1, 1)]));
+        assert_eq!(bounds(&carved), [(i64::MIN, -1), (1, i64::MAX)]);
+        assert_eq!(carved.active_duration(), u64::MAX - 2);
+
+        // And putting it back restores the total, through the merge branch.
+        let mut restored = carved;
+        restored.insert(span(-1, 1));
+        assert_eq!(restored, widest);
+        assert_eq!(restored.active_duration(), u64::MAX);
+    }
+
+    #[test]
+    fn equality_ignores_the_duration_and_stays_coverage_equality() {
+        let piecemeal = from_spans([(0, 5), (5, 10), (2, 7)]);
+        let whole = from_spans([(0, 10)]);
+
+        assert_eq!(piecemeal, whole);
+        assert_eq!(piecemeal.active_duration(), whole.active_duration());
+
+        // Same span count and same total, but not the same instants.
+        let shifted = from_spans([(0, 5), (10, 15)]);
+        let elsewhere = from_spans([(20, 25), (30, 35)]);
+        assert_eq!(shifted.active_duration(), elsewhere.active_duration());
+        assert_ne!(shifted, elsewhere);
     }
 }

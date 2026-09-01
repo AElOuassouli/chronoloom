@@ -86,6 +86,22 @@
   which now delegates to it — so whether two intervals combine, and into what,
   has one definition. Completes the trio with `intersection`: what two
   intervals share, what they cover together, and the unconditional answer.
+- `TimeIntervalSequence::transform`, the temporal transformation `A[alpha,
+  beta]`: `alpha` shifts every span's lower bound and `beta` its upper, turning
+  `[s, e)` into `[s + alpha, e + beta)`. Because the two bounds move
+  independently, widening a timeline can merge spans the shift brings together
+  — including a gap closed to exactly zero — and narrowing it drops spans no
+  wider than the shrinkage, so the result is re-normalized rather than merely
+  re-bounded. Only the difference `alpha - beta` decides which of the two
+  happens, so a call can drop spans or merge them, never both. Shifting every
+  bound by the same amount preserves their order, which keeps it to a single
+  pass with no sorting.
+- `IntervalError::BoundOverflow`, reported when a `transform` shift pushes a
+  bound outside the timestamp range. It is the one piece of arithmetic in the
+  crate driven by caller-supplied numbers rather than by bounds that already
+  exist, so it returns an error instead of panicking, and it transforms nothing
+  when it does. The enum is `#[non_exhaustive]`, so the new variant does not
+  break exhaustive matches.
 
 ## Removed
 

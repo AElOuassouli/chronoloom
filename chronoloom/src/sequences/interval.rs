@@ -3,7 +3,7 @@
 use std::ops::Index;
 use std::{slice, vec};
 
-use crate::primitives::{TimeIntervalEvent, Timestamp};
+use crate::primitives::{IntervalError, TimeIntervalEvent, Timestamp};
 
 /// The spans during which one state was active, in canonical form.
 ///
@@ -775,6 +775,103 @@ impl TimeIntervalSequence {
     pub fn symmetric_difference(&self, other: &Self) -> Self {
         self.difference(other).union(&other.difference(self))
     }
+
+    /// The timeline with every span's bounds moved: `alpha` shifts the lower
+    /// bound, `beta` the upper.
+    ///
+    /// Written `A[alpha, beta]` for a timeline `A`, this turns every span
+    /// `[s, e)` into `[s + alpha, e + beta)`. Both shifts may be negative, and
+    /// both move the bound to the right when positive. `A[0, 0]` is `A`, and
+    /// `A[t, t]` is `A` translated by `t`.
+    ///
+    /// Because the two bounds move independently, a span can be widened until
+    /// it swallows the gap after it, or narrowed until nothing is left of it —
+    /// so the result is re-normalized, not merely re-bounded.
+    ///
+    /// # Narrows or widens, never both
+    ///
+    /// Only the difference `delta = alpha - beta` decides what happens
+    /// structurally. A span survives exactly when it is wider than `delta`, and
+    /// a gap of `g` closes exactly when `g + delta <= 0`. So a call that can
+    /// drop spans (`delta > 0`) also widens every gap and can merge nothing,
+    /// and a call that can merge (`delta < 0`) also widens every span and can
+    /// drop nothing.
+    ///
+    /// Widening merges the spans it brings together — and a gap closed to
+    /// exactly zero counts, since touching spans cover an unbroken stretch:
+    ///
+    /// ```
+    /// use chronoloom::primitives::TimeIntervalEvent;
+    /// use chronoloom::sequences::TimeIntervalSequence;
+    ///
+    /// let alerts = TimeIntervalSequence::from_spans(vec![
+    ///     TimeIntervalEvent::span(0, 10)?,
+    ///     TimeIntervalEvent::span(14, 20)?,
+    /// ]);
+    ///
+    /// // Two ticks of slack on each side closes the four-tick gap exactly.
+    /// let within_two = alerts.transform(-2, 2)?;
+    /// let bounds: Vec<(i64, i64)> = within_two.iter().map(TimeIntervalEvent::bounds).collect();
+    /// assert_eq!(bounds, [(-2, 22)]);
+    /// # Ok::<(), chronoloom::primitives::IntervalError>(())
+    /// ```
+    ///
+    /// Narrowing drops the spans it consumes entirely:
+    ///
+    /// ```
+    /// use chronoloom::primitives::TimeIntervalEvent;
+    /// use chronoloom::sequences::TimeIntervalSequence;
+    ///
+    /// let up = TimeIntervalSequence::from_spans(vec![
+    ///     TimeIntervalEvent::span(0, 3)?,
+    ///     TimeIntervalEvent::span(10, 30)?,
+    /// ]);
+    ///
+    /// // Only stretches longer than three ticks have a solid interior left.
+    /// let sustained = up.transform(3, 0)?;
+    /// let bounds: Vec<(i64, i64)> = sustained.iter().map(TimeIntervalEvent::bounds).collect();
+    /// assert_eq!(bounds, [(13, 30)]);
+    /// # Ok::<(), chronoloom::primitives::IntervalError>(())
+    /// ```
+    ///
+    /// A single pass over the spans, linear in their number, with no sorting:
+    /// shifting every bound by the same amount leaves them in the order they
+    /// were already in.
+    ///
+    /// # Coverage, not history
+    ///
+    /// The spans moved are the normalized ones, so `[0, 5)` and `[5, 10)` are
+    /// one `[0, 10)` span by the time this sees them and a narrowing takes one
+    /// span's worth of time from them, not two. For the same reason transforms
+    /// compose — `A[a1, b1][a2, b2]` is `A[a1 + a2, b1 + b2]` — only while
+    /// nothing merges or vanishes: both discard structure that no later
+    /// transform can recover.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`IntervalError::BoundOverflow`] if any shifted bound leaves the
+    /// range a [`Timestamp`] can hold. Nothing is transformed in that case; the
+    /// receiver is borrowed and never changes either way.
+    pub fn transform(&self, alpha: Timestamp, beta: Timestamp) -> Result<Self, IntervalError> {
+        // Merging only ever removes spans, so this capacity is an upper bound.
+        let mut spans = Vec::with_capacity(self.spans.len());
+
+        for span in &self.spans {
+            let (start, end) = span.bounds();
+            let start = shifted(start, alpha)?;
+            let end = shifted(end, beta)?;
+
+            // The bounds crossed, so the span narrowed away to nothing.
+            if start < end {
+                // Both bounds moved by a fixed amount, so the shifted spans
+                // arrive in the order they were stored in and the tail is the
+                // only one a new span can reach.
+                absorb(&mut spans, TimeIntervalEvent::raw(start, end));
+            }
+        }
+
+        Ok(Self::from_normalized(spans))
+    }
 }
 
 /// Both of these are unreachable rather than unlikely — see [`span_ticks`] for
@@ -783,6 +880,18 @@ impl TimeIntervalSequence {
 /// bookkeeping surfaces here instead of as a silently wrong total.
 const OVERFLOW: &str = "covered ticks always fit in u64: spans are disjoint and bounded by i64";
 const UNDERFLOW: &str = "active_duration always accounts for every span present";
+
+/// Move `bound` by `shift`, or say that it cannot be moved.
+///
+/// The only arithmetic here a caller can push past [`Timestamp`]'s range: every
+/// other total is bounded by spans that already exist, whereas a shift is a
+/// number handed in from outside. So this reports rather than panics, and
+/// [`TimeIntervalSequence::transform`] hands the failure to its caller.
+fn shifted(bound: Timestamp, shift: Timestamp) -> Result<Timestamp, IntervalError> {
+    bound
+        .checked_add(shift)
+        .ok_or(IntervalError::BoundOverflow { bound, shift })
+}
 
 /// The ticks a span covers, exactly.
 ///
@@ -941,7 +1050,7 @@ impl IntoIterator for TimeIntervalSequence {
 #[cfg(test)]
 mod tests {
     use super::{span_ticks, TimeIntervalSequence};
-    use crate::primitives::TimeIntervalEvent;
+    use crate::primitives::{IntervalError, TimeIntervalEvent};
 
     /// A pair of operands, each as its `(start, end)` bounds.
     type OperandShapes<'a> = (&'a [(i64, i64)], &'a [(i64, i64)]);
@@ -1002,6 +1111,16 @@ mod tests {
                 "instant {timestamp} is on the wrong side of the result",
             );
         }
+    }
+
+    /// Transform a timeline by shifts known to stay in range.
+    fn transformed(sequence: &TimeIntervalSequence, alpha: i64, beta: i64) -> TimeIntervalSequence {
+        let result = sequence
+            .transform(alpha, beta)
+            .expect("test shifts stay inside the timestamp range");
+        assert_normalized(&result);
+
+        result
     }
 
     /// Every operation, checked against its boolean rule on the same operands.
@@ -1658,6 +1777,135 @@ mod tests {
         restored.insert(span(-1, 1));
         assert_eq!(restored, widest);
         assert_eq!(restored.active_duration(), u64::MAX);
+    }
+
+    #[test]
+    fn transforming_by_nothing_changes_nothing() {
+        let uptime = from_spans([(0, 10), (20, 30)]);
+
+        assert_eq!(transformed(&uptime, 0, 0), uptime);
+        assert!(transformed(&TimeIntervalSequence::new(), 3, -3).is_empty());
+    }
+
+    #[test]
+    fn an_equal_shift_translates_every_instant() {
+        let uptime = from_spans([(0, 10), (20, 30)]);
+        let later = transformed(&uptime, 7, 7);
+
+        assert_eq!(bounds(&later), [(7, 17), (27, 37)]);
+
+        // Nothing widened or narrowed, so the covered instants only moved.
+        assert_eq!(later.active_duration(), uptime.active_duration());
+        for timestamp in -5..=105 {
+            assert_eq!(later.contains(timestamp + 7), uptime.contains(timestamp));
+        }
+    }
+
+    #[test]
+    fn widening_merges_a_gap_it_closes_and_leaves_a_narrower_one_open() {
+        // Two ticks of slack on each side close a four-tick gap to exactly
+        // zero, and touching spans cover an unbroken stretch.
+        assert_eq!(
+            bounds(&transformed(&from_spans([(0, 10), (14, 20)]), -2, 2)),
+            [(-2, 22)]
+        );
+
+        // One tick more of gap than the shift can close keeps them apart.
+        assert_eq!(
+            bounds(&transformed(&from_spans([(0, 10), (15, 20)]), -2, 2)),
+            [(-2, 12), (13, 22)]
+        );
+    }
+
+    #[test]
+    fn narrowing_drops_spans_no_wider_than_the_shrinkage() {
+        // Narrowing by three: a span of exactly three ticks has no interior
+        // left, while one of four keeps a single tick.
+        let uptime = from_spans([(0, 3), (10, 14), (20, 40)]);
+
+        assert_eq!(bounds(&transformed(&uptime, 3, 0)), [(13, 14), (23, 40)]);
+    }
+
+    #[test]
+    fn a_long_enough_widening_collapses_a_whole_chain() {
+        let flapping = from_spans([(0, 1), (5, 6), (10, 11), (15, 16)]);
+
+        assert_eq!(bounds(&transformed(&flapping, -3, 3)), [(-3, 19)]);
+    }
+
+    #[test]
+    fn widening_only_merges_and_narrowing_only_drops() {
+        let uptime = from_spans([(0, 10), (12, 22), (24, 25)]);
+
+        // Widening keeps every instant it started from — it can merge spans,
+        // but never removes one.
+        let wider = transformed(&uptime, -2, 0);
+        assert!(wider.len() <= uptime.len());
+        for timestamp in -5..=105 {
+            assert!(!uptime.contains(timestamp) || wider.contains(timestamp));
+        }
+
+        // Narrowing covers nothing new — it can drop spans, but never brings
+        // two together, so every gap it started with is still there.
+        let narrower = transformed(&uptime, 2, 0);
+        assert!(narrower.len() <= uptime.len());
+        for timestamp in -5..=105 {
+            assert!(!narrower.contains(timestamp) || uptime.contains(timestamp));
+        }
+        assert_eq!(bounds(&narrower), [(2, 10), (14, 22)]);
+    }
+
+    #[test]
+    fn transforms_add_up_until_one_of_them_loses_something() {
+        let uptime = from_spans([(0, 10), (20, 30)]);
+
+        // Nothing merges or vanishes along the way, so the shifts just sum.
+        let stepwise = transformed(&transformed(&uptime, 1, 2), 3, -1);
+        assert_eq!(stepwise, transformed(&uptime, 4, 1));
+
+        // Once a widening has swallowed a gap, narrowing back cannot reopen it:
+        // the two spans are one span now, and it simply narrows.
+        let swallowed = transformed(&from_spans([(0, 10), (12, 22)]), -1, 1);
+        assert_eq!(bounds(&swallowed), [(-1, 23)]);
+        assert_eq!(bounds(&transformed(&swallowed, 1, -1)), [(0, 22)]);
+    }
+
+    #[test]
+    fn a_shift_past_the_end_of_time_is_rejected() {
+        let late = from_spans([(0, i64::MAX - 1)]);
+
+        assert_eq!(
+            late.transform(0, 2),
+            Err(IntervalError::BoundOverflow {
+                bound: i64::MAX - 1,
+                shift: 2,
+            })
+        );
+
+        let early = from_spans([(i64::MIN + 1, 0)]);
+        assert_eq!(
+            early.transform(-2, 0),
+            Err(IntervalError::BoundOverflow {
+                bound: i64::MIN + 1,
+                shift: -2,
+            })
+        );
+
+        // The receiver is borrowed, so a rejected transform costs it nothing.
+        assert_eq!(bounds(&late), [(0, i64::MAX - 1)]);
+        assert_eq!(bounds(&early), [(i64::MIN + 1, 0)]);
+    }
+
+    #[test]
+    fn a_bound_landing_exactly_on_the_limit_is_accepted() {
+        assert_eq!(
+            bounds(&transformed(&from_spans([(0, i64::MAX - 1)]), 0, 1)),
+            [(0, i64::MAX)]
+        );
+        assert_eq!(
+            bounds(&transformed(&from_spans([(i64::MIN + 1, 0)]), -1, 0)),
+            [(i64::MIN, 0)]
+        );
     }
 
     #[test]

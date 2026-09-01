@@ -123,6 +123,40 @@ assert_eq!(up.union(&maintenance), up);
 `symmetric_difference` is the XOR: the instants covered by exactly one of the
 two timelines.
 
+## Moving a timeline in time
+
+`transform` shifts each bound of every span independently: `alpha` moves the
+lower bound, `beta` the upper, so `A[alpha, beta]` turns every span `[s, e)`
+into `[s + alpha, e + beta)`. Widening a timeline asks "was this active *near*
+here"; narrowing it asks "was this active for a solid stretch". Spans that meet
+after widening are merged, and spans narrowed away to nothing disappear.
+
+```rust
+use chronoloom::{TimeIntervalEvent, TimeIntervalSequence};
+
+let alerts = TimeIntervalSequence::from_spans(vec![
+    TimeIntervalEvent::span(0, 10).unwrap(),
+    TimeIntervalEvent::span(14, 20).unwrap(),
+]);
+
+// Two ticks of slack on each side close the four-tick gap exactly.
+let within_two = alerts.transform(-2, 2).unwrap();
+let bounds: Vec<(i64, i64)> = within_two.iter().map(|s| s.bounds()).collect();
+assert_eq!(bounds, [(-2, 22)]);
+
+// Only stretches longer than six ticks have anything left after six ticks of
+// lead-in, and the six-tick alert is gone entirely.
+let sustained = alerts.transform(6, 0).unwrap();
+let bounds: Vec<(i64, i64)> = sustained.iter().map(|s| s.bounds()).collect();
+assert_eq!(bounds, [(6, 10)]);
+```
+
+Only the difference `alpha - beta` decides what happens structurally, so a call
+either narrows spans and widens gaps, or the reverse — it can drop spans or
+merge them, never both. It is a single pass, and the one operation that can fail:
+a shift that pushes a bound outside the timestamp range returns
+`IntervalError::BoundOverflow`.
+
 ## Operations on a pair of intervals
 
 Two `TimeIntervalEvent`s can be intersected — the span where both are active —

@@ -401,7 +401,8 @@ impl TimeIntervalEvent<()> {
     }
 }
 
-/// Why a [`TimeIntervalEvent`] could not be built.
+/// Why a [`TimeIntervalEvent`] could not be built, or a bound could not be
+/// moved.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum IntervalError {
@@ -420,6 +421,40 @@ pub enum IntervalError {
         /// The rejected end bound.
         end: Timestamp,
     },
+
+    /// Moving `bound` by `shift` landed outside the range a [`Timestamp`] can
+    /// hold.
+    ///
+    /// Raised by [`TimeIntervalSequence::transform`], the one operation whose
+    /// arithmetic is driven by caller-supplied numbers rather than by bounds
+    /// that already exist.
+    ///
+    /// ```
+    /// use chronoloom::primitives::{IntervalError, TimeIntervalEvent};
+    /// use chronoloom::sequences::TimeIntervalSequence;
+    ///
+    /// let late = TimeIntervalSequence::from_spans(vec![
+    ///     TimeIntervalEvent::span(0, i64::MAX - 1)?,
+    /// ]);
+    ///
+    /// let error = late.transform(0, 2).unwrap_err();
+    /// assert_eq!(
+    ///     error,
+    ///     IntervalError::BoundOverflow {
+    ///         bound: i64::MAX - 1,
+    ///         shift: 2,
+    ///     }
+    /// );
+    /// # Ok::<(), chronoloom::primitives::IntervalError>(())
+    /// ```
+    ///
+    /// [`TimeIntervalSequence::transform`]: crate::sequences::TimeIntervalSequence::transform
+    BoundOverflow {
+        /// The bound that could not be moved.
+        bound: Timestamp,
+        /// How far it was asked to move.
+        shift: Timestamp,
+    },
 }
 
 impl fmt::Display for IntervalError {
@@ -428,6 +463,10 @@ impl fmt::Display for IntervalError {
             Self::EndNotAfterStart { start, end } => write!(
                 f,
                 "interval end ({end}) must be strictly after its start ({start})"
+            ),
+            Self::BoundOverflow { bound, shift } => write!(
+                f,
+                "shifting bound ({bound}) by ({shift}) leaves the timestamp range"
             ),
         }
     }
@@ -530,6 +569,22 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "interval end (0) must be strictly after its start (9)"
+        );
+    }
+
+    #[test]
+    fn overflow_error_displays_the_bound_and_the_shift() {
+        let error = IntervalError::BoundOverflow {
+            bound: i64::MAX,
+            shift: 1,
+        };
+
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "shifting bound ({}) by (1) leaves the timestamp range",
+                i64::MAX
+            )
         );
     }
 

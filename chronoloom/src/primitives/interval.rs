@@ -254,12 +254,54 @@ impl<T> TimeIntervalEvent<T> {
         (start < end).then(|| TimeIntervalEvent::raw(start, end))
     }
 
+    /// The single span covering both intervals, or `None` when a gap separates
+    /// them.
+    ///
+    /// Intervals combine when they overlap **and** when they merely touch,
+    /// since `[0, 5)` and `[5, 9)` together cover exactly `[0, 9)` with no
+    /// instant missing. Only a real gap keeps them apart, and then there is no
+    /// single span to describe them.
+    ///
+    /// ```
+    /// use chronoloom::primitives::TimeIntervalEvent;
+    ///
+    /// let a = TimeIntervalEvent::new(0, 5, "a")?;
+    ///
+    /// let overlapping = TimeIntervalEvent::new(3, 9, "b")?;
+    /// assert_eq!(a.merged(&overlapping), Some(TimeIntervalEvent::span(0, 9)?));
+    ///
+    /// let touching = TimeIntervalEvent::new(5, 9, "c")?;
+    /// assert_eq!(a.merged(&touching), Some(TimeIntervalEvent::span(0, 9)?));
+    ///
+    /// let apart = TimeIntervalEvent::new(20, 30, "d")?;
+    /// assert_eq!(a.merged(&apart), None);
+    /// # Ok::<(), chronoloom::primitives::IntervalError>(())
+    /// ```
+    ///
+    /// This is the counterpart to [`intersection`]: one answers what the two
+    /// intervals share, the other what they cover together. [`union`] answers
+    /// unconditionally by returning both intervals when they do not combine.
+    ///
+    /// [`intersection`]: TimeIntervalEvent::intersection
+    /// [`union`]: TimeIntervalEvent::union
+    #[must_use]
+    pub fn merged<U>(&self, other: &TimeIntervalEvent<U>) -> Option<TimeIntervalEvent<()>> {
+        // Non-strict on both sides, which is what lets merely touching
+        // intervals combine rather than stay apart.
+        let combines = self.start <= other.end && other.start <= self.end;
+
+        combines
+            .then(|| TimeIntervalEvent::raw(self.start.min(other.start), self.end.max(other.end)))
+    }
+
     /// The spans covered by either interval: one when they combine, two when
     /// they stay apart.
     ///
     /// Intervals combine when they overlap **and** when they merely touch,
     /// since `[0, 5)` and `[5, 9)` together cover exactly `[0, 9)` with no
-    /// instant missing. Only a real gap keeps them separate.
+    /// instant missing. Only a real gap keeps them separate. Use [`merged`]
+    /// instead when a gap should simply answer "no single span", without
+    /// allocating.
     ///
     /// ```
     /// use chronoloom::primitives::TimeIntervalEvent;
@@ -296,13 +338,12 @@ impl<T> TimeIntervalEvent<T> {
     /// of value, neither value is consumed, and the resulting spans carry none.
     ///
     /// [`intersection`]: TimeIntervalEvent::intersection
+    /// [`merged`]: TimeIntervalEvent::merged
     #[must_use]
     pub fn union<U>(&self, other: &TimeIntervalEvent<U>) -> Vec<TimeIntervalEvent<()>> {
-        if self.start <= other.end && other.start <= self.end {
-            let start = self.start.min(other.start);
-            let end = self.end.max(other.end);
-
-            return vec![TimeIntervalEvent::raw(start, end)];
+        // Whether they combine, and into what, is defined once — in `merged`.
+        if let Some(merged) = self.merged(other) {
+            return vec![merged];
         }
 
         let mine = TimeIntervalEvent::raw(self.start, self.end);
@@ -343,10 +384,15 @@ impl TimeIntervalEvent<()> {
 
     /// Build a span whose bounds are already known to be valid.
     ///
-    /// Deliberately private and unvalidated: the caller must have proven
+    /// Crate-internal and unvalidated: the caller must have proven
     /// `start < end`, otherwise the non-empty invariant is broken. Every use
-    /// derives its bounds from intervals that already uphold it.
-    const fn raw(start: Timestamp, end: Timestamp) -> Self {
+    /// derives its bounds from intervals that already uphold it — the interval
+    /// operations here, and the merging in [`sequences`]. Validating again
+    /// would be dead code, and an `expect` would add a panic path that can
+    /// never fire.
+    ///
+    /// [`sequences`]: crate::sequences
+    pub(crate) const fn raw(start: Timestamp, end: Timestamp) -> Self {
         Self {
             start,
             end,
@@ -355,7 +401,8 @@ impl TimeIntervalEvent<()> {
     }
 }
 
-/// Why a [`TimeIntervalEvent`] could not be built.
+/// Why a [`TimeIntervalEvent`] could not be built, or a bound could not be
+/// moved.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum IntervalError {
@@ -374,6 +421,40 @@ pub enum IntervalError {
         /// The rejected end bound.
         end: Timestamp,
     },
+
+    /// Moving `bound` by `shift` landed outside the range a [`Timestamp`] can
+    /// hold.
+    ///
+    /// Raised by [`TimeIntervalSequence::transform`], the one operation whose
+    /// arithmetic is driven by caller-supplied numbers rather than by bounds
+    /// that already exist.
+    ///
+    /// ```
+    /// use chronoloom::primitives::{IntervalError, TimeIntervalEvent};
+    /// use chronoloom::sequences::TimeIntervalSequence;
+    ///
+    /// let late = TimeIntervalSequence::from_spans(vec![
+    ///     TimeIntervalEvent::span(0, i64::MAX - 1)?,
+    /// ]);
+    ///
+    /// let error = late.transform(0, 2).unwrap_err();
+    /// assert_eq!(
+    ///     error,
+    ///     IntervalError::BoundOverflow {
+    ///         bound: i64::MAX - 1,
+    ///         shift: 2,
+    ///     }
+    /// );
+    /// # Ok::<(), chronoloom::primitives::IntervalError>(())
+    /// ```
+    ///
+    /// [`TimeIntervalSequence::transform`]: crate::sequences::TimeIntervalSequence::transform
+    BoundOverflow {
+        /// The bound that could not be moved.
+        bound: Timestamp,
+        /// How far it was asked to move.
+        shift: Timestamp,
+    },
 }
 
 impl fmt::Display for IntervalError {
@@ -382,6 +463,10 @@ impl fmt::Display for IntervalError {
             Self::EndNotAfterStart { start, end } => write!(
                 f,
                 "interval end ({end}) must be strictly after its start ({start})"
+            ),
+            Self::BoundOverflow { bound, shift } => write!(
+                f,
+                "shifting bound ({bound}) by ({shift}) leaves the timestamp range"
             ),
         }
     }
@@ -487,6 +572,22 @@ mod tests {
         );
     }
 
+    #[test]
+    fn overflow_error_displays_the_bound_and_the_shift() {
+        let error = IntervalError::BoundOverflow {
+            bound: i64::MAX,
+            shift: 1,
+        };
+
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "shifting bound ({}) by (1) leaves the timestamp range",
+                i64::MAX
+            )
+        );
+    }
+
     /// Shorthand for the valueless spans both operations return.
     fn span(start: i64, end: i64) -> TimeIntervalEvent<()> {
         TimeIntervalEvent::span(start, end).expect("test bounds are ordered")
@@ -541,6 +642,57 @@ mod tests {
         let b = span(-5, 5);
 
         assert_eq!(a.intersection(&b), Some(span(-5, -2)));
+    }
+
+    #[test]
+    fn overlapping_intervals_merge_into_one_span() {
+        assert_eq!(span(0, 5).merged(&span(3, 9)), Some(span(0, 9)));
+        assert_eq!(span(3, 9).merged(&span(0, 5)), Some(span(0, 9)));
+    }
+
+    #[test]
+    fn touching_intervals_merge_into_one_span() {
+        assert_eq!(span(0, 5).merged(&span(5, 9)), Some(span(0, 9)));
+        assert_eq!(span(5, 9).merged(&span(0, 5)), Some(span(0, 9)));
+    }
+
+    #[test]
+    fn a_contained_interval_merges_into_the_outer_one() {
+        assert_eq!(span(0, 10).merged(&span(3, 5)), Some(span(0, 10)));
+        assert_eq!(span(3, 5).merged(&span(0, 10)), Some(span(0, 10)));
+    }
+
+    #[test]
+    fn an_interval_merges_with_itself_into_itself() {
+        assert_eq!(span(0, 5).merged(&span(0, 5)), Some(span(0, 5)));
+    }
+
+    #[test]
+    fn intervals_separated_by_a_gap_do_not_merge() {
+        assert_eq!(span(0, 2).merged(&span(5, 9)), None);
+        assert_eq!(span(5, 9).merged(&span(0, 2)), None);
+    }
+
+    #[test]
+    fn merged_handles_negative_bounds() {
+        assert_eq!(span(-10, -2).merged(&span(-5, 5)), Some(span(-10, 5)));
+    }
+
+    #[test]
+    fn merged_agrees_with_union() {
+        // `union` is written on top of `merged`; this pins that they stay
+        // consistent rather than drifting into two rules.
+        for (a, b) in [
+            (span(0, 5), span(3, 9)),
+            (span(0, 5), span(5, 9)),
+            (span(0, 2), span(5, 9)),
+            (span(0, 10), span(3, 5)),
+        ] {
+            match a.merged(&b) {
+                Some(merged) => assert_eq!(a.union(&b), vec![merged]),
+                None => assert_eq!(a.union(&b).len(), 2),
+            }
+        }
     }
 
     #[test]

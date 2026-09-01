@@ -23,6 +23,48 @@
 //! # Ok::<(), chronoloom::IntervalError>(())
 //! ```
 //!
+//! # Sequences
+//!
+//! [`TimePointSequence`] collects point events and keeps them in time order
+//! however they arrive. Events sit contiguously, sorted by timestamp, so
+//! lookups and windows binary-search that order rather than scanning, and a
+//! window comes back as a real slice.
+//!
+//! ```
+//! use chronoloom::{TimePointEvent, TimePointSequence};
+//!
+//! let readings = TimePointSequence::from_events(vec![
+//!     TimePointEvent::new(30, 3.0),
+//!     TimePointEvent::new(10, 1.0),
+//!     TimePointEvent::new(20, 2.0),
+//! ]);
+//!
+//! let window: Vec<i64> = readings.range(10..30).iter().map(|e| e.timestamp()).collect();
+//! assert_eq!(window, [10, 20]);
+//!
+//! assert_eq!(readings.nearest(28).map(|e| e.timestamp()), Some(30));
+//! ```
+//!
+//! [`TimeIntervalSequence`] is the other shape: one state over time, as the
+//! spans during which it was active. Overlapping and touching spans merge as
+//! they arrive, so the timeline stays a canonical, disjoint description of which
+//! instants are covered — two sequences are equal exactly when they cover the
+//! same ones.
+//!
+//! ```
+//! use chronoloom::{TimeIntervalEvent, TimeIntervalSequence};
+//!
+//! let mut uptime = TimeIntervalSequence::new();
+//! uptime.insert(TimeIntervalEvent::span(0, 5)?);
+//! uptime.insert(TimeIntervalEvent::span(20, 30)?);
+//! uptime.insert(TimeIntervalEvent::span(5, 25)?);
+//!
+//! // The last span bridged the gap, so all three are one.
+//! assert_eq!(uptime.len(), 1);
+//! assert!(uptime.contains(12));
+//! # Ok::<(), chronoloom::IntervalError>(())
+//! ```
+//!
 //! # Intervals are half-open
 //!
 //! An interval spans `[start, end)` — `start` is included, `end` is excluded.
@@ -59,6 +101,15 @@
 
 #![warn(missing_docs)]
 
+/// Compiles and runs the README's examples under `cargo test`, so its code
+/// cannot drift away from the API it documents. Exists only during doctest
+/// collection, and never appears in the rendered documentation.
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+struct Readme;
+
 pub mod primitives;
+pub mod sequences;
 
 pub use primitives::{IntervalError, TimeIntervalEvent, TimePointEvent, Timestamp};
+pub use sequences::{TimeIntervalSequence, TimePointSequence};

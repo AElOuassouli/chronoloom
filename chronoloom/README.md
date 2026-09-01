@@ -33,10 +33,134 @@ assert_eq!(phase.duration(), 60);
 assert!(TimeIntervalEvent::span(5, 5).is_err());
 ```
 
-## Operations
+## Sequences
 
-Two intervals can be intersected — the span where both are active — or united —
-the spans covered by either, merged when nothing separates them.
+`TimePointSequence` collects point events and keeps them in time order however
+they arrive. Events sit contiguously in one `Vec`, sorted by timestamp, so
+lookups and windows binary-search that maintained order rather than scanning,
+and a window comes back as a real slice. Adding an event that belongs at the
+end — the usual case for events arriving in time order — costs no shifting at
+all. Several events may share an instant, where they keep the order they were
+added.
+
+```rust
+use chronoloom::{TimePointEvent, TimePointSequence};
+
+let readings = TimePointSequence::from_events(vec![
+    TimePointEvent::new(30, 3.0),
+    TimePointEvent::new(10, 1.0),
+    TimePointEvent::new(20, 2.0),
+]);
+
+// Ordered however the events arrived.
+let seen: Vec<i64> = readings.iter().map(|e| e.timestamp()).collect();
+assert_eq!(seen, [10, 20, 30]);
+
+// Any Rust range works, and a window is a slice of the sequence itself.
+let window: &[TimePointEvent<f64>] = readings.range(10..30);
+assert_eq!(window.len(), 2);
+
+// The closest event in either direction, when the exact instant is missing.
+assert_eq!(readings.nearest(28).map(|e| e.timestamp()), Some(30));
+```
+
+`before` and `after` answer the same question one-sidedly, and both bounds are
+inclusive — an event landing exactly on the instant is the answer.
+
+`TimeIntervalSequence` is the other shape: **one state over time**, as the spans
+during which it was active. Every span means the same thing, so there is no
+per-span value. Overlapping and touching spans merge as they arrive, keeping the
+timeline a canonical, disjoint description of which instants are covered.
+
+```rust
+use chronoloom::{TimeIntervalEvent, TimeIntervalSequence};
+
+let mut uptime = TimeIntervalSequence::new();
+uptime.insert(TimeIntervalEvent::span(0, 5).unwrap());
+uptime.insert(TimeIntervalEvent::span(20, 30).unwrap());
+
+// Touching [0, 5) leaves no instant between them, so they merge.
+uptime.insert(TimeIntervalEvent::span(5, 9).unwrap());
+assert_eq!(uptime[0].bounds(), (0, 9));
+
+// A span reaching across the gap swallows both.
+uptime.insert(TimeIntervalEvent::span(7, 25).unwrap());
+assert_eq!(uptime.len(), 1);
+assert!(uptime.contains(12));
+```
+
+Because the timeline is normalized, `len` counts the spans left after merging —
+not the number inserted — and two sequences are equal exactly when they cover
+the same instants, however they were built.
+
+Two timelines combine with the usual set algebra. Both operands are borrowed and
+left untouched; each operation returns a new sequence. Since both are already
+ordered, each is a single pass over the two — linear, with no sorting.
+
+```rust
+use chronoloom::{TimeIntervalEvent, TimeIntervalSequence};
+
+let up = TimeIntervalSequence::from_spans(vec![
+    TimeIntervalEvent::span(0, 100).unwrap(),
+]);
+let maintenance = TimeIntervalSequence::from_spans(vec![
+    TimeIntervalEvent::span(10, 20).unwrap(),
+    TimeIntervalEvent::span(30, 40).unwrap(),
+]);
+
+// Up, but not in maintenance.
+let serving = up.difference(&maintenance);
+let bounds: Vec<(i64, i64)> = serving.iter().map(|s| s.bounds()).collect();
+assert_eq!(bounds, [(0, 10), (20, 30), (40, 100)]);
+
+// Everything in maintenance happened while up.
+assert_eq!(up.intersection(&maintenance), maintenance);
+
+// Both operands are untouched and still usable.
+assert_eq!(up.union(&maintenance), up);
+```
+
+`symmetric_difference` is the XOR: the instants covered by exactly one of the
+two timelines.
+
+## Moving a timeline in time
+
+`transform` shifts each bound of every span independently: `alpha` moves the
+lower bound, `beta` the upper, so `A[alpha, beta]` turns every span `[s, e)`
+into `[s + alpha, e + beta)`. Widening a timeline asks "was this active *near*
+here"; narrowing it asks "was this active for a solid stretch". Spans that meet
+after widening are merged, and spans narrowed away to nothing disappear.
+
+```rust
+use chronoloom::{TimeIntervalEvent, TimeIntervalSequence};
+
+let alerts = TimeIntervalSequence::from_spans(vec![
+    TimeIntervalEvent::span(0, 10).unwrap(),
+    TimeIntervalEvent::span(14, 20).unwrap(),
+]);
+
+// Two ticks of slack on each side close the four-tick gap exactly.
+let within_two = alerts.transform(-2, 2).unwrap();
+let bounds: Vec<(i64, i64)> = within_two.iter().map(|s| s.bounds()).collect();
+assert_eq!(bounds, [(-2, 22)]);
+
+// Only stretches longer than six ticks have anything left after six ticks of
+// lead-in, and the six-tick alert is gone entirely.
+let sustained = alerts.transform(6, 0).unwrap();
+let bounds: Vec<(i64, i64)> = sustained.iter().map(|s| s.bounds()).collect();
+assert_eq!(bounds, [(6, 10)]);
+```
+
+Only the difference `alpha - beta` decides what happens structurally, so a call
+either narrows spans and widens gaps, or the reverse — it can drop spans or
+merge them, never both. It is a single pass, and the one operation that can fail:
+a shift that pushes a bound outside the timestamp range returns
+`IntervalError::BoundOverflow`.
+
+## Operations on a pair of intervals
+
+Two `TimeIntervalEvent`s can be intersected — the span where both are active —
+or united — the spans covered by either, merged when nothing separates them.
 
 ```rust
 use chronoloom::TimeIntervalEvent;
@@ -58,6 +182,17 @@ assert_eq!(a.union(&far).len(), 2);
 Both work on the time dimension only: they accept intervals carrying different
 kinds of value, consume neither, and return valueless spans. Reattach a value
 with `map` if the result needs to mean something.
+
+## Not here yet
+
+The wider algebra is still to come — window and containment queries over a
+sequence, coverage and gaps, complement, the same set algebra for
+`TimePointSequence`, and carrying values through any of it. What exists today is
+the vocabulary, the two sequence shapes, the pair-wise interval operations, and
+the set algebra between two interval timelines.
+
+Every code block in this file is compiled and run by `make test`, so what is
+documented here is what is implemented.
 
 ## Python
 

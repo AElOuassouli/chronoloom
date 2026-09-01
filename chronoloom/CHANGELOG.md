@@ -71,6 +71,16 @@
 - Because both timelines are already normalized, each operation is a single
   pass over the two with no sorting — linear in their combined length. Results
   come back normalized by construction, so nothing is re-sorted either.
+- `TimeIntervalSequence::active_duration`, the total time the timeline covers.
+  Maintained as spans arrive and leave rather than computed on demand, so
+  reading it is constant time. It counts covered *instants*, not inserted
+  spans: overlapping inserts contribute their union once, and touching spans
+  contribute the whole they merge into — normalization is what makes the total
+  well defined. Unsigned and never saturating, unlike
+  `TimeIntervalEvent::duration`, which must clamp to stay in `i64`: spans are
+  disjoint and bounded by `i64`, so a total cannot exceed
+  `i64::MAX - i64::MIN`, which `u64` represents exactly. Equality is unchanged
+  and still compares coverage alone.
 - `TimeIntervalEvent::merged`, the single span covering two intervals, or
   `None` when a gap separates them. The non-allocating counterpart to `union`,
   which now delegates to it — so whether two intervals combine, and into what,

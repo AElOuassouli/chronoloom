@@ -235,7 +235,7 @@ jobs:
         uses: actions/attest-build-provenance@v4
         with:
           subject-path: "dist/*"
-      - uses: astral-sh/setup-uv@v10.0.1
+      - uses: astral-sh/setup-uv@v10.2.0
       # `--trusted-publishing always` fails loudly if OIDC is not configured,
       # rather than silently falling back to looking for a token.
       - name: Publish to PyPI

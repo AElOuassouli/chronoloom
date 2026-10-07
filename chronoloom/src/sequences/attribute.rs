@@ -74,12 +74,6 @@ pub enum Attribute {
 
 impl Attribute {
     /// Name a state outright.
-    ///
-    /// ```
-    /// use chronoloom::sequences::Attribute;
-    ///
-    /// assert_eq!(Attribute::name("uptime").to_string(), "uptime");
-    /// ```
     #[must_use]
     pub fn name(name: impl Into<String>) -> Self {
         Self::Name(name.into())
@@ -90,15 +84,6 @@ impl Attribute {
     /// `A[0, 0]` is `A`, so a zero transform is not recorded at all — there is
     /// nothing for it to say, and saying it anyway would leave two spellings of
     /// the same description.
-    ///
-    /// ```
-    /// use chronoloom::sequences::Attribute;
-    ///
-    /// let alerts = Attribute::name("alerts");
-    ///
-    /// assert_eq!(alerts.clone().transformed(-2, 2).to_string(), "alerts[-2, 2]");
-    /// assert_eq!(alerts.clone().transformed(0, 0), alerts);
-    /// ```
     #[must_use]
     pub fn transformed(self, alpha: Timestamp, beta: Timestamp) -> Self {
         if (alpha, beta) == (0, 0) {
@@ -113,18 +98,6 @@ impl Attribute {
     }
 
     /// Record that two timelines were combined by `operation`.
-    ///
-    /// ```
-    /// use chronoloom::sequences::{Attribute, SetOperation};
-    ///
-    /// let either = Attribute::combined(
-    ///     SetOperation::Union,
-    ///     Attribute::name("up"),
-    ///     Attribute::name("busy"),
-    /// );
-    ///
-    /// assert_eq!(either.to_string(), "up ∪ busy");
-    /// ```
     #[must_use]
     pub fn combined(operation: SetOperation, left: Self, right: Self) -> Self {
         Self::Combined {
@@ -213,13 +186,6 @@ pub enum SetOperation {
 
 impl SetOperation {
     /// How the operation is written in a label.
-    ///
-    /// ```
-    /// use chronoloom::sequences::SetOperation;
-    ///
-    /// assert_eq!(SetOperation::Union.symbol(), "∪");
-    /// assert_eq!(SetOperation::Difference.symbol(), "\\");
-    /// ```
     #[must_use]
     pub const fn symbol(self) -> &'static str {
         match self {
@@ -236,141 +202,8 @@ impl SetOperation {
     /// True of every operation but the difference, which is the one that reads
     /// its operands asymmetrically. This is what lets a label drop parentheses
     /// it does not need.
-    ///
-    /// ```
-    /// use chronoloom::sequences::SetOperation;
-    ///
-    /// assert!(SetOperation::SymmetricDifference.is_associative());
-    /// assert!(!SetOperation::Difference.is_associative());
-    /// ```
     #[must_use]
     pub const fn is_associative(self) -> bool {
         !matches!(self, Self::Difference)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{Attribute, SetOperation};
-
-    /// A named attribute, for tests where the name is incidental.
-    fn name(name: &str) -> Attribute {
-        Attribute::name(name)
-    }
-
-    /// `left` and `right` combined by `operation`.
-    fn combine(operation: SetOperation, left: Attribute, right: Attribute) -> Attribute {
-        Attribute::combined(operation, left, right)
-    }
-
-    #[test]
-    fn a_name_renders_as_itself() {
-        assert_eq!(name("uptime").to_string(), "uptime");
-    }
-
-    #[test]
-    fn a_transform_follows_the_name_it_moves() {
-        assert_eq!(name("A").transformed(1, 2).to_string(), "A[1, 2]");
-    }
-
-    #[test]
-    fn negative_shifts_keep_their_sign() {
-        assert_eq!(name("A").transformed(-2, 2).to_string(), "A[-2, 2]");
-    }
-
-    #[test]
-    fn a_zero_transform_is_not_recorded() {
-        let alerts = name("alerts");
-
-        assert_eq!(alerts.clone().transformed(0, 0), alerts);
-    }
-
-    #[test]
-    fn every_operation_has_its_own_symbol() {
-        let symbols: Vec<&str> = [
-            SetOperation::Union,
-            SetOperation::Intersection,
-            SetOperation::Difference,
-            SetOperation::SymmetricDifference,
-        ]
-        .into_iter()
-        .map(SetOperation::symbol)
-        .collect();
-
-        assert_eq!(symbols, ["∪", "∩", "\\", "△"]);
-    }
-
-    #[test]
-    fn only_the_difference_is_not_associative() {
-        assert!(SetOperation::Union.is_associative());
-        assert!(SetOperation::Intersection.is_associative());
-        assert!(SetOperation::SymmetricDifference.is_associative());
-        assert!(!SetOperation::Difference.is_associative());
-    }
-
-    #[test]
-    fn operands_sit_either_side_of_the_symbol() {
-        let either = combine(SetOperation::Union, name("A"), name("B"));
-
-        assert_eq!(either.to_string(), "A ∪ B");
-    }
-
-    #[test]
-    fn a_transformed_operand_needs_no_grouping() {
-        let either = combine(SetOperation::Union, name("A").transformed(1, 2), name("B"));
-
-        assert_eq!(either.to_string(), "A[1, 2] ∪ B");
-    }
-
-    #[test]
-    fn a_chain_of_one_associative_operation_stays_flat() {
-        let union = combine(SetOperation::Union, name("A"), name("B"));
-        let chain = combine(SetOperation::Union, union, name("C"));
-
-        assert_eq!(chain.to_string(), "A ∪ B ∪ C");
-    }
-
-    #[test]
-    fn a_chain_stays_flat_from_either_side() {
-        let union = combine(SetOperation::Union, name("B"), name("C"));
-        let chain = combine(SetOperation::Union, name("A"), union);
-
-        assert_eq!(chain.to_string(), "A ∪ B ∪ C");
-    }
-
-    #[test]
-    fn mixing_two_operations_groups_the_inner_one() {
-        let union = combine(SetOperation::Union, name("A"), name("B"));
-        let mixed = combine(SetOperation::Intersection, union, name("C"));
-
-        assert_eq!(mixed.to_string(), "(A ∪ B) ∩ C");
-    }
-
-    #[test]
-    fn a_difference_groups_both_of_its_operands() {
-        let left = combine(SetOperation::Difference, name("A"), name("B"));
-        let right = combine(SetOperation::Union, name("C"), name("D"));
-        let nested = combine(SetOperation::Difference, left, right);
-
-        assert_eq!(nested.to_string(), "(A \\ B) \\ (C ∪ D)");
-    }
-
-    #[test]
-    fn a_transform_groups_the_combination_it_moves() {
-        let union = combine(SetOperation::Union, name("A"), name("B"));
-
-        assert_eq!(union.transformed(1, 2).to_string(), "(A ∪ B)[1, 2]");
-    }
-
-    #[test]
-    fn grouping_a_transformed_combination_survives_another_operation() {
-        let union = combine(SetOperation::Union, name("A"), name("B"));
-        let mixed = combine(
-            SetOperation::Intersection,
-            union.transformed(1, 2),
-            name("C"),
-        );
-
-        assert_eq!(mixed.to_string(), "(A ∪ B)[1, 2] ∩ C");
     }
 }

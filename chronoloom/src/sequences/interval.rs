@@ -1392,14 +1392,19 @@ mod tests {
         TimeIntervalEvent::span(start, end).expect("test bounds are ordered")
     }
 
-    /// Build a timeline of `attribute` from `(start, end)` pairs through
+    /// The state the helpers below build a timeline of.
+    ///
+    /// Shared, rather than named per test, because equality now asks what a
+    /// timeline describes as well as which instants it covers: two timelines
+    /// built by two different helpers must still be able to come out equal.
+    /// Tests that are *about* the description name their own states instead.
+    const ATTRIBUTE: &str = "up";
+
+    /// Build a timeline of [`ATTRIBUTE`] from `(start, end)` pairs through
     /// `from_spans`.
-    fn from_spans(
-        attribute: &str,
-        bounds: impl IntoIterator<Item = (i64, i64)>,
-    ) -> TimeIntervalSequence {
+    fn from_spans(bounds: impl IntoIterator<Item = (i64, i64)>) -> TimeIntervalSequence {
         let sequence = TimeIntervalSequence::from_spans(
-            attribute,
+            ATTRIBUTE,
             bounds
                 .into_iter()
                 .map(|(start, end)| span(start, end))
@@ -1410,13 +1415,10 @@ mod tests {
         sequence
     }
 
-    /// Build a timeline of `attribute` by inserting `(start, end)` pairs one at
-    /// a time, checking the invariant holds after every step.
-    fn inserted(
-        attribute: &str,
-        bounds: impl IntoIterator<Item = (i64, i64)>,
-    ) -> TimeIntervalSequence {
-        let mut sequence = TimeIntervalSequence::new(attribute);
+    /// Build a timeline of [`ATTRIBUTE`] by inserting `(start, end)` pairs one
+    /// at a time, checking the invariant holds after every step.
+    fn inserted(bounds: impl IntoIterator<Item = (i64, i64)>) -> TimeIntervalSequence {
+        let mut sequence = TimeIntervalSequence::new(ATTRIBUTE);
         for (start, end) in bounds {
             sequence.insert(span(start, end));
             assert_normalized(&sequence);
@@ -1712,8 +1714,19 @@ mod tests {
     }
 
     #[test]
-    fn new_and_default_agree() {
-        assert_eq!(TimeIntervalSequence::new(), TimeIntervalSequence::default());
+    fn a_new_timeline_says_what_it_describes() {
+        assert_eq!(TimeIntervalSequence::new("uptime").label(), "uptime");
+    }
+
+    #[test]
+    fn timelines_of_different_states_are_never_equal() {
+        let up = TimeIntervalSequence::from_spans("up", vec![span(0, 10)]);
+        let reachable = TimeIntervalSequence::from_spans("reachable", vec![span(0, 10)]);
+
+        // The same instants, described two ways — which is coverage equality,
+        // and the reason the helpers above all build the one state.
+        assert!(up.covers_same(&reachable));
+        assert_ne!(up, reachable);
     }
 
     #[test]
@@ -1721,7 +1734,7 @@ mod tests {
         let uptime = TimeIntervalSequence::from_spans("uptime", vec![]);
 
         assert!(uptime.is_empty());
-        assert_eq!(uptime, TimeIntervalSequence::new());
+        assert_eq!(uptime, TimeIntervalSequence::new("uptime"));
     }
 
     #[test]
@@ -1739,7 +1752,7 @@ mod tests {
         let spans: Vec<TimeIntervalEvent<()>> = uptime.clone().into_iter().collect();
         assert_eq!(spans.len(), 2);
 
-        let rebuilt: TimeIntervalSequence = spans.into_iter().collect();
+        let rebuilt = TimeIntervalSequence::from_spans(ATTRIBUTE, spans);
         assert_eq!(rebuilt, uptime);
     }
 
@@ -1749,7 +1762,7 @@ mod tests {
         let spans = uptime.clone().into_spans();
 
         assert_eq!(spans.len(), 2);
-        assert_eq!(TimeIntervalSequence::from_spans(spans), uptime);
+        assert_eq!(TimeIntervalSequence::from_spans(ATTRIBUTE, spans), uptime);
     }
 
     #[test]
@@ -1820,12 +1833,12 @@ mod tests {
         let up = from_spans([(0, 100)]);
         let busy = from_spans([(10, 20), (30, 40)]);
 
-        assert_eq!(up.intersection(&busy), busy);
+        assert_same_coverage(&up.intersection(&busy), &busy);
         assert_eq!(
             bounds(&up.difference(&busy)),
             [(0, 10), (20, 30), (40, 100)]
         );
-        assert_eq!(up.union(&busy), up);
+        assert_same_coverage(&up.union(&busy), &up);
         assert_eq!(
             bounds(&up.symmetric_difference(&busy)),
             [(0, 10), (20, 30), (40, 100)]
@@ -1878,8 +1891,8 @@ mod tests {
     fn operations_against_itself_collapse() {
         let a = from_spans([(0, 10), (20, 30)]);
 
-        assert_eq!(a.union(&a), a);
-        assert_eq!(a.intersection(&a), a);
+        assert_same_coverage(&a.union(&a), &a);
+        assert_same_coverage(&a.intersection(&a), &a);
         assert!(a.difference(&a).is_empty());
         assert!(a.symmetric_difference(&a).is_empty());
     }
@@ -1889,11 +1902,11 @@ mod tests {
         let a = from_spans([(0, 10), (20, 30)]);
         let empty = TimeIntervalSequence::new("empty");
 
-        assert_eq!(a.union(&empty), a);
+        assert_same_coverage(&a.union(&empty), &a);
         assert!(a.intersection(&empty).is_empty());
-        assert_eq!(a.difference(&empty), a);
+        assert_same_coverage(&a.difference(&empty), &a);
         assert!(empty.difference(&a).is_empty());
-        assert_eq!(a.symmetric_difference(&empty), a);
+        assert_same_coverage(&a.symmetric_difference(&empty), &a);
     }
 
     #[test]
@@ -1901,8 +1914,8 @@ mod tests {
         let a = from_spans([(0, 10), (20, 30)]);
         let b = from_spans([(5, 25)]);
 
-        assert_eq!(a.union(&a.intersection(&b)), a);
-        assert_eq!(a.intersection(&a.union(&b)), a);
+        assert_same_coverage(&a.union(&a.intersection(&b)), &a);
+        assert_same_coverage(&a.intersection(&a.union(&b)), &a);
     }
 
     #[test]
@@ -1911,13 +1924,13 @@ mod tests {
         let b = from_spans([(10, 30)]);
         let c = from_spans([(15, 50)]);
 
-        assert_eq!(
-            a.intersection(&b.union(&c)),
-            a.intersection(&b).union(&a.intersection(&c)),
+        assert_same_coverage(
+            &a.intersection(&b.union(&c)),
+            &a.intersection(&b).union(&a.intersection(&c)),
         );
-        assert_eq!(
-            a.union(&b.intersection(&c)),
-            a.union(&b).intersection(&a.union(&c)),
+        assert_same_coverage(
+            &a.union(&b.intersection(&c)),
+            &a.union(&b).intersection(&a.union(&c)),
         );
     }
 
@@ -1927,13 +1940,13 @@ mod tests {
         let b = from_spans([(10, 30)]);
         let c = from_spans([(20, 50)]);
 
-        assert_eq!(
-            a.difference(&b.union(&c)),
-            a.difference(&b).intersection(&a.difference(&c))
+        assert_same_coverage(
+            &a.difference(&b.union(&c)),
+            &a.difference(&b).intersection(&a.difference(&c)),
         );
-        assert_eq!(
-            a.difference(&b.intersection(&c)),
-            a.difference(&b).union(&a.difference(&c))
+        assert_same_coverage(
+            &a.difference(&b.intersection(&c)),
+            &a.difference(&b).union(&a.difference(&c)),
         );
     }
 
@@ -1943,12 +1956,12 @@ mod tests {
         let b = from_spans([(5, 25), (45, 60)]);
 
         // Symmetric difference is everything covered, minus what both share.
-        assert_eq!(
-            a.symmetric_difference(&b),
-            a.union(&b).difference(&a.intersection(&b)),
+        assert_same_coverage(
+            &a.symmetric_difference(&b),
+            &a.union(&b).difference(&a.intersection(&b)),
         );
         // What is only ours, plus what we share, is everything of ours.
-        assert_eq!(a.difference(&b).union(&a.intersection(&b)), a);
+        assert_same_coverage(&a.difference(&b).union(&a.intersection(&b)), &a);
     }
 
     #[test]
@@ -1966,8 +1979,8 @@ mod tests {
         let widest = from_spans([(i64::MIN, i64::MAX)]);
         let middle = from_spans([(-1, 1)]);
 
-        assert_eq!(widest.union(&middle), widest);
-        assert_eq!(widest.intersection(&middle), middle);
+        assert_same_coverage(&widest.union(&middle), &widest);
+        assert_same_coverage(&widest.intersection(&middle), &middle);
         assert_eq!(
             bounds(&widest.difference(&middle)),
             [(i64::MIN, -1), (1, i64::MAX)]
@@ -1989,8 +2002,7 @@ mod tests {
 
     #[test]
     fn an_empty_sequence_covers_no_time() {
-        assert_eq!(TimeIntervalSequence::new().active_duration(), 0);
-        assert_eq!(TimeIntervalSequence::default().active_duration(), 0);
+        assert_eq!(TimeIntervalSequence::new("uptime").active_duration(), 0);
         assert_eq!(from_spans([]).active_duration(), 0);
     }
 
@@ -2129,7 +2141,7 @@ mod tests {
         // And putting it back restores the total, through the merge branch.
         let mut restored = carved;
         restored.insert(span(-1, 1));
-        assert_eq!(restored, widest);
+        assert_same_coverage(&restored, &widest);
         assert_eq!(restored.active_duration(), u64::MAX);
     }
 
@@ -2138,7 +2150,7 @@ mod tests {
         let uptime = from_spans([(0, 10), (20, 30)]);
 
         assert_eq!(transformed(&uptime, 0, 0), uptime);
-        assert!(transformed(&TimeIntervalSequence::new(), 3, -3).is_empty());
+        assert!(transformed(&TimeIntervalSequence::new(ATTRIBUTE), 3, -3).is_empty());
     }
 
     #[test]

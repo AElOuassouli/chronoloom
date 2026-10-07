@@ -54,7 +54,7 @@
 //! ```
 //! use chronoloom::{TimeIntervalEvent, TimeIntervalSequence};
 //!
-//! let mut uptime = TimeIntervalSequence::new();
+//! let mut uptime = TimeIntervalSequence::new("uptime");
 //! uptime.insert(TimeIntervalEvent::span(0, 5)?);
 //! uptime.insert(TimeIntervalEvent::span(20, 30)?);
 //! uptime.insert(TimeIntervalEvent::span(5, 25)?);
@@ -112,4 +112,4 @@ pub mod primitives;
 pub mod sequences;
 
 pub use primitives::{IntervalError, TimeIntervalEvent, TimePointEvent, Timestamp};
-pub use sequences::{TimeIntervalSequence, TimePointSequence};
+pub use sequences::{Attribute, SetOperation, TimeIntervalSequence, TimePointSequence};

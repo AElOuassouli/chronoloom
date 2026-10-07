@@ -75,7 +75,7 @@ timeline a canonical, disjoint description of which instants are covered.
 ```rust
 use chronoloom::{TimeIntervalEvent, TimeIntervalSequence};
 
-let mut uptime = TimeIntervalSequence::new();
+let mut uptime = TimeIntervalSequence::new("uptime");
 uptime.insert(TimeIntervalEvent::span(0, 5).unwrap());
 uptime.insert(TimeIntervalEvent::span(20, 30).unwrap());
 
@@ -100,10 +100,10 @@ ordered, each is a single pass over the two — linear, with no sorting.
 ```rust
 use chronoloom::{TimeIntervalEvent, TimeIntervalSequence};
 
-let up = TimeIntervalSequence::from_spans(vec![
+let up = TimeIntervalSequence::from_spans("up", vec![
     TimeIntervalEvent::span(0, 100).unwrap(),
 ]);
-let maintenance = TimeIntervalSequence::from_spans(vec![
+let maintenance = TimeIntervalSequence::from_spans("maintenance", vec![
     TimeIntervalEvent::span(10, 20).unwrap(),
     TimeIntervalEvent::span(30, 40).unwrap(),
 ]);
@@ -134,7 +134,7 @@ after widening are merged, and spans narrowed away to nothing disappear.
 ```rust
 use chronoloom::{TimeIntervalEvent, TimeIntervalSequence};
 
-let alerts = TimeIntervalSequence::from_spans(vec![
+let alerts = TimeIntervalSequence::from_spans("alerts", vec![
     TimeIntervalEvent::span(0, 10).unwrap(),
     TimeIntervalEvent::span(14, 20).unwrap(),
 ]);

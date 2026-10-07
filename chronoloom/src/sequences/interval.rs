@@ -1,9 +1,11 @@
 //! A normalized timeline of the spans during which one state was active.
 
+use core::fmt;
 use std::ops::Index;
 use std::{slice, vec};
 
 use crate::primitives::{IntervalError, TimeIntervalEvent, Timestamp};
+use crate::sequences::attribute::{Attribute, SetOperation};
 
 /// The spans during which one state was active, in canonical form.
 ///
@@ -18,7 +20,7 @@ use crate::primitives::{IntervalError, TimeIntervalEvent, Timestamp};
 /// use chronoloom::primitives::TimeIntervalEvent;
 /// use chronoloom::sequences::TimeIntervalSequence;
 ///
-/// let mut uptime = TimeIntervalSequence::new();
+/// let mut uptime = TimeIntervalSequence::new("uptime");
 /// uptime.insert(TimeIntervalEvent::span(0, 10)?);
 /// uptime.insert(TimeIntervalEvent::span(5, 20)?);
 ///
@@ -31,31 +33,92 @@ use crate::primitives::{IntervalError, TimeIntervalEvent, Timestamp};
 /// # Coverage, not history
 ///
 /// Normalization means a sequence records *which instants are covered*, not
-/// which spans were inserted. Two sequences are equal exactly when they cover
-/// the same instants, however they were built, and [`len`] counts the spans
-/// that remain after merging rather than the number inserted.
+/// which spans were inserted. Two sequences describing the same state cover the
+/// same instants exactly when they are equal, however they were built, and
+/// [`len`] counts the spans that remain after merging rather than the number
+/// inserted.
 ///
 /// ```
 /// use chronoloom::primitives::TimeIntervalEvent;
 /// use chronoloom::sequences::TimeIntervalSequence;
 ///
-/// let piecemeal = TimeIntervalSequence::from_spans(vec![
+/// let piecemeal = TimeIntervalSequence::from_spans("up", vec![
 ///     TimeIntervalEvent::span(0, 5)?,
 ///     TimeIntervalEvent::span(5, 10)?,
 ///     TimeIntervalEvent::span(2, 7)?,
 /// ]);
-/// let whole = TimeIntervalSequence::from_spans(vec![TimeIntervalEvent::span(0, 10)?]);
+/// let whole = TimeIntervalSequence::from_spans("up", vec![TimeIntervalEvent::span(0, 10)?]);
 ///
 /// assert_eq!(piecemeal, whole);
 /// assert_eq!(piecemeal.len(), 1);
 /// # Ok::<(), chronoloom::primitives::IntervalError>(())
 /// ```
 ///
-/// # Values
+/// # What the timeline describes
 ///
-/// A sequence carries no payload. Because every span means the same state, a
-/// value would belong to the sequence as a whole rather than to each span, and
-/// state values are not modelled yet.
+/// No span carries a value, because every span means the same thing: the value
+/// belongs to the timeline as a whole. That is the [`attribute`] — the state
+/// this is the timeline *of* — and every sequence has one. There is no such
+/// thing as an unnamed timeline, which is why the constructors ask for a name
+/// before they ask for spans.
+///
+/// Alongside it sits the [`transformation`], the `[alpha, beta]` shift
+/// [`transform`] has applied so far. The two render together as the label
+/// `A[alpha, beta]`, and `[0, 0]` — the untransformed case — is left off.
+///
+/// ```
+/// use chronoloom::primitives::TimeIntervalEvent;
+/// use chronoloom::sequences::TimeIntervalSequence;
+///
+/// let alerts = TimeIntervalSequence::from_spans("alerts", vec![
+///     TimeIntervalEvent::span(0, 10)?,
+/// ]);
+/// assert_eq!(alerts.to_string(), "alerts");
+///
+/// // Two ticks of slack either side, and the label says so.
+/// let nearby = alerts.transform(-2, 2)?;
+/// assert_eq!(nearby.to_string(), "alerts[-2, 2]");
+/// # Ok::<(), chronoloom::primitives::IntervalError>(())
+/// ```
+///
+/// An operation describes its result the same way, out of the two labels that
+/// went into it — so a derived timeline still says what it is, with no name to
+/// invent. Its own transformation starts over at `[0, 0]`, since whatever the
+/// operands were shifted by is already spelled out inside the label:
+///
+/// ```
+/// use chronoloom::primitives::TimeIntervalEvent;
+/// use chronoloom::sequences::TimeIntervalSequence;
+///
+/// let a = TimeIntervalSequence::from_spans("A", vec![TimeIntervalEvent::span(0, 10)?]);
+/// let b = TimeIntervalSequence::from_spans("B", vec![TimeIntervalEvent::span(20, 30)?]);
+///
+/// let either = a.transform(1, 2)?.union(&b);
+/// assert_eq!(either.to_string(), "A[1, 2] ∪ B");
+/// assert_eq!(either.transformation(), (0, 0));
+///
+/// // And the description keeps composing, grouped where it has to be.
+/// assert_eq!(either.intersection(&b).to_string(), "(A[1, 2] ∪ B) ∩ B");
+/// # Ok::<(), chronoloom::primitives::IntervalError>(())
+/// ```
+///
+/// Because the label is part of what a sequence *is*, it is part of equality
+/// too: two timelines are equal when they describe the same thing and cover the
+/// same instants. [`covers_same`] asks only the second half.
+///
+/// ```
+/// use chronoloom::primitives::TimeIntervalEvent;
+/// use chronoloom::sequences::TimeIntervalSequence;
+///
+/// let up = TimeIntervalSequence::from_spans("up", vec![TimeIntervalEvent::span(0, 10)?]);
+/// let reachable = TimeIntervalSequence::from_spans("reachable", vec![
+///     TimeIntervalEvent::span(0, 10)?,
+/// ]);
+///
+/// assert_ne!(up, reachable);
+/// assert!(up.covers_same(&reachable));
+/// # Ok::<(), chronoloom::primitives::IntervalError>(())
+/// ```
 ///
 /// # Active duration
 ///
@@ -69,7 +132,7 @@ use crate::primitives::{IntervalError, TimeIntervalEvent, Timestamp};
 /// use chronoloom::primitives::TimeIntervalEvent;
 /// use chronoloom::sequences::TimeIntervalSequence;
 ///
-/// let uptime = TimeIntervalSequence::from_spans(vec![
+/// let uptime = TimeIntervalSequence::from_spans("uptime", vec![
 ///     TimeIntervalEvent::span(0, 10)?,
 ///     TimeIntervalEvent::span(5, 20)?,
 ///     TimeIntervalEvent::span(30, 40)?,
@@ -81,8 +144,12 @@ use crate::primitives::{IntervalError, TimeIntervalEvent, Timestamp};
 /// ```
 ///
 /// [`active_duration`]: TimeIntervalSequence::active_duration
+/// [`attribute`]: TimeIntervalSequence::attribute
+/// [`covers_same`]: TimeIntervalSequence::covers_same
 /// [`len`]: TimeIntervalSequence::len
-#[derive(Debug, Clone, Default)]
+/// [`transform`]: TimeIntervalSequence::transform
+/// [`transformation`]: TimeIntervalSequence::transformation
+#[derive(Debug, Clone)]
 pub struct TimeIntervalSequence {
     /// Normalized: sorted by start, pairwise disjoint, and never touching — so
     /// `spans[i].end() < spans[i + 1].start()` strictly, for every adjacent
@@ -92,26 +159,37 @@ pub struct TimeIntervalSequence {
     /// with no instant counted twice; every method that touches `spans` updates
     /// it in the same breath.
     active_duration: u64,
+    /// The state this is the timeline of. Never absent: a timeline that did not
+    /// say what it describes would be a list of spans, not a state over time.
+    attribute: Attribute,
+    /// The `[alpha, beta]` shift [`TimeIntervalSequence::transform`] has applied
+    /// so far, `(0, 0)` until one does. Kept beside the attribute rather than
+    /// folded into it so the shift stays a number the caller can read back.
+    transformation: (Timestamp, Timestamp),
 }
 
 impl TimeIntervalSequence {
-    /// Create an empty sequence, covering no instants at all.
+    /// Create an empty timeline of the state named `attribute`.
     ///
     /// ```
     /// use chronoloom::sequences::TimeIntervalSequence;
     ///
-    /// let uptime = TimeIntervalSequence::new();
+    /// let uptime = TimeIntervalSequence::new("uptime");
+    ///
     /// assert!(uptime.is_empty());
+    /// assert_eq!(uptime.to_string(), "uptime");
     /// ```
     #[must_use]
-    pub const fn new() -> Self {
+    pub fn new(attribute: impl Into<String>) -> Self {
         Self {
             spans: Vec::new(),
             active_duration: 0,
+            attribute: Attribute::name(attribute),
+            transformation: (0, 0),
         }
     }
 
-    /// Build a sequence from spans already in hand.
+    /// Build a timeline of `attribute` from spans already in hand.
     ///
     /// The usual way to create one when the data exists up front. The spans may
     /// be in any order and may overlap freely; they are sorted once, in place,
@@ -121,7 +199,7 @@ impl TimeIntervalSequence {
     /// use chronoloom::primitives::TimeIntervalEvent;
     /// use chronoloom::sequences::TimeIntervalSequence;
     ///
-    /// let uptime = TimeIntervalSequence::from_spans(vec![
+    /// let uptime = TimeIntervalSequence::from_spans("uptime", vec![
     ///     TimeIntervalEvent::span(30, 40)?,
     ///     TimeIntervalEvent::span(0, 10)?,
     ///     TimeIntervalEvent::span(5, 20)?,
@@ -132,21 +210,11 @@ impl TimeIntervalSequence {
     /// # Ok::<(), chronoloom::primitives::IntervalError>(())
     /// ```
     #[must_use]
-    pub fn from_spans(mut spans: Vec<TimeIntervalEvent<()>>) -> Self {
-        spans.sort_by_key(TimeIntervalEvent::start);
-
-        // Sweep once, folding each span into the one still open. The sort
-        // guarantees every span that can merge with the current one comes next,
-        // so a single pass is enough.
-        let mut normalized: Vec<TimeIntervalEvent<()>> = Vec::with_capacity(spans.len());
-        for span in spans {
-            absorb(&mut normalized, span);
-        }
-
-        Self::from_normalized(normalized)
+    pub fn from_spans(attribute: impl Into<String>, spans: Vec<TimeIntervalEvent<()>>) -> Self {
+        Self::from_parts(Attribute::name(attribute), (0, 0), normalize(spans))
     }
 
-    /// Wrap spans that are already in canonical form.
+    /// Wrap spans that are already in canonical form, under a description.
     ///
     /// Private and unchecked: the caller must have produced them sorted,
     /// disjoint, and non-touching. Every use here either folds through
@@ -155,8 +223,13 @@ impl TimeIntervalSequence {
     ///
     /// The one pass this does make is totalling the duration. Every caller is
     /// already linear in the spans, so it costs nothing asymptotically, and
-    /// funnelling them all through here means no construction path can forget.
-    fn from_normalized(spans: Vec<TimeIntervalEvent<()>>) -> Self {
+    /// funnelling them all through here means no construction path can forget
+    /// the total, or forget to say what the timeline describes.
+    fn from_parts(
+        attribute: Attribute,
+        transformation: (Timestamp, Timestamp),
+        spans: Vec<TimeIntervalEvent<()>>,
+    ) -> Self {
         let active_duration = spans.iter().fold(0u64, |total, span| {
             total.checked_add(span_ticks(span)).expect(OVERFLOW)
         });
@@ -164,7 +237,158 @@ impl TimeIntervalSequence {
         Self {
             spans,
             active_duration,
+            attribute,
+            transformation,
         }
+    }
+
+    /// What this timeline is the timeline of.
+    ///
+    /// A name for one built directly, and the expression it came from for one
+    /// an operation produced. [`Display`] renders it, and so does the sequence
+    /// itself — with [`transformation`] applied.
+    ///
+    /// ```
+    /// use chronoloom::primitives::TimeIntervalEvent;
+    /// use chronoloom::sequences::{Attribute, TimeIntervalSequence};
+    ///
+    /// let up = TimeIntervalSequence::from_spans("up", vec![TimeIntervalEvent::span(0, 10)?]);
+    ///
+    /// assert_eq!(up.attribute(), &Attribute::name("up"));
+    /// # Ok::<(), chronoloom::primitives::IntervalError>(())
+    /// ```
+    ///
+    /// [`Display`]: core::fmt::Display
+    /// [`transformation`]: TimeIntervalSequence::transformation
+    #[must_use]
+    pub const fn attribute(&self) -> &Attribute {
+        &self.attribute
+    }
+
+    /// Describe this timeline as a state named outright, forgetting how it was
+    /// derived.
+    ///
+    /// A derived timeline describes itself with the expression that produced it,
+    /// which is right up to the point where the result is a state in its own
+    /// right and deserves its own name. Naming it replaces the whole expression
+    /// — including the transformation, which the old description was measured
+    /// against and the new one is not.
+    ///
+    /// ```
+    /// use chronoloom::primitives::TimeIntervalEvent;
+    /// use chronoloom::sequences::TimeIntervalSequence;
+    ///
+    /// let up = TimeIntervalSequence::from_spans("up", vec![TimeIntervalEvent::span(0, 100)?]);
+    /// let busy = TimeIntervalSequence::from_spans("busy", vec![TimeIntervalEvent::span(10, 20)?]);
+    ///
+    /// let mut idle = up.difference(&busy);
+    /// assert_eq!(idle.to_string(), "up \\ busy");
+    ///
+    /// idle.set_attribute("idle");
+    /// assert_eq!(idle.to_string(), "idle");
+    /// assert_eq!(idle.transformation(), (0, 0));
+    /// # Ok::<(), chronoloom::primitives::IntervalError>(())
+    /// ```
+    pub fn set_attribute(&mut self, attribute: impl Into<String>) {
+        self.attribute = Attribute::name(attribute);
+        self.transformation = (0, 0);
+    }
+
+    /// The `[alpha, beta]` shift [`transform`] has applied to this timeline so
+    /// far.
+    ///
+    /// `(0, 0)` for one that has not been transformed, and for the result of an
+    /// operation — which records what its operands were shifted by inside its
+    /// [`attribute`] instead.
+    ///
+    /// ```
+    /// use chronoloom::primitives::TimeIntervalEvent;
+    /// use chronoloom::sequences::TimeIntervalSequence;
+    ///
+    /// let alerts = TimeIntervalSequence::from_spans("alerts", vec![
+    ///     TimeIntervalEvent::span(0, 10)?,
+    /// ]);
+    ///
+    /// assert_eq!(alerts.transformation(), (0, 0));
+    /// assert_eq!(alerts.transform(-2, 2)?.transformation(), (-2, 2));
+    /// # Ok::<(), chronoloom::primitives::IntervalError>(())
+    /// ```
+    ///
+    /// [`attribute`]: TimeIntervalSequence::attribute
+    /// [`transform`]: TimeIntervalSequence::transform
+    #[must_use]
+    pub const fn transformation(&self) -> (Timestamp, Timestamp) {
+        self.transformation
+    }
+
+    /// How this timeline describes itself: its [`attribute`], with its
+    /// [`transformation`] applied.
+    ///
+    /// The same text [`Display`] writes, as an owned `String`.
+    ///
+    /// ```
+    /// use chronoloom::primitives::TimeIntervalEvent;
+    /// use chronoloom::sequences::TimeIntervalSequence;
+    ///
+    /// let alerts = TimeIntervalSequence::from_spans("alerts", vec![
+    ///     TimeIntervalEvent::span(0, 10)?,
+    /// ]);
+    ///
+    /// assert_eq!(alerts.label(), "alerts");
+    /// assert_eq!(alerts.transform(-2, 2)?.label(), "alerts[-2, 2]");
+    /// # Ok::<(), chronoloom::primitives::IntervalError>(())
+    /// ```
+    ///
+    /// [`Display`]: core::fmt::Display
+    /// [`attribute`]: TimeIntervalSequence::attribute
+    /// [`transformation`]: TimeIntervalSequence::transformation
+    #[must_use]
+    pub fn label(&self) -> String {
+        self.to_string()
+    }
+
+    /// Whether two timelines cover exactly the same instants, whatever they
+    /// describe.
+    ///
+    /// Equality asks more than this — it asks that the two describe the same
+    /// thing as well — so this is what the set-algebra identities are stated
+    /// with: `A ∪ B` and `B ∪ A` cover the same instants under different
+    /// descriptions. Comparing [`as_slice`] says the same, spelled out.
+    ///
+    /// ```
+    /// use chronoloom::primitives::TimeIntervalEvent;
+    /// use chronoloom::sequences::TimeIntervalSequence;
+    ///
+    /// let a = TimeIntervalSequence::from_spans("A", vec![TimeIntervalEvent::span(0, 10)?]);
+    /// let b = TimeIntervalSequence::from_spans("B", vec![TimeIntervalEvent::span(5, 20)?]);
+    ///
+    /// assert!(a.union(&b).covers_same(&b.union(&a)));
+    /// assert_ne!(a.union(&b), b.union(&a));
+    /// # Ok::<(), chronoloom::primitives::IntervalError>(())
+    /// ```
+    ///
+    /// [`as_slice`]: TimeIntervalSequence::as_slice
+    #[must_use]
+    pub fn covers_same(&self, other: &Self) -> bool {
+        self.spans == other.spans
+    }
+
+    /// How this timeline enters an operation: its attribute, carrying whatever
+    /// it has been transformed by.
+    ///
+    /// The result of an operation has no transformation of its own, so an
+    /// operand's has to be written into the description at the moment it is
+    /// combined — which is exactly what makes `A[1, 2] ∪ B` say something
+    /// `A ∪ B` would not.
+    fn folded_attribute(&self) -> Attribute {
+        let (alpha, beta) = self.transformation;
+
+        self.attribute.clone().transformed(alpha, beta)
+    }
+
+    /// The description of `self` and `other` put through `operation`.
+    fn combined_attribute(&self, operation: SetOperation, other: &Self) -> Attribute {
+        Attribute::combined(operation, self.folded_attribute(), other.folded_attribute())
     }
 
     /// Consume the sequence and return its spans, earliest first.
@@ -177,7 +401,7 @@ impl TimeIntervalSequence {
     /// use chronoloom::primitives::TimeIntervalEvent;
     /// use chronoloom::sequences::TimeIntervalSequence;
     ///
-    /// let uptime = TimeIntervalSequence::from_spans(vec![
+    /// let uptime = TimeIntervalSequence::from_spans("uptime", vec![
     ///     TimeIntervalEvent::span(0, 10)?,
     ///     TimeIntervalEvent::span(5, 20)?,
     /// ]);
@@ -203,7 +427,7 @@ impl TimeIntervalSequence {
     /// use chronoloom::primitives::TimeIntervalEvent;
     /// use chronoloom::sequences::TimeIntervalSequence;
     ///
-    /// let mut uptime = TimeIntervalSequence::new();
+    /// let mut uptime = TimeIntervalSequence::new("uptime");
     /// uptime.insert(TimeIntervalEvent::span(0, 10)?);
     /// uptime.insert(TimeIntervalEvent::span(5, 20)?);
     ///
@@ -236,7 +460,7 @@ impl TimeIntervalSequence {
     /// use chronoloom::primitives::TimeIntervalEvent;
     /// use chronoloom::sequences::TimeIntervalSequence;
     ///
-    /// let mut uptime = TimeIntervalSequence::new();
+    /// let mut uptime = TimeIntervalSequence::new("uptime");
     /// assert_eq!(uptime.active_duration(), 0);
     ///
     /// uptime.insert(TimeIntervalEvent::span(0, 10)?);
@@ -262,7 +486,7 @@ impl TimeIntervalSequence {
     /// use chronoloom::primitives::TimeIntervalEvent;
     /// use chronoloom::sequences::TimeIntervalSequence;
     ///
-    /// let mut uptime = TimeIntervalSequence::new();
+    /// let mut uptime = TimeIntervalSequence::new("uptime");
     /// assert!(uptime.is_empty());
     ///
     /// uptime.insert(TimeIntervalEvent::span(0, 10)?);
@@ -281,7 +505,7 @@ impl TimeIntervalSequence {
     /// use chronoloom::primitives::TimeIntervalEvent;
     /// use chronoloom::sequences::TimeIntervalSequence;
     ///
-    /// let mut uptime = TimeIntervalSequence::new();
+    /// let mut uptime = TimeIntervalSequence::new("uptime");
     /// uptime.insert(TimeIntervalEvent::span(0, 10)?);
     /// uptime.clear();
     ///
@@ -302,7 +526,7 @@ impl TimeIntervalSequence {
     /// use chronoloom::primitives::TimeIntervalEvent;
     /// use chronoloom::sequences::TimeIntervalSequence;
     ///
-    /// let uptime = TimeIntervalSequence::from_spans(vec![
+    /// let uptime = TimeIntervalSequence::from_spans("uptime", vec![
     ///     TimeIntervalEvent::span(30, 40)?,
     ///     TimeIntervalEvent::span(0, 10)?,
     /// ]);
@@ -330,7 +554,7 @@ impl TimeIntervalSequence {
     /// use chronoloom::primitives::TimeIntervalEvent;
     /// use chronoloom::sequences::TimeIntervalSequence;
     ///
-    /// let mut uptime = TimeIntervalSequence::new();
+    /// let mut uptime = TimeIntervalSequence::new("uptime");
     /// uptime.insert(TimeIntervalEvent::span(0, 5)?);
     /// uptime.insert(TimeIntervalEvent::span(20, 30)?);
     ///
@@ -404,7 +628,7 @@ impl TimeIntervalSequence {
     /// use chronoloom::primitives::TimeIntervalEvent;
     /// use chronoloom::sequences::TimeIntervalSequence;
     ///
-    /// let mut uptime = TimeIntervalSequence::from_spans(vec![
+    /// let mut uptime = TimeIntervalSequence::from_spans("uptime", vec![
     ///     TimeIntervalEvent::span(0, 10)?,
     ///     TimeIntervalEvent::span(30, 40)?,
     /// ]);
@@ -432,7 +656,7 @@ impl TimeIntervalSequence {
     /// use chronoloom::primitives::TimeIntervalEvent;
     /// use chronoloom::sequences::TimeIntervalSequence;
     ///
-    /// let uptime = TimeIntervalSequence::from_spans(vec![
+    /// let uptime = TimeIntervalSequence::from_spans("uptime", vec![
     ///     TimeIntervalEvent::span(30, 40)?,
     ///     TimeIntervalEvent::span(0, 10)?,
     /// ]);
@@ -452,7 +676,7 @@ impl TimeIntervalSequence {
     /// use chronoloom::primitives::TimeIntervalEvent;
     /// use chronoloom::sequences::TimeIntervalSequence;
     ///
-    /// let uptime = TimeIntervalSequence::from_spans(vec![
+    /// let uptime = TimeIntervalSequence::from_spans("uptime", vec![
     ///     TimeIntervalEvent::span(30, 40)?,
     ///     TimeIntervalEvent::span(0, 10)?,
     /// ]);
@@ -471,7 +695,7 @@ impl TimeIntervalSequence {
     /// use chronoloom::primitives::TimeIntervalEvent;
     /// use chronoloom::sequences::TimeIntervalSequence;
     ///
-    /// let uptime = TimeIntervalSequence::from_spans(vec![
+    /// let uptime = TimeIntervalSequence::from_spans("uptime", vec![
     ///     TimeIntervalEvent::span(30, 40)?,
     ///     TimeIntervalEvent::span(0, 10)?,
     /// ]);
@@ -490,7 +714,7 @@ impl TimeIntervalSequence {
     /// use chronoloom::primitives::TimeIntervalEvent;
     /// use chronoloom::sequences::TimeIntervalSequence;
     ///
-    /// let uptime = TimeIntervalSequence::from_spans(vec![
+    /// let uptime = TimeIntervalSequence::from_spans("uptime", vec![
     ///     TimeIntervalEvent::span(30, 40)?,
     ///     TimeIntervalEvent::span(0, 10)?,
     /// ]);
@@ -513,7 +737,7 @@ impl TimeIntervalSequence {
     /// use chronoloom::primitives::TimeIntervalEvent;
     /// use chronoloom::sequences::TimeIntervalSequence;
     ///
-    /// let uptime = TimeIntervalSequence::from_spans(vec![TimeIntervalEvent::span(10, 20)?]);
+    /// let uptime = TimeIntervalSequence::from_spans("uptime", vec![TimeIntervalEvent::span(10, 20)?]);
     ///
     /// assert_eq!(uptime.at(15).map(TimeIntervalEvent::bounds), Some((10, 20)));
     /// assert_eq!(uptime.at(10).map(TimeIntervalEvent::bounds), Some((10, 20)));
@@ -543,7 +767,7 @@ impl TimeIntervalSequence {
     /// use chronoloom::primitives::TimeIntervalEvent;
     /// use chronoloom::sequences::TimeIntervalSequence;
     ///
-    /// let uptime = TimeIntervalSequence::from_spans(vec![TimeIntervalEvent::span(10, 20)?]);
+    /// let uptime = TimeIntervalSequence::from_spans("uptime", vec![TimeIntervalEvent::span(10, 20)?]);
     ///
     /// assert!(uptime.contains(10));
     /// assert!(uptime.contains(19));
@@ -565,12 +789,15 @@ impl TimeIntervalSequence {
     /// Both sequences are already ordered, so this is a single pass over the
     /// two — linear in their combined length, with no sorting.
     ///
+    /// The result describes itself as `self ∪ other`, out of what the two
+    /// operands describe.
+    ///
     /// ```
     /// use chronoloom::primitives::TimeIntervalEvent;
     /// use chronoloom::sequences::TimeIntervalSequence;
     ///
-    /// let up = TimeIntervalSequence::from_spans(vec![TimeIntervalEvent::span(0, 5)?]);
-    /// let extra = TimeIntervalSequence::from_spans(vec![
+    /// let up = TimeIntervalSequence::from_spans("up", vec![TimeIntervalEvent::span(0, 5)?]);
+    /// let extra = TimeIntervalSequence::from_spans("extra", vec![
     ///     TimeIntervalEvent::span(5, 9)?,
     ///     TimeIntervalEvent::span(20, 30)?,
     /// ]);
@@ -578,6 +805,7 @@ impl TimeIntervalSequence {
     /// let either = up.union(&extra);
     /// let bounds: Vec<(i64, i64)> = either.iter().map(TimeIntervalEvent::bounds).collect();
     /// assert_eq!(bounds, [(0, 9), (20, 30)]);
+    /// assert_eq!(either.to_string(), "up ∪ extra");
     ///
     /// // Neither operand changed.
     /// assert_eq!(up.len(), 1);
@@ -618,7 +846,11 @@ impl TimeIntervalSequence {
             absorb(&mut spans, next);
         }
 
-        Self::from_normalized(spans)
+        Self::from_parts(
+            self.combined_attribute(SetOperation::Union, other),
+            (0, 0),
+            spans,
+        )
     }
 
     /// The instants covered by **both** timelines.
@@ -627,22 +859,28 @@ impl TimeIntervalSequence {
     /// sequence. Because spans are half-open, timelines that merely touch share
     /// no instant and so intersect to nothing.
     ///
-    /// A single pass over the two, linear in their combined length.
+    /// A single pass over the two, linear in their combined length. The result
+    /// describes itself as `self ∩ other`.
     ///
     /// ```
     /// use chronoloom::primitives::TimeIntervalEvent;
     /// use chronoloom::sequences::TimeIntervalSequence;
     ///
-    /// let up = TimeIntervalSequence::from_spans(vec![TimeIntervalEvent::span(0, 100)?]);
-    /// let busy = TimeIntervalSequence::from_spans(vec![
+    /// let up = TimeIntervalSequence::from_spans("up", vec![TimeIntervalEvent::span(0, 100)?]);
+    /// let busy = TimeIntervalSequence::from_spans("busy", vec![
     ///     TimeIntervalEvent::span(10, 20)?,
     ///     TimeIntervalEvent::span(30, 40)?,
     /// ]);
     ///
-    /// // Everything busy happened while up, so the overlap is `busy` exactly.
-    /// assert_eq!(up.intersection(&busy), busy);
+    /// // Everything busy happened while up, so the overlap covers `busy` exactly
+    /// // — under a description of its own.
+    /// let overlap = up.intersection(&busy);
+    /// assert!(overlap.covers_same(&busy));
+    /// assert_eq!(overlap.to_string(), "up ∩ busy");
     ///
-    /// let touching = TimeIntervalSequence::from_spans(vec![TimeIntervalEvent::span(100, 200)?]);
+    /// let touching = TimeIntervalSequence::from_spans("touching", vec![
+    ///     TimeIntervalEvent::span(100, 200)?,
+    /// ]);
     /// assert!(up.intersection(&touching).is_empty());
     /// # Ok::<(), chronoloom::primitives::IntervalError>(())
     /// ```
@@ -666,7 +904,11 @@ impl TimeIntervalSequence {
             }
         }
 
-        Self::from_normalized(spans)
+        Self::from_parts(
+            self.combined_attribute(SetOperation::Intersection, other),
+            (0, 0),
+            spans,
+        )
     }
 
     /// The instants covered by this timeline but **not** by `other`.
@@ -674,14 +916,15 @@ impl TimeIntervalSequence {
     /// Both operands are borrowed and left untouched; the result is a new
     /// sequence. A span of `other` landing inside one of ours splits it in two.
     ///
-    /// A single pass over the two, linear in their combined length.
+    /// A single pass over the two, linear in their combined length. The result
+    /// describes itself as `self \ other`.
     ///
     /// ```
     /// use chronoloom::primitives::TimeIntervalEvent;
     /// use chronoloom::sequences::TimeIntervalSequence;
     ///
-    /// let up = TimeIntervalSequence::from_spans(vec![TimeIntervalEvent::span(0, 100)?]);
-    /// let maintenance = TimeIntervalSequence::from_spans(vec![
+    /// let up = TimeIntervalSequence::from_spans("up", vec![TimeIntervalEvent::span(0, 100)?]);
+    /// let maintenance = TimeIntervalSequence::from_spans("maintenance", vec![
     ///     TimeIntervalEvent::span(10, 20)?,
     ///     TimeIntervalEvent::span(30, 40)?,
     /// ]);
@@ -689,15 +932,18 @@ impl TimeIntervalSequence {
     /// let serving = up.difference(&maintenance);
     /// let bounds: Vec<(i64, i64)> = serving.iter().map(TimeIntervalEvent::bounds).collect();
     /// assert_eq!(bounds, [(0, 10), (20, 30), (40, 100)]);
+    /// assert_eq!(serving.to_string(), "up \\ maintenance");
     /// # Ok::<(), chronoloom::primitives::IntervalError>(())
     /// ```
     #[must_use]
     pub fn difference(&self, other: &Self) -> Self {
+        let attribute = self.combined_attribute(SetOperation::Difference, other);
+
         // `cursor` is the first instant of the current span not yet accounted
         // for. Starting it needs a first span, so an empty timeline is done
         // before the loop begins.
         let Some(first) = self.spans.first() else {
-            return Self::new();
+            return Self::from_parts(attribute, (0, 0), Vec::new());
         };
 
         let mut spans = Vec::new();
@@ -743,7 +989,7 @@ impl TimeIntervalSequence {
             }
         }
 
-        Self::from_normalized(spans)
+        Self::from_parts(attribute, (0, 0), spans)
     }
 
     /// The instants covered by exactly **one** of the two timelines.
@@ -753,14 +999,16 @@ impl TimeIntervalSequence {
     /// untouched.
     ///
     /// Composed as `(self - other) ∪ (other - self)`, so still linear in the
-    /// combined length.
+    /// combined length. That is how the spans are found, but not how the result
+    /// describes itself: it is `self △ other`, the operation asked for, rather
+    /// than the route taken to it.
     ///
     /// ```
     /// use chronoloom::primitives::TimeIntervalEvent;
     /// use chronoloom::sequences::TimeIntervalSequence;
     ///
-    /// let a = TimeIntervalSequence::from_spans(vec![TimeIntervalEvent::span(0, 10)?]);
-    /// let b = TimeIntervalSequence::from_spans(vec![TimeIntervalEvent::span(5, 15)?]);
+    /// let a = TimeIntervalSequence::from_spans("a", vec![TimeIntervalEvent::span(0, 10)?]);
+    /// let b = TimeIntervalSequence::from_spans("b", vec![TimeIntervalEvent::span(5, 15)?]);
     ///
     /// let only_one = a.symmetric_difference(&b);
     /// let bounds: Vec<(i64, i64)> = only_one.iter().map(TimeIntervalEvent::bounds).collect();
@@ -769,11 +1017,18 @@ impl TimeIntervalSequence {
     /// // Exactly the instants where the two disagree.
     /// assert!(only_one.contains(2));
     /// assert!(!only_one.contains(7));
+    /// assert_eq!(only_one.to_string(), "a △ b");
     /// # Ok::<(), chronoloom::primitives::IntervalError>(())
     /// ```
     #[must_use]
     pub fn symmetric_difference(&self, other: &Self) -> Self {
-        self.difference(other).union(&other.difference(self))
+        let composed = self.difference(other).union(&other.difference(self));
+
+        Self::from_parts(
+            self.combined_attribute(SetOperation::SymmetricDifference, other),
+            (0, 0),
+            composed.spans,
+        )
     }
 
     /// The timeline with every span's bounds moved: `alpha` shifts the lower
@@ -804,7 +1059,7 @@ impl TimeIntervalSequence {
     /// use chronoloom::primitives::TimeIntervalEvent;
     /// use chronoloom::sequences::TimeIntervalSequence;
     ///
-    /// let alerts = TimeIntervalSequence::from_spans(vec![
+    /// let alerts = TimeIntervalSequence::from_spans("alerts", vec![
     ///     TimeIntervalEvent::span(0, 10)?,
     ///     TimeIntervalEvent::span(14, 20)?,
     /// ]);
@@ -822,7 +1077,7 @@ impl TimeIntervalSequence {
     /// use chronoloom::primitives::TimeIntervalEvent;
     /// use chronoloom::sequences::TimeIntervalSequence;
     ///
-    /// let up = TimeIntervalSequence::from_spans(vec![
+    /// let up = TimeIntervalSequence::from_spans("up", vec![
     ///     TimeIntervalEvent::span(0, 3)?,
     ///     TimeIntervalEvent::span(10, 30)?,
     /// ]);
@@ -847,12 +1102,47 @@ impl TimeIntervalSequence {
     /// nothing merges or vanishes: both discard structure that no later
     /// transform can recover.
     ///
+    /// # What the result describes
+    ///
+    /// The attribute is untouched and the shifts add to the
+    /// [`transformation`], so a second call reads as one transform rather than
+    /// a stack of them, exactly as the composition above is written:
+    ///
+    /// ```
+    /// use chronoloom::primitives::TimeIntervalEvent;
+    /// use chronoloom::sequences::TimeIntervalSequence;
+    ///
+    /// let a = TimeIntervalSequence::from_spans("A", vec![TimeIntervalEvent::span(0, 100)?]);
+    ///
+    /// assert_eq!(a.transform(1, 2)?.transform(3, 4)?.to_string(), "A[4, 6]");
+    ///
+    /// // And a transform that undoes itself leaves nothing to say.
+    /// assert_eq!(a.transform(5, 5)?.transform(-5, -5)?.to_string(), "A");
+    /// # Ok::<(), chronoloom::primitives::IntervalError>(())
+    /// ```
+    ///
+    /// The label is a description, not a recipe. Where the composition above
+    /// breaks down — spans merged, spans vanished — the recorded shifts still
+    /// total what was asked for, which is what a reader of the timeline wants
+    /// to know; they will not rebuild it from the original.
+    ///
     /// # Errors
     ///
     /// Returns [`IntervalError::BoundOverflow`] if any shifted bound leaves the
-    /// range a [`Timestamp`] can hold. Nothing is transformed in that case; the
-    /// receiver is borrowed and never changes either way.
+    /// range a [`Timestamp`] can hold, or if the shifts themselves total more
+    /// than one can hold. Nothing is transformed in that case; the receiver is
+    /// borrowed and never changes either way.
+    ///
+    /// [`transformation`]: TimeIntervalSequence::transformation
     pub fn transform(&self, alpha: Timestamp, beta: Timestamp) -> Result<Self, IntervalError> {
+        // Before anything moves, so a failure leaves nothing half-done. The
+        // running total needs checking in its own right: an empty timeline has
+        // no bounds for the loop below to reject a runaway shift on.
+        let transformation = (
+            shifted(self.transformation.0, alpha)?,
+            shifted(self.transformation.1, beta)?,
+        );
+
         // Merging only ever removes spans, so this capacity is an upper bound.
         let mut spans = Vec::with_capacity(self.spans.len());
 
@@ -870,7 +1160,11 @@ impl TimeIntervalSequence {
             }
         }
 
-        Ok(Self::from_normalized(spans))
+        Ok(Self::from_parts(
+            self.attribute.clone(),
+            transformation,
+            spans,
+        ))
     }
 }
 
@@ -880,6 +1174,23 @@ impl TimeIntervalSequence {
 /// bookkeeping surfaces here instead of as a silently wrong total.
 const OVERFLOW: &str = "covered ticks always fit in u64: spans are disjoint and bounded by i64";
 const UNDERFLOW: &str = "active_duration always accounts for every span present";
+
+/// Put spans into canonical form: sorted by start, with everything that
+/// combines combined.
+///
+/// The spans may arrive in any order and may overlap freely. Sorting first
+/// guarantees that every span able to merge with the one still open comes
+/// immediately next, so one fold through [`absorb`] finishes the job.
+fn normalize(mut spans: Vec<TimeIntervalEvent<()>>) -> Vec<TimeIntervalEvent<()>> {
+    spans.sort_by_key(TimeIntervalEvent::start);
+
+    let mut normalized: Vec<TimeIntervalEvent<()>> = Vec::with_capacity(spans.len());
+    for span in spans {
+        absorb(&mut normalized, span);
+    }
+
+    normalized
+}
 
 /// Move `bound` by `shift`, or say that it cannot be moved.
 ///
@@ -928,41 +1239,56 @@ fn absorb(normalized: &mut Vec<TimeIntervalEvent<()>>, span: TimeIntervalEvent<(
     }
 }
 
-impl PartialEq for TimeIntervalSequence {
-    /// Two sequences are equal exactly when they cover the same instants.
+impl fmt::Display for TimeIntervalSequence {
+    /// How the timeline describes itself: its attribute, with its
+    /// transformation applied.
     ///
-    /// Written out rather than derived so the spans alone decide. The duration
-    /// is a function of them — comparing it could only ever agree, or reveal a
-    /// bookkeeping bug by disagreeing, and equality is the wrong place to
-    /// discover that.
-    fn eq(&self, other: &Self) -> bool {
-        self.spans == other.spans
-    }
-}
-
-impl Eq for TimeIntervalSequence {}
-
-impl FromIterator<TimeIntervalEvent<()>> for TimeIntervalSequence {
-    /// Collect spans into a sequence, in any order and overlapping freely.
+    /// The spans are not written — this says *what* the timeline is, not what
+    /// is in it. Use [`Debug`] for that.
     ///
     /// ```
     /// use chronoloom::primitives::TimeIntervalEvent;
     /// use chronoloom::sequences::TimeIntervalSequence;
     ///
-    /// let uptime: TimeIntervalSequence = [
-    ///     TimeIntervalEvent::span(5, 20)?,
+    /// let alerts = TimeIntervalSequence::from_spans("alerts", vec![
     ///     TimeIntervalEvent::span(0, 10)?,
-    /// ]
-    /// .into_iter()
-    /// .collect();
+    /// ]);
     ///
-    /// assert_eq!(uptime.len(), 1);
+    /// assert_eq!(format!("{}", alerts.transform(-2, 2)?), "alerts[-2, 2]");
     /// # Ok::<(), chronoloom::primitives::IntervalError>(())
     /// ```
-    fn from_iter<I: IntoIterator<Item = TimeIntervalEvent<()>>>(spans: I) -> Self {
-        Self::from_spans(spans.into_iter().collect())
+    ///
+    /// [`Debug`]: core::fmt::Debug
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Built rather than matched on, so the grouping rules live in exactly
+        // one place — `Attribute`'s own `Display`.
+        write!(f, "{}", self.folded_attribute())
     }
 }
+
+impl PartialEq for TimeIntervalSequence {
+    /// Two timelines are equal when they describe the same thing and cover the
+    /// same instants.
+    ///
+    /// The description counts because it is part of what a timeline *is*: `up`
+    /// and `reachable` are two states, even on a day they happened to coincide.
+    /// [`covers_same`] is the other half on its own, and the one the set-algebra
+    /// identities are stated with.
+    ///
+    /// Written out rather than derived so the spans and the label alone decide.
+    /// The duration is a function of the spans — comparing it could only ever
+    /// agree, or reveal a bookkeeping bug by disagreeing, and equality is the
+    /// wrong place to discover that.
+    ///
+    /// [`covers_same`]: TimeIntervalSequence::covers_same
+    fn eq(&self, other: &Self) -> bool {
+        self.spans == other.spans
+            && self.attribute == other.attribute
+            && self.transformation == other.transformation
+    }
+}
+
+impl Eq for TimeIntervalSequence {}
 
 impl Extend<TimeIntervalEvent<()>> for TimeIntervalSequence {
     /// Mark every span as covered, merging into what is already there.
@@ -971,7 +1297,7 @@ impl Extend<TimeIntervalEvent<()>> for TimeIntervalSequence {
     /// use chronoloom::primitives::TimeIntervalEvent;
     /// use chronoloom::sequences::TimeIntervalSequence;
     ///
-    /// let mut uptime = TimeIntervalSequence::new();
+    /// let mut uptime = TimeIntervalSequence::new("uptime");
     /// uptime.insert(TimeIntervalEvent::span(0, 10)?);
     /// uptime.extend([TimeIntervalEvent::span(5, 20)?, TimeIntervalEvent::span(40, 50)?]);
     ///
@@ -985,7 +1311,13 @@ impl Extend<TimeIntervalEvent<()>> for TimeIntervalSequence {
         let mut combined = std::mem::take(&mut self.spans);
         combined.extend(spans);
 
-        *self = Self::from_spans(combined);
+        // Marking more of a state covered does not change which state it is, so
+        // the description carries over untouched.
+        *self = Self::from_parts(
+            self.attribute.clone(),
+            self.transformation,
+            normalize(combined),
+        );
     }
 }
 
@@ -1002,7 +1334,7 @@ impl Index<usize> for TimeIntervalSequence {
     /// use chronoloom::primitives::TimeIntervalEvent;
     /// use chronoloom::sequences::TimeIntervalSequence;
     ///
-    /// let uptime = TimeIntervalSequence::from_spans(vec![TimeIntervalEvent::span(0, 10)?]);
+    /// let uptime = TimeIntervalSequence::from_spans("uptime", vec![TimeIntervalEvent::span(0, 10)?]);
     ///
     /// assert_eq!(uptime[0].bounds(), (0, 10));
     /// # Ok::<(), chronoloom::primitives::IntervalError>(())
@@ -1033,7 +1365,7 @@ impl IntoIterator for TimeIntervalSequence {
     /// use chronoloom::primitives::TimeIntervalEvent;
     /// use chronoloom::sequences::TimeIntervalSequence;
     ///
-    /// let uptime = TimeIntervalSequence::from_spans(vec![
+    /// let uptime = TimeIntervalSequence::from_spans("uptime", vec![
     ///     TimeIntervalEvent::span(30, 40)?,
     ///     TimeIntervalEvent::span(0, 10)?,
     /// ]);
@@ -1060,9 +1392,19 @@ mod tests {
         TimeIntervalEvent::span(start, end).expect("test bounds are ordered")
     }
 
-    /// Build a sequence from `(start, end)` pairs through `from_spans`.
+    /// The state the helpers below build a timeline of.
+    ///
+    /// Shared, rather than named per test, because equality now asks what a
+    /// timeline describes as well as which instants it covers: two timelines
+    /// built by two different helpers must still be able to come out equal.
+    /// Tests that are *about* the description name their own states instead.
+    const ATTRIBUTE: &str = "up";
+
+    /// Build a timeline of [`ATTRIBUTE`] from `(start, end)` pairs through
+    /// `from_spans`.
     fn from_spans(bounds: impl IntoIterator<Item = (i64, i64)>) -> TimeIntervalSequence {
         let sequence = TimeIntervalSequence::from_spans(
+            ATTRIBUTE,
             bounds
                 .into_iter()
                 .map(|(start, end)| span(start, end))
@@ -1073,10 +1415,10 @@ mod tests {
         sequence
     }
 
-    /// Build a sequence by inserting `(start, end)` pairs one at a time,
-    /// checking the invariant holds after every step.
+    /// Build a timeline of [`ATTRIBUTE`] by inserting `(start, end)` pairs one
+    /// at a time, checking the invariant holds after every step.
     fn inserted(bounds: impl IntoIterator<Item = (i64, i64)>) -> TimeIntervalSequence {
-        let mut sequence = TimeIntervalSequence::new();
+        let mut sequence = TimeIntervalSequence::new(ATTRIBUTE);
         for (start, end) in bounds {
             sequence.insert(span(start, end));
             assert_normalized(&sequence);
@@ -1121,6 +1463,20 @@ mod tests {
         assert_normalized(&result);
 
         result
+    }
+
+    /// Assert two timelines cover the same instants, whatever they describe.
+    ///
+    /// What the set-algebra identities are stated with: `A ∪ B` and `B ∪ A`
+    /// cover the same instants, but describe themselves differently, so full
+    /// equality is the wrong question to ask of them.
+    fn assert_same_coverage(left: &TimeIntervalSequence, right: &TimeIntervalSequence) {
+        assert!(
+            left.covers_same(right),
+            "{left} covers {:?}, but {right} covers {:?}",
+            bounds(left),
+            bounds(right),
+        );
     }
 
     /// Every operation, checked against its boolean rule on the same operands.
@@ -1344,7 +1700,7 @@ mod tests {
 
     #[test]
     fn an_empty_sequence_answers_nothing() {
-        let uptime = TimeIntervalSequence::new();
+        let uptime = TimeIntervalSequence::new("uptime");
 
         assert!(uptime.is_empty());
         assert_eq!(uptime.len(), 0);
@@ -1358,16 +1714,27 @@ mod tests {
     }
 
     #[test]
-    fn new_and_default_agree() {
-        assert_eq!(TimeIntervalSequence::new(), TimeIntervalSequence::default());
+    fn a_new_timeline_says_what_it_describes() {
+        assert_eq!(TimeIntervalSequence::new("uptime").label(), "uptime");
+    }
+
+    #[test]
+    fn timelines_of_different_states_are_never_equal() {
+        let up = TimeIntervalSequence::from_spans("up", vec![span(0, 10)]);
+        let reachable = TimeIntervalSequence::from_spans("reachable", vec![span(0, 10)]);
+
+        // The same instants, described two ways — which is coverage equality,
+        // and the reason the helpers above all build the one state.
+        assert!(up.covers_same(&reachable));
+        assert_ne!(up, reachable);
     }
 
     #[test]
     fn from_spans_accepts_nothing() {
-        let uptime = TimeIntervalSequence::from_spans(vec![]);
+        let uptime = TimeIntervalSequence::from_spans("uptime", vec![]);
 
         assert!(uptime.is_empty());
-        assert_eq!(uptime, TimeIntervalSequence::new());
+        assert_eq!(uptime, TimeIntervalSequence::new("uptime"));
     }
 
     #[test]
@@ -1385,7 +1752,7 @@ mod tests {
         let spans: Vec<TimeIntervalEvent<()>> = uptime.clone().into_iter().collect();
         assert_eq!(spans.len(), 2);
 
-        let rebuilt: TimeIntervalSequence = spans.into_iter().collect();
+        let rebuilt = TimeIntervalSequence::from_spans(ATTRIBUTE, spans);
         assert_eq!(rebuilt, uptime);
     }
 
@@ -1395,7 +1762,7 @@ mod tests {
         let spans = uptime.clone().into_spans();
 
         assert_eq!(spans.len(), 2);
-        assert_eq!(TimeIntervalSequence::from_spans(spans), uptime);
+        assert_eq!(TimeIntervalSequence::from_spans(ATTRIBUTE, spans), uptime);
     }
 
     #[test]
@@ -1409,7 +1776,7 @@ mod tests {
 
     #[test]
     fn extend_onto_an_empty_sequence_still_normalizes() {
-        let mut uptime = TimeIntervalSequence::new();
+        let mut uptime = TimeIntervalSequence::new("uptime");
         uptime.extend([span(5, 20), span(0, 10)]);
         assert_normalized(&uptime);
 
@@ -1443,7 +1810,7 @@ mod tests {
     #[test]
     fn every_operation_handles_an_empty_operand_on_either_side() {
         let a = from_spans([(0, 10), (20, 30)]);
-        let empty = TimeIntervalSequence::new();
+        let empty = TimeIntervalSequence::new("empty");
 
         assert_all_operations(&a, &empty);
         assert_all_operations(&empty, &a);
@@ -1466,12 +1833,12 @@ mod tests {
         let up = from_spans([(0, 100)]);
         let busy = from_spans([(10, 20), (30, 40)]);
 
-        assert_eq!(up.intersection(&busy), busy);
+        assert_same_coverage(&up.intersection(&busy), &busy);
         assert_eq!(
             bounds(&up.difference(&busy)),
             [(0, 10), (20, 30), (40, 100)]
         );
-        assert_eq!(up.union(&busy), up);
+        assert_same_coverage(&up.union(&busy), &up);
         assert_eq!(
             bounds(&up.symmetric_difference(&busy)),
             [(0, 10), (20, 30), (40, 100)]
@@ -1524,8 +1891,8 @@ mod tests {
     fn operations_against_itself_collapse() {
         let a = from_spans([(0, 10), (20, 30)]);
 
-        assert_eq!(a.union(&a), a);
-        assert_eq!(a.intersection(&a), a);
+        assert_same_coverage(&a.union(&a), &a);
+        assert_same_coverage(&a.intersection(&a), &a);
         assert!(a.difference(&a).is_empty());
         assert!(a.symmetric_difference(&a).is_empty());
     }
@@ -1533,13 +1900,13 @@ mod tests {
     #[test]
     fn the_empty_sequence_is_the_identity_it_should_be() {
         let a = from_spans([(0, 10), (20, 30)]);
-        let empty = TimeIntervalSequence::new();
+        let empty = TimeIntervalSequence::new("empty");
 
-        assert_eq!(a.union(&empty), a);
+        assert_same_coverage(&a.union(&empty), &a);
         assert!(a.intersection(&empty).is_empty());
-        assert_eq!(a.difference(&empty), a);
+        assert_same_coverage(&a.difference(&empty), &a);
         assert!(empty.difference(&a).is_empty());
-        assert_eq!(a.symmetric_difference(&empty), a);
+        assert_same_coverage(&a.symmetric_difference(&empty), &a);
     }
 
     #[test]
@@ -1547,8 +1914,8 @@ mod tests {
         let a = from_spans([(0, 10), (20, 30)]);
         let b = from_spans([(5, 25)]);
 
-        assert_eq!(a.union(&a.intersection(&b)), a);
-        assert_eq!(a.intersection(&a.union(&b)), a);
+        assert_same_coverage(&a.union(&a.intersection(&b)), &a);
+        assert_same_coverage(&a.intersection(&a.union(&b)), &a);
     }
 
     #[test]
@@ -1557,13 +1924,13 @@ mod tests {
         let b = from_spans([(10, 30)]);
         let c = from_spans([(15, 50)]);
 
-        assert_eq!(
-            a.intersection(&b.union(&c)),
-            a.intersection(&b).union(&a.intersection(&c)),
+        assert_same_coverage(
+            &a.intersection(&b.union(&c)),
+            &a.intersection(&b).union(&a.intersection(&c)),
         );
-        assert_eq!(
-            a.union(&b.intersection(&c)),
-            a.union(&b).intersection(&a.union(&c)),
+        assert_same_coverage(
+            &a.union(&b.intersection(&c)),
+            &a.union(&b).intersection(&a.union(&c)),
         );
     }
 
@@ -1573,13 +1940,13 @@ mod tests {
         let b = from_spans([(10, 30)]);
         let c = from_spans([(20, 50)]);
 
-        assert_eq!(
-            a.difference(&b.union(&c)),
-            a.difference(&b).intersection(&a.difference(&c))
+        assert_same_coverage(
+            &a.difference(&b.union(&c)),
+            &a.difference(&b).intersection(&a.difference(&c)),
         );
-        assert_eq!(
-            a.difference(&b.intersection(&c)),
-            a.difference(&b).union(&a.difference(&c))
+        assert_same_coverage(
+            &a.difference(&b.intersection(&c)),
+            &a.difference(&b).union(&a.difference(&c)),
         );
     }
 
@@ -1589,12 +1956,12 @@ mod tests {
         let b = from_spans([(5, 25), (45, 60)]);
 
         // Symmetric difference is everything covered, minus what both share.
-        assert_eq!(
-            a.symmetric_difference(&b),
-            a.union(&b).difference(&a.intersection(&b)),
+        assert_same_coverage(
+            &a.symmetric_difference(&b),
+            &a.union(&b).difference(&a.intersection(&b)),
         );
         // What is only ours, plus what we share, is everything of ours.
-        assert_eq!(a.difference(&b).union(&a.intersection(&b)), a);
+        assert_same_coverage(&a.difference(&b).union(&a.intersection(&b)), &a);
     }
 
     #[test]
@@ -1612,8 +1979,8 @@ mod tests {
         let widest = from_spans([(i64::MIN, i64::MAX)]);
         let middle = from_spans([(-1, 1)]);
 
-        assert_eq!(widest.union(&middle), widest);
-        assert_eq!(widest.intersection(&middle), middle);
+        assert_same_coverage(&widest.union(&middle), &widest);
+        assert_same_coverage(&widest.intersection(&middle), &middle);
         assert_eq!(
             bounds(&widest.difference(&middle)),
             [(i64::MIN, -1), (1, i64::MAX)]
@@ -1635,8 +2002,7 @@ mod tests {
 
     #[test]
     fn an_empty_sequence_covers_no_time() {
-        assert_eq!(TimeIntervalSequence::new().active_duration(), 0);
-        assert_eq!(TimeIntervalSequence::default().active_duration(), 0);
+        assert_eq!(TimeIntervalSequence::new("uptime").active_duration(), 0);
         assert_eq!(from_spans([]).active_duration(), 0);
     }
 
@@ -1775,7 +2141,7 @@ mod tests {
         // And putting it back restores the total, through the merge branch.
         let mut restored = carved;
         restored.insert(span(-1, 1));
-        assert_eq!(restored, widest);
+        assert_same_coverage(&restored, &widest);
         assert_eq!(restored.active_duration(), u64::MAX);
     }
 
@@ -1784,7 +2150,7 @@ mod tests {
         let uptime = from_spans([(0, 10), (20, 30)]);
 
         assert_eq!(transformed(&uptime, 0, 0), uptime);
-        assert!(transformed(&TimeIntervalSequence::new(), 3, -3).is_empty());
+        assert!(transformed(&TimeIntervalSequence::new(ATTRIBUTE), 3, -3).is_empty());
     }
 
     #[test]

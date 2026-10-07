@@ -433,7 +433,7 @@ pub enum IntervalError {
     /// use chronoloom::primitives::{IntervalError, TimeIntervalEvent};
     /// use chronoloom::sequences::TimeIntervalSequence;
     ///
-    /// let late = TimeIntervalSequence::from_spans(vec![
+    /// let late = TimeIntervalSequence::from_spans("late", vec![
     ///     TimeIntervalEvent::span(0, i64::MAX - 1)?,
     /// ]);
     ///

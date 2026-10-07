@@ -22,7 +22,7 @@
 //! let order: Vec<i64> = readings.iter().map(|e| e.timestamp()).collect();
 //! assert_eq!(order, [10, 30]);
 //!
-//! let mut uptime = TimeIntervalSequence::new();
+//! let mut uptime = TimeIntervalSequence::new("uptime");
 //! uptime.insert(TimeIntervalEvent::span(0, 10)?);
 //! uptime.insert(TimeIntervalEvent::span(5, 20)?);
 //!
@@ -62,8 +62,10 @@
 //!
 //! [`primitives`]: crate::primitives
 
+pub mod attribute;
 pub mod interval;
 pub mod time_point;
 
+pub use attribute::{Attribute, SetOperation};
 pub use interval::TimeIntervalSequence;
 pub use time_point::TimePointSequence;

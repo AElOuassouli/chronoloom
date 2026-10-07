@@ -75,7 +75,7 @@ timeline a canonical, disjoint description of which instants are covered.
 ```rust
 use chronoloom::{TimeIntervalEvent, TimeIntervalSequence};
 
-let mut uptime = TimeIntervalSequence::new();
+let mut uptime = TimeIntervalSequence::new("uptime");
 uptime.insert(TimeIntervalEvent::span(0, 5).unwrap());
 uptime.insert(TimeIntervalEvent::span(20, 30).unwrap());
 
@@ -90,8 +90,9 @@ assert!(uptime.contains(12));
 ```
 
 Because the timeline is normalized, `len` counts the spans left after merging —
-not the number inserted — and two sequences are equal exactly when they cover
-the same instants, however they were built.
+not the number inserted — and two timelines of the same state are equal exactly
+when they cover the same instants, however they were built. `covers_same` asks
+about the coverage alone, for timelines that describe themselves differently.
 
 Two timelines combine with the usual set algebra. Both operands are borrowed and
 left untouched; each operation returns a new sequence. Since both are already
@@ -100,10 +101,10 @@ ordered, each is a single pass over the two — linear, with no sorting.
 ```rust
 use chronoloom::{TimeIntervalEvent, TimeIntervalSequence};
 
-let up = TimeIntervalSequence::from_spans(vec![
+let up = TimeIntervalSequence::from_spans("up", vec![
     TimeIntervalEvent::span(0, 100).unwrap(),
 ]);
-let maintenance = TimeIntervalSequence::from_spans(vec![
+let maintenance = TimeIntervalSequence::from_spans("maintenance", vec![
     TimeIntervalEvent::span(10, 20).unwrap(),
     TimeIntervalEvent::span(30, 40).unwrap(),
 ]);
@@ -113,11 +114,14 @@ let serving = up.difference(&maintenance);
 let bounds: Vec<(i64, i64)> = serving.iter().map(|s| s.bounds()).collect();
 assert_eq!(bounds, [(0, 10), (20, 30), (40, 100)]);
 
-// Everything in maintenance happened while up.
-assert_eq!(up.intersection(&maintenance), maintenance);
+// Everything in maintenance happened while up — the same instants, under a
+// description the operation derived.
+let shared = up.intersection(&maintenance);
+assert!(shared.covers_same(&maintenance));
+assert_eq!(shared.label(), "up ∩ maintenance");
 
 // Both operands are untouched and still usable.
-assert_eq!(up.union(&maintenance), up);
+assert!(up.union(&maintenance).covers_same(&up));
 ```
 
 `symmetric_difference` is the XOR: the instants covered by exactly one of the
@@ -134,7 +138,7 @@ after widening are merged, and spans narrowed away to nothing disappear.
 ```rust
 use chronoloom::{TimeIntervalEvent, TimeIntervalSequence};
 
-let alerts = TimeIntervalSequence::from_spans(vec![
+let alerts = TimeIntervalSequence::from_spans("alerts", vec![
     TimeIntervalEvent::span(0, 10).unwrap(),
     TimeIntervalEvent::span(14, 20).unwrap(),
 ]);

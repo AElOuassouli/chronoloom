@@ -1,12 +1,13 @@
-"""Smoke test for the compiled pyo3 extension.
+"""The compiled extension loads, and the package exposes exactly its classes."""
 
-`_core` exports nothing while the binding waits on a `chronoloom` release
-carrying the new API, but importing it still proves the Rust extension built
-and loads under the name the wheel expects.
-"""
-
-import importlib
+import chronoloompy
+from chronoloompy import _core
 
 
-def test_extension_module_imports():
-    assert importlib.import_module("chronoloompy._core") is not None
+def test_package_reexports_the_extension():
+    for name in chronoloompy.__all__:
+        assert getattr(chronoloompy, name) is getattr(_core, name)
+
+
+def test_classes_report_the_public_module():
+    assert chronoloompy.TimePointSequence.__module__ == "chronoloompy"

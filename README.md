@@ -10,8 +10,9 @@ shipped as two independently versioned and published libraries.
 
 [`chronoloom`](chronoloom) holds the algebra and has **no pyo3 dependency**, so
 any Rust project can depend on it. [`chronoloompy`](chronoloompy) wraps it
-through a thin pyo3 binding ([`chronoloompy/rust`](chronoloompy/rust)) and adds
-a Python-native layer — pydantic models today, more later.
+through a thin pyo3 binding ([`chronoloompy/rust`](chronoloompy/rust)) and is
+only an API over it: data stays in Rust memory, and Python reads it through
+zero-copy NumPy views.
 
 New algebra belongs in `chronoloom`, so that Rust and Python share one
 implementation rather than diverging.

@@ -18,7 +18,7 @@ classifiers = [
     "Programming Language :: Python :: Implementation :: CPython",
     "Typing :: Typed",
 ]
-dependencies = ["pydantic>=2.13.4,<3", "numpy>=2.5.2,<3"]
+dependencies = ["numpy>=2.5.2,<3"]
 
 [project.urls]
 Homepage = "https://github.com/AElOuassouli/chronoloom"
@@ -132,7 +132,6 @@ python_version = "3.12"
 strict = true
 files = ["src", "tests"]
 mypy_path = ["src"]
-plugins = ["pydantic.mypy"]
 warn_unreachable = true
 enable_error_code = ["ignore-without-code", "redundant-expr", "truthy-bool"]
 

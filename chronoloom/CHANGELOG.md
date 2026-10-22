@@ -1,5 +1,18 @@
 # Unreleased
 
+## Added
+
+- `TimePointEvent` and `TimeIntervalEvent` are `#[repr(C)]`, and their layout
+  is now part of the public API: timestamp then value, and start, end, then
+  value. A sequence's memory can therefore be read in place from outside Rust,
+  which is what lets the Python bindings hand out NumPy views of a sequence
+  rather than copies.
+
+## Fixed
+
+- The README no longer describes `chronoloompy` as a pydantic model layer; it
+  is now an API over this crate.
+
 ## Removed
 
 - The `[dependencies]` snippet from the README. It pinned a version by hand and

@@ -46,9 +46,17 @@ pub use self::errors::IntervalError;
 /// # Ok::<(), chronoloom::primitives::IntervalError>(())
 /// ```
 ///
+/// # Layout
+///
+/// The layout is `#[repr(C)]` and part of the public API: `start`, then `end`,
+/// then the value, with C's alignment and padding. A valueless span is
+/// therefore exactly two timestamps, and a slice of spans can be read in place
+/// as an `n × 2` array of them by code that is not Rust.
+///
 /// [`new`]: TimeIntervalEvent::new
 /// [`span`]: TimeIntervalEvent::span
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(C)]
 pub struct TimeIntervalEvent<T> {
     start: Timestamp,
     end: Timestamp,

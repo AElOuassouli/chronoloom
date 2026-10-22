@@ -24,8 +24,16 @@ use super::Timestamp;
 /// assert_eq!(values, ['a', 'b', 'c']);
 /// ```
 ///
+/// # Layout
+///
+/// The layout is `#[repr(C)]` and part of the public API: the timestamp comes
+/// first, then the value, with C's alignment and padding. A slice of events can
+/// therefore be read in place by code that is not Rust, such as a NumPy array
+/// over a sequence's memory in the Python bindings.
+///
 /// [`timestamp`]: TimePointEvent::timestamp
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(C)]
 pub struct TimePointEvent<T> {
     timestamp: Timestamp,
     value: T,

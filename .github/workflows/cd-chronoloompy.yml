@@ -90,7 +90,7 @@ jobs:
       contents: read
 
   # Targets are limited to the ones a chronoloompy wheel is actually usable on.
-  # The runtime dependencies in pyproject.toml (numpy, pydantic) ship no wheels
+  # The runtime dependency in pyproject.toml (numpy) ships no wheels
   # for x86, armv7, s390x or ppc64le, so an install there fails at dependency
   # resolution however good our own wheel is. abi3-py312 means one wheel per
   # target covers every supported Python.

@@ -101,13 +101,12 @@ jobs:
         run: |
           uv venv /tmp/sdist-check
           # --no-binary forces chronoloompy to be built from the sdist rather
-          # than a wheel, while the index still supplies pydantic/numpy.
+          # than a wheel, while the index still supplies numpy.
           VIRTUAL_ENV=/tmp/sdist-check uv pip install \
             --find-links chronoloompy/dist --no-binary chronoloompy chronoloompy
-          # `_core` exports nothing while the binding waits on a chronoloom
-          # release carrying the new API, so importing it is the assertion:
-          # it only succeeds if the extension compiled and loaded under the
-          # name the wheel declares. The model import covers the pure-Python
-          # half of the package.
+          # Every class comes from the compiled extension, so building a
+          # timeline and reading it back through a NumPy view proves the
+          # extension compiled, loaded under the name the wheel declares, and
+          # works against the installed NumPy.
           /tmp/sdist-check/bin/python -c \
-            "from chronoloompy import _core; from chronoloompy.models import TimeIntervalEvent; assert TimeIntervalEvent(start_timestamp=0, end_timestamp=5).end_timestamp == 5; print('sdist OK')"
+            "from chronoloompy import TimeIntervalSequence; assert TimeIntervalSequence('up', [0, 5], [5, 9]).spans.tolist() == [[0, 9]]; print('sdist OK')"

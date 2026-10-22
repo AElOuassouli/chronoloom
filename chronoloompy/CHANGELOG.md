@@ -2,28 +2,43 @@
 
 ## Added
 
-- `TimeIntervalEvent` now validates its bounds: `end_timestamp` must be
-  strictly after `start_timestamp`, so empty and inverted spans are rejected
-  instead of being silently accepted.
-- Tests for both primitive models, and a smoke test proving the compiled
-  `_core` extension imports.
+- The `chronoloom` 0.3 API, implemented in Rust and exposed as Python classes:
+  `TimePointEvent`, `TimeIntervalEvent`, `TimePointSequence`,
+  `TimeIntervalSequence`, `SequenceSystem` and `Batch`, with the `IntervalError`
+  and `RecordError` exceptions. The package is now only an API over the core:
+  its Python files hold re-exports and type stubs, no logic.
+- `TimeIntervalEvent` validates its bounds: `end` must be strictly after
+  `start`, so empty and inverted spans raise `IntervalError`.
+- Point sequences carry `float64`, `int64`, `bool` or `str` values, inferred
+  from the values given or chosen with `dtype=`.
+- Data stays in Rust memory. `system["attribute"]` returns a handle onto a
+  member rather than a copy, and `SequenceSystem.insert` moves a sequence's
+  events into the system, leaving the object a handle onto them there.
+- Zero-copy reads: `timestamps`, `values`, `spans`, `to_numpy()` and `range()`
+  return read-only NumPy views of the Rust memory (`str` values are copied).
+  While a view is alive, changes that could move or free the memory under it
+  raise `BufferError`, as `bytearray` does.
+- Building from NumPy arrays reads them in place and writes the events directly
+  into the core's layout, a single copy; sorting, merging, set operations and
+  batch recording run with the GIL released.
+- Tests for every class, and for the memory guarantees above.
 
 ## Removed
 
-- `chronoloompy._core.intersection`, and the pyo3 adapter behind it. The
-  `chronoloom` crate moved interval operations off its free-function `algebra`
-  module and onto `TimeIntervalEvent`; `_core` exports nothing until the
-  binding's `chronoloom` requirement names a release carrying that API.
+- The pydantic models `TimePointEvent` and `TimeIntervalEvent`, the NumPy-backed
+  `TimePointSequence`, and the `chronoloompy.models` package that held them —
+  replaced by the Rust classes, importable from `chronoloompy` directly.
+- The `pydantic` dependency.
+- `chronoloompy._core.intersection`, superseded by
+  `TimeIntervalEvent.intersection`.
 - `chronoloompy.algebra`, including the unimplemented `interval_union` and
   `interval_intersection` stubs. Interval algebra is implemented once in
-  `chronoloom` and will reach Python through the binding, not as a second
-  Python implementation.
+  `chronoloom` and reaches Python through the binding.
 - `TimeIntervalEvent.left_open` and `TimeIntervalEvent.right_open`. The core is
   half-open only, so configurable endpoints described a model the algebra never
   had.
-- The `attribute` field on both primitives, folded into `value`. Two payload
-  fields with overlapping meaning invited events that carried their data in
-  whichever one the caller happened to pick.
+- The `attribute` field on both event primitives, folded into `value`. A
+  sequence, not an event, says what it records.
 
 ## Fixed
 

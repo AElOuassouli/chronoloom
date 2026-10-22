@@ -1,5 +1,12 @@
 # Unreleased
 
+## Removed
+
+- The `[dependencies]` snippet from the README. It pinned a version by hand and
+  went stale with each release; `cargo add chronoloom` picks the current one.
+
+# 0.3.0 - 2026-10-22
+
 ## Added
 
 - `primitives`, the event vocabulary the rest of the library builds on. Both
@@ -32,6 +39,12 @@
   events arriving in time order — costs no shifting at all. Several events may
   share an instant, where they keep the order they were added; `len` counts
   events and `instant_count` counts instants.
+- Every `TimePointSequence` has an attribute, the quantity it records, so
+  `new` and `from_events` take it first, and `attribute`, `set_attribute`,
+  `label` and `Display` read and change it. The attribute is part of equality:
+  two sequences holding the same events for different attributes are not
+  equal. There is no sequence without one, so neither `Default` nor `FromIterator` is
+  implemented — the same reason `TimeIntervalSequence` has neither.
 - Window and neighbour queries on that sequence: `range` over any Rust range,
   `first` / `last`, `before` / `after` (both bounds inclusive), and `nearest`,
   which returns the closest event in either direction and breaks a tie toward
@@ -43,10 +56,8 @@
   from data that already exists and getting it back out. `from_events` sorts
   the `Vec` it is given in place rather than building a second one, and leaves
   already-ordered input alone; `into_events` hands back the `Vec` unchanged.
-- `FromIterator`, `Extend`, and `IntoIterator` for `TimePointSequence`, owned
-  and borrowed. `FromIterator` takes the `from_events` path, so collecting also
-  sorts once instead of inserting one event at a time, and `Extend` reorders
-  only when the additions actually broke the order.
+- `Extend` and `IntoIterator` for `TimePointSequence`, owned and borrowed.
+  `Extend` reorders only when the additions actually broke the order.
 - `sequences::TimeIntervalSequence`, the other sequence shape: one state over
   time, as the spans during which it was active. Every span means the same
   thing, so the sequence carries no per-span value — when state values are
@@ -102,6 +113,42 @@
   exist, so it returns an error instead of panicking, and it transforms nothing
   when it does. The enum is `#[non_exhaustive]`, so the new variant does not
   break exhaustive matches.
+- `sequence_system`, holding `SequenceSystem`: the sequences describing one
+  subject, side by side, the way a sensor system holds its sensors — one
+  sequence per attribute. Point sequences of any value type sit next to
+  timelines, so `f64` readings, `String` log lines and an uptime state can
+  belong to one system. Each sequence is filed under its own attribute, so the
+  attribute it is found by is always the one it carries — a derived timeline
+  is filed under its derivation, `up ∪ busy` for instance, and a transformed
+  one under `up[1, 2]`. Sequences are kept sorted by attribute, and two systems
+  are equal when they hold equal sequences for the same attributes.
+- `SequenceSystem::insert` (returning whatever sequence the attribute held
+  before), `remove`, `clear`, `get`, `contains`, `len`, `is_empty`,
+  `attributes`, `iter`, and typed reads `points::<T>` and `intervals`.
+  `FromIterator`, `Extend` and `IntoIterator` (owned and borrowed) are
+  implemented; of two sequences for one attribute, the later is kept.
+- Recording, for events arriving as a stream: `record_point` and `record_span`
+  add one event to an existing sequence in place, and `record_batch` records
+  a `Batch` — events for many attributes, with one value type per push — all
+  or nothing. Every push in a batch is checked before anything is recorded,
+  and each then goes in through its sequence's `Extend`, so a batch of
+  in-order events costs no sorting. Recording never creates a sequence, so a
+  misspelt attribute is an error rather than a new sequence, and the system
+  never lends a sequence out mutably, so no sequence can change attribute
+  while filed under its old one.
+- `RecordError`, the failure recording returns: an unknown attribute, the
+  other shape of sequence, or another value type, naming both types. It
+  implements `Display` and `std::error::Error`, and is `#[non_exhaustive]`.
+- `Sequence`, a member of either shape, with `attribute` (for a timeline, its
+  transformation included), `label`, `len`, `is_empty`, `as_time_point::<T>`
+  and `as_time_interval`.
+- `AnyPointSequence`, a point sequence whose value type is known only at run
+  time, recovered with `downcast_ref` or `downcast`, and `PointValue`, the
+  bounds a value type needs to join a system — `Clone`, `Debug`, `PartialEq`,
+  `Send`, `Sync` and `'static`, implemented automatically for every type that
+  meets them. Systems are therefore `Send` and `Sync`.
+- `SequenceSystem`, `Sequence`, `AnyPointSequence`, `Batch`, `RecordError` and
+  `PointValue` are re-exported at the crate root.
 
 ## Removed
 

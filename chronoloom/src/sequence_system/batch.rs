@@ -12,8 +12,8 @@ use super::erased::{ErasedPoints, PointValue};
 /// [`record_batch`].
 ///
 /// A batch maps attributes to the events that arrived for them — one tick of
-/// a sensor system. Each push names its attribute and carries events of one value
-/// type, so `f64` readings and `String` log lines can travel in the same batch.
+/// a sensor system. Each push gives its attribute and carries events of one
+/// value type, so `f64` readings and `String` log lines can travel in the same batch.
 ///
 /// ```
 /// use chronoloom::primitives::{TimeIntervalEvent, TimePointEvent};

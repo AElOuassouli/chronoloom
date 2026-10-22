@@ -1,15 +1,17 @@
-//! What a timeline describes, and how that description composes.
+//! What a sequence describes, and how that description composes.
 
 use core::fmt;
 
 use crate::primitives::Timestamp;
 
-/// What a timeline describes, as the expression that produced it.
+/// What a sequence describes, as the expression that produced it.
 ///
-/// Every [`TimeIntervalSequence`] is named, so it always says which state it is
-/// the timeline of. A name is where every attribute starts; the operations
+/// Every sequence has an attribute: a [`TimePointSequence`] says which
+/// quantity it is a record of, a [`TimeIntervalSequence`] which state it is the
+/// timeline of, and a [`SequenceSystem`] records one sequence per attribute.
+/// An attribute given outright is where every expression starts; the operations
 /// build the rest, so a derived timeline carries the expression it came from
-/// rather than a name someone had to invent for it.
+/// rather than an attribute someone had to invent for it.
 ///
 /// ```
 /// use chronoloom::primitives::TimeIntervalEvent;
@@ -47,10 +49,12 @@ use crate::primitives::Timestamp;
 /// ```
 ///
 /// [`Display`]: core::fmt::Display
+/// [`SequenceSystem`]: crate::sequence_system::SequenceSystem
 /// [`TimeIntervalSequence`]: crate::sequences::TimeIntervalSequence
+/// [`TimePointSequence`]: crate::sequences::TimePointSequence
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Attribute {
-    /// A state named outright, the leaf every expression is built from.
+    /// An attribute given outright, the leaf every expression is built from.
     Name(String),
     /// A timeline whose bounds were moved, written `A[alpha, beta]`.
     Transformed {
@@ -73,7 +77,7 @@ pub enum Attribute {
 }
 
 impl Attribute {
-    /// Name a state outright.
+    /// An attribute given outright, rather than derived.
     #[must_use]
     pub fn name(name: impl Into<String>) -> Self {
         Self::Name(name.into())
@@ -110,7 +114,7 @@ impl Attribute {
     /// Whether this is an operand that needs grouping when it appears inside
     /// `parent`.
     ///
-    /// A name and a transform both read as a single unit already — `A[1, 2] ∪ B`
+    /// An outright attribute and a transform both read as a single unit already — `A[1, 2] ∪ B`
     /// can only be parsed one way — so only a combination is ever at risk. It
     /// keeps its parentheses unless the operation around it is the same
     /// associative one, where the grouping genuinely does not matter.

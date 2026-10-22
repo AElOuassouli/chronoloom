@@ -74,7 +74,7 @@ pub struct TimePointSequence<T> {
 }
 
 impl<T> TimePointSequence<T> {
-    /// Create an empty record of the quantity named `attribute`.
+    /// Create an empty record of the quantity `attribute`.
     #[must_use]
     pub fn new(attribute: impl Into<String>) -> Self {
         Self {

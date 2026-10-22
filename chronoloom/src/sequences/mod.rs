@@ -4,8 +4,9 @@
 //! keeps them in time order however they arrive. The two shapes answer
 //! different questions:
 //!
-//! - [`TimePointSequence`] is **many observations over time** — each event
-//!   carries its own value, and several may share an instant.
+//! - [`TimePointSequence`] is **many observations over time** of one
+//!   attribute — each event carries its own value, and several may share an
+//!   instant.
 //! - [`TimeIntervalSequence`] is **one state over time** — the spans during
 //!   which that state was active. Every span means the same thing, so the
 //!   sequence carries no per-span value, and overlapping spans merge into a

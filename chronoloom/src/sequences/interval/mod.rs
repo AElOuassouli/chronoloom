@@ -50,14 +50,14 @@ mod transform;
 /// No span carries a value, because every span means the same thing: the value
 /// belongs to the timeline as a whole. That is the [`attribute`] — the state
 /// this is the timeline *of* — and every sequence has one. There is no such
-/// thing as an unnamed timeline, which is why the constructors ask for a name
-/// before they ask for spans.
+/// thing as a timeline without one, which is why the constructors ask for the
+/// attribute before they ask for spans.
 ///
 /// Alongside it sits the [`transformation`], the `[alpha, beta]` shift
 /// [`transform`] has applied so far. The two render together as the label
 /// `A[alpha, beta]`, and `[0, 0]` — the untransformed case — is left off. An
 /// operation describes its result out of the two labels that went into it, so a
-/// derived timeline still says what it is with no name to invent; its own
+/// derived timeline still says what it is with no attribute to invent; its own
 /// transformation starts over at `[0, 0]`, since whatever the operands were
 /// shifted by is already spelled out inside the label.
 ///
@@ -157,7 +157,7 @@ pub struct TimeIntervalSequence {
 }
 
 impl TimeIntervalSequence {
-    /// Create an empty timeline of the state named `attribute`.
+    /// Create an empty timeline of the state `attribute`.
     #[must_use]
     pub fn new(attribute: impl Into<String>) -> Self {
         Self {

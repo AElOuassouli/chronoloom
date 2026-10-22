@@ -20,12 +20,12 @@ impl TimeIntervalSequence {
         &self.attribute
     }
 
-    /// Describe this timeline as a state named outright, forgetting how it was
-    /// derived.
+    /// Describe this timeline by an attribute given outright, forgetting how it
+    /// was derived.
     ///
-    /// Naming a derived timeline replaces the whole expression — including the
-    /// [`transformation`], which the old description was measured against and
-    /// the new one is not.
+    /// Giving a derived timeline an outright attribute replaces the whole
+    /// expression — including the [`transformation`], which the old description
+    /// was measured against and the new one is not.
     ///
     /// ```
     /// use chronoloom::primitives::TimeIntervalEvent;

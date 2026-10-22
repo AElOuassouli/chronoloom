@@ -4,8 +4,9 @@
 //! keeps them in time order however they arrive. The two shapes answer
 //! different questions:
 //!
-//! - [`TimePointSequence`] is **many observations over time** — each event
-//!   carries its own value, and several may share an instant.
+//! - [`TimePointSequence`] is **many observations over time** of one
+//!   attribute — each event carries its own value, and several may share an
+//!   instant.
 //! - [`TimeIntervalSequence`] is **one state over time** — the spans during
 //!   which that state was active. Every span means the same thing, so the
 //!   sequence carries no per-span value, and overlapping spans merge into a
@@ -15,7 +16,7 @@
 //! use chronoloom::primitives::{TimeIntervalEvent, TimePointEvent};
 //! use chronoloom::sequences::{TimeIntervalSequence, TimePointSequence};
 //!
-//! let mut readings = TimePointSequence::new();
+//! let mut readings = TimePointSequence::new("readings");
 //! readings.insert(TimePointEvent::new(30, 3.0_f64));
 //! readings.insert(TimePointEvent::new(10, 1.0));
 //!
@@ -49,7 +50,7 @@
 //! use chronoloom::primitives::TimePointEvent;
 //! use chronoloom::sequences::TimePointSequence;
 //!
-//! let mut labels = TimePointSequence::new();
+//! let mut labels = TimePointSequence::new("labels");
 //! labels.insert(TimePointEvent::new(10, String::from("start")));
 //! labels.insert(TimePointEvent::new(20, String::from("stop")));
 //!

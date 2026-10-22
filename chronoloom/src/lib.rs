@@ -33,7 +33,7 @@
 //! ```
 //! use chronoloom::{TimePointEvent, TimePointSequence};
 //!
-//! let readings = TimePointSequence::from_events(vec![
+//! let readings = TimePointSequence::from_events("readings", vec![
 //!     TimePointEvent::new(30, 3.0),
 //!     TimePointEvent::new(10, 1.0),
 //!     TimePointEvent::new(20, 2.0),
@@ -63,6 +63,31 @@
 //! assert_eq!(uptime.len(), 1);
 //! assert!(uptime.contains(12));
 //! # Ok::<(), chronoloom::IntervalError>(())
+//! ```
+//!
+//! # Sequence systems
+//!
+//! A [`SequenceSystem`] holds the sequences describing one subject side by
+//! side, the way a sensor system holds its sensors: point sequences of any
+//! value type next to timelines, one sequence per attribute. Events are
+//! recorded into it as they arrive, one at a time or a [`Batch`] at a time.
+//!
+//! ```
+//! use chronoloom::{SequenceSystem, TimeIntervalEvent, TimeIntervalSequence};
+//! use chronoloom::{TimePointEvent, TimePointSequence};
+//!
+//! let mut machine = SequenceSystem::new();
+//! machine.insert(TimePointSequence::<f64>::new("temperature"));
+//! machine.insert(TimePointSequence::<String>::new("log"));
+//! machine.insert(TimeIntervalSequence::new("up"));
+//!
+//! machine.record_point("temperature", TimePointEvent::new(10, 21.5_f64))?;
+//! machine.record_point("log", TimePointEvent::new(10, String::from("boot")))?;
+//! machine.record_span("up", TimeIntervalEvent::span(0, 60)?)?;
+//!
+//! let attributes: Vec<&String> = machine.attributes().collect();
+//! assert_eq!(attributes, ["log", "temperature", "up"]);
+//! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
 //! # Intervals are half-open
@@ -109,7 +134,11 @@
 struct Readme;
 
 pub mod primitives;
+pub mod sequence_system;
 pub mod sequences;
 
 pub use primitives::{IntervalError, TimeIntervalEvent, TimePointEvent, Timestamp};
+pub use sequence_system::{
+    AnyPointSequence, Batch, PointValue, RecordError, Sequence, SequenceSystem,
+};
 pub use sequences::{Attribute, SetOperation, TimeIntervalSequence, TimePointSequence};

@@ -2,7 +2,8 @@
 
 ## Added
 
-- The `chronoloom` 0.3 API, implemented in Rust and exposed as Python classes:
+- The `chronoloom` 0.3 API (the binding now requires `chronoloom` 0.3.1),
+  implemented in Rust and exposed as Python classes:
   `TimePointEvent`, `TimeIntervalEvent`, `TimePointSequence`,
   `TimeIntervalSequence`, `SequenceSystem` and `Batch`, with the `IntervalError`
   and `RecordError` exceptions. The package is now only an API over the core:

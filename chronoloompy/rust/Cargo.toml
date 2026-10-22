@@ -35,10 +35,7 @@ crate-type = ["cdylib", "rlib"]
 # The trade-off: an edit to ../../chronoloom no longer reaches this binding. To
 # expose new core algebra, release the core to crates.io first, then bump this
 # requirement.
-chronoloom = "0.3"
+# 0.3.1 is the first release guaranteeing the `#[repr(C)]` event layout the
+# zero-copy NumPy views read.
+chronoloom = "0.3.1"
 pyo3 = { version = "0.30.1", features = ["abi3-py312"] }
-
-# TEMPORARY, do not commit: builds against the sibling crate until the
-# chronoloom release this binding needs is on crates.io.
-[patch.crates-io]
-chronoloom = { path = "../../chronoloom" }

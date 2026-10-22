@@ -22,13 +22,11 @@ impl<T> TimePointSequence<T> {
     /// use chronoloom::primitives::TimePointEvent;
     /// use chronoloom::sequences::TimePointSequence;
     ///
-    /// let readings: TimePointSequence<char> = [
+    /// let readings = TimePointSequence::from_events("readings", vec![
     ///     TimePointEvent::new(10, 'a'),
     ///     TimePointEvent::new(20, 'b'),
     ///     TimePointEvent::new(30, 'c'),
-    /// ]
-    /// .into_iter()
-    /// .collect();
+    /// ]);
     ///
     /// let window: Vec<i64> = readings.range(10..30).iter().map(|e| e.timestamp()).collect();
     /// assert_eq!(window, [10, 20]);
@@ -88,12 +86,10 @@ impl<T> TimePointSequence<T> {
     /// use chronoloom::primitives::TimePointEvent;
     /// use chronoloom::sequences::TimePointSequence;
     ///
-    /// let readings: TimePointSequence<char> = [
+    /// let readings = TimePointSequence::from_events("readings", vec![
     ///     TimePointEvent::new(10, 'a'),
     ///     TimePointEvent::new(20, 'b'),
-    /// ]
-    /// .into_iter()
-    /// .collect();
+    /// ]);
     ///
     /// assert_eq!(readings.nearest(12).map(|e| e.timestamp()), Some(10));
     /// assert_eq!(readings.nearest(18).map(|e| e.timestamp()), Some(20));

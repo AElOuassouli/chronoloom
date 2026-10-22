@@ -86,7 +86,7 @@ impl TimeIntervalSequence {
     /// operand's has to be written into the description at the moment it is
     /// combined — which is exactly what makes `A[1, 2] ∪ B` say something
     /// `A ∪ B` would not.
-    pub(super) fn folded_attribute(&self) -> Attribute {
+    pub(crate) fn folded_attribute(&self) -> Attribute {
         let (alpha, beta) = self.transformation;
 
         self.attribute.clone().transformed(alpha, beta)

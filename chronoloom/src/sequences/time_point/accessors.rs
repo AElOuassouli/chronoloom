@@ -4,10 +4,42 @@
 use std::slice;
 
 use crate::primitives::{TimePointEvent, Timestamp};
+use crate::sequences::attribute::Attribute;
 
 use super::TimePointSequence;
 
 impl<T> TimePointSequence<T> {
+    /// What this sequence is a record of.
+    #[must_use]
+    pub const fn attribute(&self) -> &Attribute {
+        &self.attribute
+    }
+
+    /// Change what this sequence is a record of.
+    ///
+    /// ```
+    /// use chronoloom::primitives::TimePointEvent;
+    /// use chronoloom::sequences::TimePointSequence;
+    ///
+    /// let mut readings = TimePointSequence::new("sensor-3");
+    /// readings.insert(TimePointEvent::new(10, 21.5));
+    ///
+    /// readings.set_attribute("temperature");
+    /// assert_eq!(readings.to_string(), "temperature");
+    /// ```
+    pub fn set_attribute(&mut self, attribute: impl Into<String>) {
+        self.attribute = Attribute::name(attribute);
+    }
+
+    /// How this sequence describes itself, as an owned `String` — the same text
+    /// [`Display`] writes.
+    ///
+    /// [`Display`]: core::fmt::Display
+    #[must_use]
+    pub fn label(&self) -> String {
+        self.to_string()
+    }
+
     /// Consume the sequence and return its events, oldest first.
     ///
     /// The inverse of [`from_events`], and free: the sequence hands over the
@@ -27,7 +59,7 @@ impl<T> TimePointSequence<T> {
     /// use chronoloom::primitives::TimePointEvent;
     /// use chronoloom::sequences::TimePointSequence;
     ///
-    /// let mut readings = TimePointSequence::new();
+    /// let mut readings = TimePointSequence::new("readings");
     /// readings.insert(TimePointEvent::new(10, 'a'));
     /// readings.insert(TimePointEvent::new(10, 'b'));
     ///

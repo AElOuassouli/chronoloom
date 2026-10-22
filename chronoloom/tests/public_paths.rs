@@ -9,14 +9,19 @@
 use chronoloom::primitives::interval::{IntervalError, TimeIntervalEvent};
 use chronoloom::primitives::time_point::TimePointEvent;
 use chronoloom::primitives::Timestamp;
+use chronoloom::sequence_system::{
+    AnyPointSequence, Batch, PointValue, RecordError, Sequence, SequenceSystem,
+};
 use chronoloom::sequences::attribute::{Attribute, SetOperation};
 use chronoloom::sequences::interval::TimeIntervalSequence;
 use chronoloom::sequences::time_point::TimePointSequence;
 use chronoloom::{
-    Attribute as RootAttribute, IntervalError as RootError, SetOperation as RootSetOperation,
-    TimeIntervalEvent as RootIntervalEvent, TimeIntervalSequence as RootIntervalSequence,
-    TimePointEvent as RootPointEvent, TimePointSequence as RootPointSequence,
-    Timestamp as RootTimestamp,
+    AnyPointSequence as RootAnyPointSequence, Attribute as RootAttribute, Batch as RootBatch,
+    IntervalError as RootError, PointValue as RootPointValue, RecordError as RootRecordError,
+    Sequence as RootSequence, SequenceSystem as RootSequenceSystem,
+    SetOperation as RootSetOperation, TimeIntervalEvent as RootIntervalEvent,
+    TimeIntervalSequence as RootIntervalSequence, TimePointEvent as RootPointEvent,
+    TimePointSequence as RootPointSequence, Timestamp as RootTimestamp,
 };
 
 /// Compiling the imports above is the real assertion; this only gives the

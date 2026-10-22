@@ -15,7 +15,7 @@
 //! use chronoloom::primitives::{TimeIntervalEvent, TimePointEvent};
 //! use chronoloom::sequences::{TimeIntervalSequence, TimePointSequence};
 //!
-//! let mut readings = TimePointSequence::new();
+//! let mut readings = TimePointSequence::new("readings");
 //! readings.insert(TimePointEvent::new(30, 3.0_f64));
 //! readings.insert(TimePointEvent::new(10, 1.0));
 //!
@@ -49,7 +49,7 @@
 //! use chronoloom::primitives::TimePointEvent;
 //! use chronoloom::sequences::TimePointSequence;
 //!
-//! let mut labels = TimePointSequence::new();
+//! let mut labels = TimePointSequence::new("labels");
 //! labels.insert(TimePointEvent::new(10, String::from("start")));
 //! labels.insert(TimePointEvent::new(20, String::from("stop")));
 //!

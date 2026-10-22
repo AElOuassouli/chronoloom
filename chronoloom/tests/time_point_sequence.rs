@@ -4,9 +4,9 @@ use std::collections::BTreeSet;
 use std::ops::Bound;
 
 /// Build a sequence by inserting `(timestamp, value)` pairs one at a time,
-/// in the order given — the path `FromIterator` does not take.
+/// in the order given — the path `Extend` does not take.
 fn inserted<T>(events: impl IntoIterator<Item = (i64, T)>) -> TimePointSequence<T> {
-    let mut sequence = TimePointSequence::new();
+    let mut sequence = TimePointSequence::new("readings");
     for (timestamp, value) in events {
         sequence.insert(TimePointEvent::new(timestamp, value));
     }
@@ -14,17 +14,22 @@ fn inserted<T>(events: impl IntoIterator<Item = (i64, T)>) -> TimePointSequence<
     sequence
 }
 
-/// Build a sequence from `(timestamp, value)` pairs through `collect`.
-fn collected<T>(events: impl IntoIterator<Item = (i64, T)>) -> TimePointSequence<T> {
-    events
-        .into_iter()
-        .map(|(timestamp, value)| TimePointEvent::new(timestamp, value))
-        .collect()
+/// Build a sequence by extending an empty one with `(timestamp, value)` pairs.
+fn extended<T>(events: impl IntoIterator<Item = (i64, T)>) -> TimePointSequence<T> {
+    let mut sequence = TimePointSequence::new("readings");
+    sequence.extend(
+        events
+            .into_iter()
+            .map(|(timestamp, value)| TimePointEvent::new(timestamp, value)),
+    );
+
+    sequence
 }
 
 /// Build a sequence from `(timestamp, value)` pairs through `from_events`.
 fn from_events<T>(events: impl IntoIterator<Item = (i64, T)>) -> TimePointSequence<T> {
     TimePointSequence::from_events(
+        "readings",
         events
             .into_iter()
             .map(|(timestamp, value)| TimePointEvent::new(timestamp, value))
@@ -49,7 +54,7 @@ fn events_read_in_time_order_however_they_arrive() {
         [10, 20, 30]
     );
     assert_eq!(
-        timestamps(&collected([(30, 'c'), (10, 'a'), (20, 'b')])),
+        timestamps(&extended([(30, 'c'), (10, 'a'), (20, 'b')])),
         [10, 20, 30]
     );
 }
@@ -58,8 +63,8 @@ fn events_read_in_time_order_however_they_arrive() {
 fn every_construction_path_agrees() {
     let events = [(30, 'c'), (10, 'a'), (20, 'b'), (10, 'z'), (-5, 'y')];
 
-    assert_eq!(inserted(events), collected(events));
-    assert_eq!(from_events(events), collected(events));
+    assert_eq!(inserted(events), extended(events));
+    assert_eq!(from_events(events), extended(events));
 }
 
 #[test]
@@ -87,10 +92,10 @@ fn from_events_keeps_given_order_within_an_instant() {
 
 #[test]
 fn from_events_accepts_nothing() {
-    let readings: TimePointSequence<char> = TimePointSequence::from_events(vec![]);
+    let readings: TimePointSequence<char> = TimePointSequence::from_events("readings", vec![]);
 
     assert!(readings.is_empty());
-    assert_eq!(readings, TimePointSequence::new());
+    assert_eq!(readings, TimePointSequence::new("readings"));
 }
 
 #[test]
@@ -100,7 +105,7 @@ fn into_events_round_trips_from_events() {
 
     assert_eq!(events.len(), 3);
     assert_eq!(events[0].timestamp(), 10);
-    assert_eq!(TimePointSequence::from_events(events), readings);
+    assert_eq!(TimePointSequence::from_events("readings", events), readings);
 }
 
 #[test]
@@ -138,9 +143,9 @@ fn an_out_of_order_insert_lands_after_events_sharing_its_instant() {
 }
 
 #[test]
-fn collecting_keeps_source_order_within_an_instant() {
+fn extending_keeps_source_order_within_an_instant() {
     assert_eq!(
-        values(&collected([(10, 'c'), (20, 'd'), (10, 'a')])),
+        values(&extended([(10, 'c'), (20, 'd'), (10, 'a')])),
         ['c', 'a', 'd']
     );
 }
@@ -391,7 +396,7 @@ fn nearest_survives_the_timestamp_extremes() {
 
 #[test]
 fn an_empty_sequence_answers_nothing() {
-    let readings: TimePointSequence<char> = TimePointSequence::new();
+    let readings: TimePointSequence<char> = TimePointSequence::new("readings");
 
     assert!(readings.is_empty());
     assert_eq!(readings.len(), 0);
@@ -409,15 +414,35 @@ fn an_empty_sequence_answers_nothing() {
 }
 
 #[test]
-fn new_and_default_agree() {
-    let built: TimePointSequence<char> = TimePointSequence::new();
+fn a_sequence_says_what_it_records() {
+    let readings: TimePointSequence<char> = TimePointSequence::new("temperature");
 
-    assert_eq!(built, TimePointSequence::default());
+    assert_eq!(readings.attribute().to_string(), "temperature");
+    assert_eq!(readings.to_string(), "temperature");
+    assert_eq!(readings.label(), "temperature");
 }
 
 #[test]
-fn collecting_round_trips_through_into_iter() {
-    let readings = collected([(30, 'c'), (10, 'a'), (20, 'b'), (10, 'z')]);
+fn set_attribute_renames_the_sequence() {
+    let mut readings = inserted([(10, 'a')]);
+    readings.set_attribute("renamed");
+
+    assert_eq!(readings.label(), "renamed");
+    assert_eq!(readings.len(), 1);
+}
+
+#[test]
+fn equality_includes_the_name() {
+    let temperature =
+        TimePointSequence::from_events("temperature", vec![TimePointEvent::new(10, 1)]);
+    let humidity = TimePointSequence::from_events("humidity", vec![TimePointEvent::new(10, 1)]);
+
+    assert_ne!(temperature, humidity);
+}
+
+#[test]
+fn from_events_round_trips_through_into_iter() {
+    let readings = from_events([(30, 'c'), (10, 'a'), (20, 'b'), (10, 'z')]);
 
     let owned: Vec<(i64, char)> = readings
         .clone()
@@ -426,11 +451,7 @@ fn collecting_round_trips_through_into_iter() {
         .collect();
     assert_eq!(owned, [(10, 'a'), (10, 'z'), (20, 'b'), (30, 'c')]);
 
-    let rebuilt: TimePointSequence<char> = owned
-        .into_iter()
-        .map(|(timestamp, value)| TimePointEvent::new(timestamp, value))
-        .collect();
-    assert_eq!(rebuilt, readings);
+    assert_eq!(from_events(owned), readings);
 }
 
 #[test]
@@ -452,7 +473,7 @@ fn extend_reorders_when_the_additions_arrive_out_of_order() {
 
 #[test]
 fn extend_onto_an_empty_sequence_still_orders() {
-    let mut readings = TimePointSequence::new();
+    let mut readings = TimePointSequence::new("readings");
     readings.extend([TimePointEvent::new(20, 'b'), TimePointEvent::new(10, 'a')]);
 
     assert_eq!(timestamps(&readings), [10, 20]);

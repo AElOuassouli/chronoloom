@@ -20,12 +20,12 @@ impl TimeIntervalSequence {
         &self.attribute
     }
 
-    /// Describe this timeline as a state named outright, forgetting how it was
-    /// derived.
+    /// Describe this timeline by an attribute given outright, forgetting how it
+    /// was derived.
     ///
-    /// Naming a derived timeline replaces the whole expression — including the
-    /// [`transformation`], which the old description was measured against and
-    /// the new one is not.
+    /// Giving a derived timeline an outright attribute replaces the whole
+    /// expression — including the [`transformation`], which the old description
+    /// was measured against and the new one is not.
     ///
     /// ```
     /// use chronoloom::primitives::TimeIntervalEvent;
@@ -86,7 +86,7 @@ impl TimeIntervalSequence {
     /// operand's has to be written into the description at the moment it is
     /// combined — which is exactly what makes `A[1, 2] ∪ B` say something
     /// `A ∪ B` would not.
-    pub(super) fn folded_attribute(&self) -> Attribute {
+    pub(crate) fn folded_attribute(&self) -> Attribute {
         let (alpha, beta) = self.transformation;
 
         self.attribute.clone().transformed(alpha, beta)

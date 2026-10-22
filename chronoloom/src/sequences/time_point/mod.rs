@@ -1,6 +1,7 @@
 //! An always-ordered sequence of point events.
 
 use crate::primitives::TimePointEvent;
+use crate::sequences::attribute::Attribute;
 
 mod accessors;
 mod mutation;
@@ -17,7 +18,7 @@ mod traits;
 /// use chronoloom::primitives::TimePointEvent;
 /// use chronoloom::sequences::TimePointSequence;
 ///
-/// let mut readings = TimePointSequence::new();
+/// let mut readings = TimePointSequence::new("readings");
 /// readings.insert(TimePointEvent::new(30, 'c'));
 /// readings.insert(TimePointEvent::new(10, 'a'));
 /// readings.insert(TimePointEvent::new(20, 'b'));
@@ -42,27 +43,47 @@ mod traits;
 ///
 /// When the events already exist, build with [`from_events`] rather than a loop
 /// of [`insert`]: it sorts once, in place, instead of finding a home for each
-/// event in turn. [`collect`][Iterator::collect] takes the same path.
+/// event in turn.
 ///
+/// # What the sequence records
+///
+/// Every sequence has an [`attribute`]: the quantity it is a record *of*, such
+/// as `temperature` or `log`. There is no sequence without one, which is why
+/// the constructors ask for the attribute before they ask for events, and why
+/// there is no [`collect`][Iterator::collect] into one. The attribute is what a
+/// [`SequenceSystem`] files the sequence under.
+///
+/// Because the attribute is part of what a sequence *is*, it is part of equality
+/// too: `temperature` and `humidity` are two records even when they happen to
+/// hold the same events.
+///
+/// [`attribute`]: TimePointSequence::attribute
 /// [`from_events`]: TimePointSequence::from_events
 /// [`insert`]: TimePointSequence::insert
 /// [`remove`]: TimePointSequence::remove
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+/// [`SequenceSystem`]: crate::sequence_system::SequenceSystem
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TimePointSequence<T> {
     /// Sorted by timestamp, and stable within one instant: events sharing a
     /// timestamp stay in the order they were added. Every method here either
     /// preserves that or restores it before returning.
     events: Vec<TimePointEvent<T>>,
+    /// What the sequence is a record of. Never absent, for the same reason a
+    /// timeline always has one.
+    attribute: Attribute,
 }
 
 impl<T> TimePointSequence<T> {
-    /// Create an empty sequence.
+    /// Create an empty record of the quantity `attribute`.
     #[must_use]
-    pub const fn new() -> Self {
-        Self { events: Vec::new() }
+    pub fn new(attribute: impl Into<String>) -> Self {
+        Self {
+            events: Vec::new(),
+            attribute: Attribute::name(attribute),
+        }
     }
 
-    /// Build a sequence from events already in hand.
+    /// Build a record of `attribute` from events already in hand.
     ///
     /// The usual way to create one when the data exists up front rather than
     /// arriving over time. The events may be in any order; they are sorted
@@ -74,27 +95,25 @@ impl<T> TimePointSequence<T> {
     /// reach for anything else when the data comes out of a time-ordered file
     /// or query.
     ///
-    /// Anything iterable works through [`collect`][Iterator::collect], which
-    /// takes this same path:
-    ///
     /// ```
     /// use chronoloom::primitives::TimePointEvent;
     /// use chronoloom::sequences::TimePointSequence;
     ///
-    /// let readings: TimePointSequence<f64> = [
+    /// let readings = TimePointSequence::from_events("readings", vec![
     ///     TimePointEvent::new(20, 2.0),
     ///     TimePointEvent::new(10, 1.0),
-    /// ]
-    /// .into_iter()
-    /// .collect();
+    /// ]);
     ///
     /// assert_eq!(readings.first().map(|e| e.timestamp()), Some(10));
     /// ```
     #[must_use]
-    pub fn from_events(mut events: Vec<TimePointEvent<T>>) -> Self {
+    pub fn from_events(attribute: impl Into<String>, mut events: Vec<TimePointEvent<T>>) -> Self {
         // Stable, so events sharing an instant keep their given order.
         events.sort_by_key(TimePointEvent::timestamp);
 
-        Self { events }
+        Self {
+            events,
+            attribute: Attribute::name(attribute),
+        }
     }
 }

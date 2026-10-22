@@ -46,7 +46,7 @@ added.
 ```rust
 use chronoloom::{TimePointEvent, TimePointSequence};
 
-let readings = TimePointSequence::from_events(vec![
+let readings = TimePointSequence::from_events("readings", vec![
     TimePointEvent::new(30, 3.0),
     TimePointEvent::new(10, 1.0),
     TimePointEvent::new(20, 2.0),
@@ -127,6 +127,37 @@ assert!(up.union(&maintenance).covers_same(&up));
 `symmetric_difference` is the XOR: the instants covered by exactly one of the
 two timelines.
 
+## Sequence systems
+
+A `SequenceSystem` holds the sequences describing one subject side by side, the
+way a sensor system holds its sensors: point sequences of any value type next to
+timelines, one sequence per attribute. Events are recorded into it as they
+arrive — one at a time, or a `Batch` at a time, all or nothing.
+
+```rust
+use chronoloom::{Batch, SequenceSystem, TimeIntervalEvent, TimeIntervalSequence};
+use chronoloom::{TimePointEvent, TimePointSequence};
+
+// Declare each sensor once, by the attribute it reports.
+let mut machine = SequenceSystem::new();
+machine.insert(TimePointSequence::<f64>::new("temperature"));
+machine.insert(TimePointSequence::<String>::new("log"));
+machine.insert(TimeIntervalSequence::new("up"));
+
+machine.record_point("temperature", TimePointEvent::new(10, 21.5_f64)).unwrap();
+
+let mut tick = Batch::new();
+tick.points("temperature", [TimePointEvent::new(11, 21.7_f64)])
+    .points("log", [TimePointEvent::new(11, String::from("fan on"))])
+    .spans("up", [TimeIntervalEvent::span(0, 20).unwrap()]);
+machine.record_batch(tick).unwrap();
+
+assert_eq!(machine.points::<f64>("temperature").map(|s| s.len()), Some(2));
+
+// Recording never creates a sequence, so a misspelt attribute is an error.
+assert!(machine.record_point("temprature", TimePointEvent::new(12, 0.0_f64)).is_err());
+```
+
 ## Moving a timeline in time
 
 `transform` shifts each bound of every span independently: `alpha` moves the
@@ -192,8 +223,9 @@ with `map` if the result needs to mean something.
 The wider algebra is still to come — window and containment queries over a
 sequence, coverage and gaps, complement, the same set algebra for
 `TimePointSequence`, and carrying values through any of it. What exists today is
-the vocabulary, the two sequence shapes, the pair-wise interval operations, and
-the set algebra between two interval timelines.
+the vocabulary, the two sequence shapes, the pair-wise interval operations, the
+set algebra between two interval timelines, and systems that hold sequences of
+both shapes together.
 
 Every code block in this file is compiled and run by `make test`, so what is
 documented here is what is implemented.

@@ -22,7 +22,7 @@ impl<T> TimePointSequence<T> {
     /// use chronoloom::primitives::TimePointEvent;
     /// use chronoloom::sequences::TimePointSequence;
     ///
-    /// let mut readings = TimePointSequence::new();
+    /// let mut readings = TimePointSequence::new("readings");
     /// readings.insert(TimePointEvent::new(10, 'a'));
     /// readings.insert(TimePointEvent::new(10, 'b'));
     ///

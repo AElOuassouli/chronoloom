@@ -1,5 +1,6 @@
 //! The standard-library traits a point sequence implements.
 
+use core::fmt;
 use std::ops::Index;
 use std::{slice, vec};
 
@@ -7,14 +8,15 @@ use crate::primitives::TimePointEvent;
 
 use super::TimePointSequence;
 
-impl<T> FromIterator<TimePointEvent<T>> for TimePointSequence<T> {
-    /// Collect events into a sequence, in any order.
+impl<T> fmt::Display for TimePointSequence<T> {
+    /// How the sequence describes itself: what it is a record of.
     ///
-    /// Sorts once at the end rather than inserting one event at a time, so
-    /// this is the cheap way to build a sequence from events already in hand.
-    /// The sort is stable, so events sharing an instant keep their order.
-    fn from_iter<I: IntoIterator<Item = TimePointEvent<T>>>(events: I) -> Self {
-        Self::from_events(events.into_iter().collect())
+    /// The events are not written — this says *what* the sequence is, not what
+    /// is in it. Use [`Debug`] for that.
+    ///
+    /// [`Debug`]: core::fmt::Debug
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.attribute)
     }
 }
 

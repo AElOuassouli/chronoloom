@@ -6,11 +6,6 @@ library.
 Intervals are **half-open**: `start` is included, `end` is excluded. Two
 intervals that merely touch (`[0, 5)` and `[5, 9)`) therefore share no instant.
 
-```toml
-[dependencies]
-chronoloom = "0.2"
-```
-
 ## Primitives
 
 Two event shapes make up the vocabulary, both generic over the value they carry

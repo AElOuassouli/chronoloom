@@ -1,3 +1,10 @@
+# Unreleased
+
+## Removed
+
+- The `[dependencies]` snippet from the README. It pinned a version by hand and
+  went stale with each release; `cargo add chronoloom` picks the current one.
+
 # 0.3.0 - 2026-10-22
 
 ## Added

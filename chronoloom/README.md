@@ -228,8 +228,9 @@ documented here is what is implemented.
 ## Python
 
 Python bindings are published separately as
-[`chronoloompy`](https://pypi.org/project/chronoloompy/), which wraps this
-crate and adds a pydantic-based model layer. It lives in
+[`chronoloompy`](https://pypi.org/project/chronoloompy/), an API over this
+crate that keeps data in Rust memory and hands Python zero-copy NumPy views of
+it. It lives in
 [`../chronoloompy`](../chronoloompy) in this repository.
 
 ## Development

@@ -3,8 +3,11 @@
 
 use core::any::{self, Any};
 use core::fmt;
+use core::ops::Bound;
 
+use crate::primitives::Timestamp;
 use crate::sequences::attribute::Attribute;
+use crate::sequences::extent::Extent;
 use crate::sequences::TimePointSequence;
 
 /// What a point sequence's values must be to join a [`SequenceSystem`].
@@ -31,6 +34,10 @@ pub(crate) trait ErasedPoints: fmt::Debug + Send + Sync {
     /// Equal when `other` holds the same value type and an equal sequence.
     fn equals(&self, other: &dyn ErasedPoints) -> bool;
     fn attribute(&self) -> &Attribute;
+    fn set_attribute(&mut self, attribute: String);
+    fn observed(&self) -> &Extent;
+    fn observe(&mut self, extent: &Extent);
+    fn slice_bounds(&self, range: (Bound<Timestamp>, Bound<Timestamp>)) -> Box<dyn ErasedPoints>;
     fn len(&self) -> usize;
     fn value_type_name(&self) -> &'static str;
 }
@@ -61,6 +68,22 @@ impl<T: PointValue> ErasedPoints for TimePointSequence<T> {
 
     fn attribute(&self) -> &Attribute {
         Self::attribute(self)
+    }
+
+    fn set_attribute(&mut self, attribute: String) {
+        Self::set_attribute(self, attribute);
+    }
+
+    fn observed(&self) -> &Extent {
+        Self::observed(self)
+    }
+
+    fn observe(&mut self, extent: &Extent) {
+        Self::observe(self, extent);
+    }
+
+    fn slice_bounds(&self, range: (Bound<Timestamp>, Bound<Timestamp>)) -> Box<dyn ErasedPoints> {
+        Box::new(self.slice(range))
     }
 
     fn len(&self) -> usize {
@@ -95,14 +118,15 @@ impl<T: PointValue> ErasedPoints for TimePointSequence<T> {
 /// assert_eq!(erased.downcast_ref::<f64>().map(|s| s.len()), Some(1));
 /// ```
 ///
-/// There is deliberately no mutable downcast: a mutable sequence could be
-/// given another attribute while a system files it under its old one. Events reach a
-/// sequence inside a system through [`SequenceSystem::record_point`] instead.
+/// There is deliberately no mutable downcast. Events reach a sequence inside a
+/// system through [`SequenceSystem::record_point`] instead, and its attribute
+/// changes through [`SequenceSystem::relabel`].
 ///
 /// [`downcast`]: AnyPointSequence::downcast
 /// [`downcast_ref`]: AnyPointSequence::downcast_ref
 /// [`SequenceSystem`]: super::SequenceSystem
 /// [`SequenceSystem::record_point`]: super::SequenceSystem::record_point
+/// [`SequenceSystem::relabel`]: super::SequenceSystem::relabel
 pub struct AnyPointSequence(pub(crate) Box<dyn ErasedPoints>);
 
 impl AnyPointSequence {
@@ -112,10 +136,16 @@ impl AnyPointSequence {
         self.0.attribute()
     }
 
-    /// The sequence's attribute written out — the text a system files it under.
+    /// The sequence's attribute written out.
     #[must_use]
     pub fn label(&self) -> String {
         self.attribute().to_string()
+    }
+
+    /// The instants the sequence was observed over.
+    #[must_use]
+    pub fn observed(&self) -> &Extent {
+        self.0.observed()
     }
 
     /// How many events the sequence holds.
@@ -167,6 +197,11 @@ impl AnyPointSequence {
         } else {
             Err(self)
         }
+    }
+
+    /// Replace the attribute, for the system's own relabelling.
+    pub(crate) fn set_attribute(&mut self, attribute: String) {
+        self.0.set_attribute(attribute);
     }
 
     /// The type-erased sequence, for the system's own in-place recording.

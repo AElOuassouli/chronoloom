@@ -69,26 +69,51 @@
 //!
 //! A [`SequenceSystem`] holds the sequences describing one subject side by
 //! side, the way a sensor system holds its sensors: point sequences of any
-//! value type next to timelines, one sequence per attribute. Events are
-//! recorded into it as they arrive, one at a time or a [`Batch`] at a time.
+//! value type next to timelines, one sequence per key. Events are
+//! recorded into it as they arrive, one at a time or a [`Batch`] at a time, all
+//! or nothing.
 //!
 //! ```
 //! use chronoloom::{SequenceSystem, TimeIntervalEvent, TimeIntervalSequence};
 //! use chronoloom::{TimePointEvent, TimePointSequence};
 //!
 //! let mut machine = SequenceSystem::new();
-//! machine.insert(TimePointSequence::<f64>::new("temperature"));
-//! machine.insert(TimePointSequence::<String>::new("log"));
-//! machine.insert(TimeIntervalSequence::new("up"));
+//! machine.insert("temperature", TimePointSequence::<f64>::new("temperature"));
+//! machine.insert("log", TimePointSequence::<String>::new("log"));
+//! machine.insert("up", TimeIntervalSequence::new("up"));
 //!
 //! machine.record_point("temperature", TimePointEvent::new(10, 21.5_f64))?;
 //! machine.record_point("log", TimePointEvent::new(10, String::from("boot")))?;
 //! machine.record_span("up", TimeIntervalEvent::span(0, 60)?)?;
 //!
-//! let attributes: Vec<&String> = machine.attributes().collect();
-//! assert_eq!(attributes, ["log", "temperature", "up"]);
+//! let keys: Vec<&str> = machine.keys().map(|key| key.as_str()).collect();
+//! assert_eq!(keys, ["log", "temperature", "up"]);
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
+//!
+//! # What was observed
+//!
+//! Every sequence carries an [`Extent`], the instants it was observed over. An
+//! instant inside it with no span is inactive; outside it, nothing is known.
+//! Operations keep a result wherever it can be decided, and
+//! [`TimeIntervalSequence::complement`] is the observed instants that are not
+//! active.
+//!
+//! # Processors
+//!
+//! A [`Formula`] describes a state as data: active between one kind of event
+//! and the next, while a value stays within bounds, or wherever other states
+//! are. A [`Processor`] is a set of formulas, each producing one member of a
+//! system, and it is how point sequences become timelines and timelines become
+//! [`Edge`] events. The README walks through examples.
+//!
+//! # Datasets
+//!
+//! A [`SequenceSystem`] is also a dataset. It files members under a [`Key`],
+//! carries opaque [`Metadata`] on itself and on each member, and
+//! [`SequenceSystem::observe`] and [`SequenceSystem::slice`] narrow every member
+//! to an extent or a window of time at once. The README walks through an
+//! example.
 //!
 //! # Intervals are half-open
 //!
@@ -134,11 +159,15 @@
 struct Readme;
 
 pub mod primitives;
+pub mod processing;
 pub mod sequence_system;
 pub mod sequences;
 
 pub use primitives::{IntervalError, TimeIntervalEvent, TimePointEvent, Timestamp};
-pub use sequence_system::{
-    AnyPointSequence, Batch, PointValue, RecordError, Sequence, SequenceSystem,
+pub use processing::{
+    Condition, Edge, Events, Formula, OpenEnd, Output, Pattern, ProcessError, Processor,
 };
-pub use sequences::{Attribute, SetOperation, TimeIntervalSequence, TimePointSequence};
+pub use sequence_system::{
+    AnyPointSequence, Batch, Key, Metadata, PointValue, RecordError, Sequence, SequenceSystem,
+};
+pub use sequences::{Attribute, Extent, SetOperation, TimeIntervalSequence, TimePointSequence};

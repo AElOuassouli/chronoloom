@@ -5,6 +5,9 @@ use std::slice;
 
 use crate::primitives::{TimeIntervalEvent, Timestamp};
 use crate::sequences::attribute::{Attribute, SetOperation};
+use crate::sequences::extent::Extent;
+
+use super::operations::{difference_spans, intersection_spans};
 
 use super::TimeIntervalSequence;
 
@@ -232,5 +235,58 @@ impl TimeIntervalSequence {
     #[must_use]
     pub fn contains(&self, timestamp: Timestamp) -> bool {
         self.at(timestamp).is_some()
+    }
+
+    /// The instants this timeline was observed over.
+    #[must_use]
+    pub const fn observed(&self) -> &Extent {
+        &self.observed
+    }
+
+    /// Whether `timestamp` was observed, so that not being active there means
+    /// inactive rather than unknown.
+    #[must_use]
+    pub fn is_observed(&self, timestamp: Timestamp) -> bool {
+        self.observed.contains(timestamp)
+    }
+
+    /// This timeline observed over `extent` instead: the extent is set and the
+    /// spans are cut to it.
+    #[must_use]
+    pub fn with_observed(mut self, extent: Extent) -> Self {
+        self.observed = extent;
+        self.clip();
+        self
+    }
+
+    /// Narrow the extent to its overlap with `extent`, cutting the spans to it.
+    pub fn observe(&mut self, extent: &Extent) {
+        self.observed.narrow(extent);
+        self.clip();
+    }
+
+    /// The instants observed and not active, as a timeline of the opposite
+    /// state `¬A`, observed over the same extent.
+    #[must_use]
+    pub fn complement(&self) -> Self {
+        let spans = difference_spans(self.observed.as_slice(), &self.spans);
+
+        Self::from_parts(
+            Attribute::complement(self.folded_attribute()),
+            (0, 0),
+            spans,
+            self.observed.clone(),
+        )
+    }
+
+    /// Cut the spans to the extent, restoring the total.
+    fn clip(&mut self) {
+        let spans = intersection_spans(&self.spans, self.observed.as_slice());
+        *self = Self::from_parts(
+            self.attribute.clone(),
+            self.transformation,
+            spans,
+            std::mem::take(&mut self.observed),
+        );
     }
 }

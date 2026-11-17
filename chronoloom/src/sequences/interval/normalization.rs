@@ -17,7 +17,7 @@ pub(super) const UNDERFLOW: &str = "active_duration always accounts for every sp
 /// The spans may arrive in any order and may overlap freely. Sorting first
 /// guarantees that every span able to merge with the one still open comes
 /// immediately next, so one fold through [`absorb`] finishes the job.
-pub(super) fn normalize(mut spans: Vec<TimeIntervalEvent<()>>) -> Vec<TimeIntervalEvent<()>> {
+pub(crate) fn normalize(mut spans: Vec<TimeIntervalEvent<()>>) -> Vec<TimeIntervalEvent<()>> {
     spans.sort_by_key(TimeIntervalEvent::start);
 
     let mut normalized: Vec<TimeIntervalEvent<()>> = Vec::with_capacity(spans.len());
@@ -50,7 +50,7 @@ pub(super) fn span_ticks(span: &TimeIntervalEvent<()>) -> u64 {
 /// caller guarantees by walking its input in order. Whether two spans combine,
 /// and into what, is [`TimeIntervalEvent::merged`]'s decision — this exists so
 /// the sequence never restates that rule.
-pub(super) fn absorb(normalized: &mut Vec<TimeIntervalEvent<()>>, span: TimeIntervalEvent<()>) {
+pub(crate) fn absorb(normalized: &mut Vec<TimeIntervalEvent<()>>, span: TimeIntervalEvent<()>) {
     match normalized.pop() {
         Some(open) => match open.merged(&span) {
             Some(merged) => normalized.push(merged),

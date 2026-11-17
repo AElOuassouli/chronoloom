@@ -30,7 +30,11 @@ impl<T> Extend<TimePointEvent<T>> for TimePointSequence<T> {
         // Where the old events end, stepped back one so the check covers the
         // seam between what was already there and what is being added.
         let seam = self.events.len().saturating_sub(1);
+        let before = self.events.len();
         self.events.extend(events);
+        for index in before..self.events.len() {
+            self.observe_instant(self.events[index].timestamp());
+        }
 
         if !self.events[seam..].is_sorted_by_key(TimePointEvent::timestamp) {
             self.events.sort_by_key(TimePointEvent::timestamp);

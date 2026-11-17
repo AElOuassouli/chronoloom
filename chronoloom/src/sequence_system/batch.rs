@@ -7,12 +7,13 @@ use crate::primitives::{TimeIntervalEvent, TimePointEvent};
 use crate::sequences::TimePointSequence;
 
 use super::erased::{ErasedPoints, PointValue};
+use super::key::Key;
 
 /// Events for many sequences of a [`SequenceSystem`], recorded together by
 /// [`record_batch`].
 ///
-/// A batch maps attributes to the events that arrived for them — one tick of
-/// a sensor system. Each push gives its attribute and carries events of one
+/// A batch maps keys to the events that arrived for them — one tick of
+/// a sensor system. Each push gives its key and carries events of one
 /// value type, so `f64` readings and `String` log lines can travel in the same batch.
 ///
 /// ```
@@ -31,17 +32,17 @@ use super::erased::{ErasedPoints, PointValue};
 ///
 /// Pushing is never checked against a system — a batch does not know which
 /// system it is for. Every check happens when it is recorded, and the batch is
-/// recorded whole or not at all. Pushing to one attribute twice is fine: both sets
+/// recorded whole or not at all. Pushing to one key twice is fine: both sets
 /// of events are recorded.
 ///
 /// [`record_batch`]: super::SequenceSystem::record_batch
 /// [`SequenceSystem`]: super::SequenceSystem
 #[derive(Debug, Default)]
 pub struct Batch {
-    /// In push order. Kept as pushed rather than grouped by attribute, so a second
-    /// push to one attribute never has to reconcile its value type with the first —
+    /// In push order. Kept as pushed rather than grouped by key, so a second
+    /// push to one key never has to reconcile its value type with the first —
     /// the system checks each against the sequence it is for.
-    pub(crate) chunks: Vec<(String, Pending)>,
+    pub(crate) chunks: Vec<(Key, Pending)>,
 }
 
 impl Batch {
@@ -51,36 +52,34 @@ impl Batch {
         Self { chunks: Vec::new() }
     }
 
-    /// Add point events for the sequence for `attribute`.
+    /// Add point events for the sequence for `key`.
     ///
     /// The events may be in any order; recording puts them in time order.
     pub fn points<T: PointValue>(
         &mut self,
-        attribute: impl Into<String>,
+        key: impl Into<Key>,
         events: impl IntoIterator<Item = TimePointEvent<T>>,
     ) -> &mut Self {
         let events: Vec<TimePointEvent<T>> = events.into_iter().collect();
         self.chunks
-            .push((attribute.into(), Pending::Points(Box::new(events))));
+            .push((key.into(), Pending::Points(Box::new(events))));
 
         self
     }
 
-    /// Add spans for the timeline for `attribute`.
+    /// Add spans for the timeline for `key`.
     pub fn spans(
         &mut self,
-        attribute: impl Into<String>,
+        key: impl Into<Key>,
         spans: impl IntoIterator<Item = TimeIntervalEvent<()>>,
     ) -> &mut Self {
-        self.chunks.push((
-            attribute.into(),
-            Pending::Spans(spans.into_iter().collect()),
-        ));
+        self.chunks
+            .push((key.into(), Pending::Spans(spans.into_iter().collect())));
 
         self
     }
 
-    /// How many events and spans the batch carries, across every attribute.
+    /// How many events and spans the batch carries, across every key.
     #[must_use]
     pub fn len(&self) -> usize {
         self.chunks.iter().map(|(_, pending)| pending.len()).sum()

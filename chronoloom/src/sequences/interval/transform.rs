@@ -2,7 +2,12 @@
 
 use crate::primitives::{IntervalError, TimeIntervalEvent, Timestamp};
 
+use core::convert::Infallible;
+
+use crate::sequences::extent::{shift_bound, shift_spans, Extent};
+
 use super::normalization::absorb;
+use super::operations::{difference_spans, union_spans};
 use super::TimeIntervalSequence;
 
 impl TimeIntervalSequence {
@@ -67,12 +72,33 @@ impl TimeIntervalSequence {
     ///
     /// [transforming]: TimeIntervalSequence#transforming-a-timeline
     pub fn transform(&self, alpha: Timestamp, beta: Timestamp) -> Result<Self, IntervalError> {
+        self.transform_by(alpha, beta, shifted)
+    }
+
+    /// The transform with bounds at the limits of the timestamp range read as
+    /// "without end": they stay put, and every other bound saturates, as an
+    /// extent's do. Formulas shift timelines whose open spans reach the end of
+    /// time, so they use this and cannot fail.
+    pub(crate) fn transform_unbounded(&self, alpha: Timestamp, beta: Timestamp) -> Self {
+        let Ok(transformed) = self.transform_by(alpha, beta, |bound, shift| {
+            Ok::<_, Infallible>(shift_bound(bound, shift))
+        });
+        transformed
+    }
+
+    /// The transform, with `shift` moving each bound.
+    fn transform_by<E>(
+        &self,
+        alpha: Timestamp,
+        beta: Timestamp,
+        shift: impl Fn(Timestamp, Timestamp) -> Result<Timestamp, E>,
+    ) -> Result<Self, E> {
         // Before anything moves, so a failure leaves nothing half-done. The
         // running total needs checking in its own right: an empty timeline has
         // no bounds for the loop below to reject a runaway shift on.
         let transformation = (
-            shifted(self.transformation.0, alpha)?,
-            shifted(self.transformation.1, beta)?,
+            shift(self.transformation.0, alpha)?,
+            shift(self.transformation.1, beta)?,
         );
 
         // Merging only ever removes spans, so this capacity is an upper bound.
@@ -80,8 +106,8 @@ impl TimeIntervalSequence {
 
         for span in &self.spans {
             let (start, end) = span.bounds();
-            let start = shifted(start, alpha)?;
-            let end = shifted(end, beta)?;
+            let start = shift(start, alpha)?;
+            let end = shift(end, beta)?;
 
             // The bounds crossed, so the span narrowed away to nothing.
             if start < end {
@@ -92,10 +118,22 @@ impl TimeIntervalSequence {
             }
         }
 
+        // Widening, an instant is known once its window holds an active instant
+        // or lies wholly inside the extent; narrowing, once its window is
+        // wholly active or holds an instant known inactive.
+        let known = if alpha <= beta {
+            shift_spans(self.observed.as_slice(), beta, alpha)
+        } else {
+            let inactive = difference_spans(self.observed.as_slice(), &self.spans);
+            shift_spans(&inactive, beta, alpha)
+        };
+        let observed = Extent::from_normalized(union_spans(&known, &spans));
+
         Ok(Self::from_parts(
             self.attribute.clone(),
             transformation,
             spans,
+            observed,
         ))
     }
 }

@@ -1,5 +1,9 @@
+use std::ops::Bound;
+
 use chronoloom::primitives::{IntervalError, TimeIntervalEvent, TimePointEvent};
-use chronoloom::sequence_system::{AnyPointSequence, Batch, RecordError, Sequence, SequenceSystem};
+use chronoloom::sequence_system::{
+    AnyPointSequence, Batch, Key, RecordError, Sequence, SequenceSystem,
+};
 use chronoloom::sequences::{TimeIntervalSequence, TimePointSequence};
 
 /// A span that is known to be valid.
@@ -22,27 +26,27 @@ fn points<T>(attribute: &str, events: impl IntoIterator<Item = (i64, T)>) -> Tim
 /// all empty.
 fn machine() -> SequenceSystem {
     let mut machine = SequenceSystem::new();
-    machine.insert(TimePointSequence::<f64>::new("temperature"));
-    machine.insert(TimePointSequence::<String>::new("log"));
-    machine.insert(TimeIntervalSequence::new("up"));
+    machine.insert("temperature", TimePointSequence::<f64>::new("temperature"));
+    machine.insert("log", TimePointSequence::<String>::new("log"));
+    machine.insert("up", TimeIntervalSequence::new("up"));
 
     machine
 }
 
-/// The timestamps the point sequence for `attribute` holds, in order.
-fn timestamps<T: 'static>(system: &SequenceSystem, attribute: &str) -> Vec<i64> {
+/// The timestamps the point sequence for `key` holds, in order.
+fn timestamps<T: 'static>(system: &SequenceSystem, key: &str) -> Vec<i64> {
     system
-        .points::<T>(attribute)
+        .points::<T>(key)
         .expect("the sequence exists with this value type")
         .iter()
         .map(TimePointEvent::timestamp)
         .collect()
 }
 
-/// The bounds the timeline for `attribute` holds, in order.
-fn bounds(system: &SequenceSystem, attribute: &str) -> Vec<(i64, i64)> {
+/// The bounds the timeline for `key` holds, in order.
+fn bounds(system: &SequenceSystem, key: &str) -> Vec<(i64, i64)> {
     system
-        .intervals(attribute)
+        .intervals(key)
         .expect("the timeline exists")
         .iter()
         .map(TimeIntervalEvent::bounds)
@@ -71,15 +75,15 @@ fn sequences_of_both_shapes_and_several_value_types_sit_together() {
 }
 
 #[test]
-fn iteration_is_in_attribute_order_however_the_system_was_built() {
+fn iteration_is_in_key_order_however_the_system_was_built() {
     let system = machine();
-    let attributes: Vec<&String> = system.attributes().collect();
+    let keys: Vec<&str> = system.keys().map(Key::as_str).collect();
 
-    assert_eq!(attributes, ["log", "temperature", "up"]);
+    assert_eq!(keys, ["log", "temperature", "up"]);
 }
 
 #[test]
-fn typed_reads_refuse_the_wrong_type_shape_or_attribute() {
+fn typed_reads_refuse_the_wrong_type_shape_or_key() {
     let system = machine();
 
     assert!(system.points::<i64>("temperature").is_none());
@@ -90,31 +94,118 @@ fn typed_reads_refuse_the_wrong_type_shape_or_attribute() {
 }
 
 #[test]
-fn a_sequence_is_filed_under_its_own_attribute() {
+fn a_sequence_is_found_under_the_key_it_was_inserted_with() {
     let a = TimeIntervalSequence::from_spans("A", vec![span(0, 10)]);
     let b = TimeIntervalSequence::from_spans("B", vec![span(20, 30)]);
 
     let mut system = SequenceSystem::new();
-    system.insert(a.union(&b));
-    system.insert(a.transform(1, 2).expect("no overflow"));
+    system.insert("union", a.union(&b));
+    system.insert(
+        String::from("shifted"),
+        a.transform(1, 2).expect("no overflow"),
+    );
 
-    assert!(system.intervals("A ∪ B").is_some());
-    assert!(system.intervals("A[1, 2]").is_some());
-    for (attribute, sequence) in &system {
-        assert_eq!(*attribute, sequence.attribute().to_string());
-    }
+    assert_eq!(
+        system.intervals("union").map(TimeIntervalSequence::label),
+        Some(String::from("A ∪ B"))
+    );
+    assert_eq!(
+        system.intervals("shifted").map(TimeIntervalSequence::label),
+        Some(String::from("A[1, 2]"))
+    );
+    assert!(system.intervals("A ∪ B").is_none());
 }
 
 #[test]
-fn inserting_for_a_recorded_attribute_returns_what_it_displaced() {
+fn members_with_one_label_and_different_keys_coexist() {
+    let mut system = SequenceSystem::new();
+    system.insert("sensor-1", points("temperature", [(10, 1.0_f64)]));
+    system.insert("sensor-2", points("temperature", [(20, 2.0_f64)]));
+
+    assert_eq!(system.len(), 2);
+    assert_eq!(timestamps::<f64>(&system, "sensor-1"), [10]);
+    assert_eq!(timestamps::<f64>(&system, "sensor-2"), [20]);
+    assert_eq!(
+        system.get("sensor-1").map(Sequence::label),
+        system.get("sensor-2").map(Sequence::label)
+    );
+}
+
+#[test]
+fn iteration_follows_the_keys_whatever_the_labels() {
+    let mut system = SequenceSystem::new();
+    system.insert("b", TimeIntervalSequence::new("a"));
+    system.insert("a", TimeIntervalSequence::new("z"));
+
+    let labels: Vec<(&str, String)> = system
+        .iter()
+        .map(|(key, sequence)| (key.as_str(), sequence.label()))
+        .collect();
+    assert_eq!(labels, [("a", String::from("z")), ("b", String::from("a"))]);
+}
+
+#[test]
+fn relabel_changes_the_label_and_keeps_the_key_and_the_data() -> Result<(), RecordError> {
+    let mut system = machine();
+    system.record_point("temperature", TimePointEvent::new(10, 21.5_f64))?;
+    system.record_span("up", span(0, 10))?;
+
+    system.relabel("temperature", "air temperature")?;
+    system.relabel("up", String::from("uptime"))?;
+
+    assert_eq!(
+        system.get("temperature").map(Sequence::label),
+        Some(String::from("air temperature"))
+    );
+    assert_eq!(
+        system.get("up").map(Sequence::label),
+        Some(String::from("uptime"))
+    );
+    assert_eq!(timestamps::<f64>(&system, "temperature"), [10]);
+    assert_eq!(bounds(&system, "up"), [(0, 10)]);
+    assert!(system.get("air temperature").is_none());
+    assert_eq!(system.len(), 3);
+    Ok(())
+}
+
+#[test]
+fn relabelling_an_unknown_key_changes_nothing() {
+    let mut system = machine();
+    let before = system.clone();
+
+    assert_eq!(
+        system.relabel("humidity", "wetness"),
+        Err(RecordError::Unknown {
+            key: String::from("humidity")
+        })
+    );
+    assert_eq!(system, before);
+}
+
+#[test]
+fn equality_compares_keys_and_labels() {
+    let mut one = SequenceSystem::new();
+    one.insert("x", points("a", [(10, 1)]));
+    let mut other_key = SequenceSystem::new();
+    other_key.insert("y", points("a", [(10, 1)]));
+    let mut other_label = SequenceSystem::new();
+    other_label.insert("x", points("b", [(10, 1)]));
+
+    assert_ne!(one, other_key);
+    assert_ne!(one, other_label);
+    assert_eq!(one, one.clone());
+}
+
+#[test]
+fn inserting_under_a_recorded_key_returns_what_it_displaced() {
     let mut system = SequenceSystem::new();
 
     assert!(system
-        .insert(points("temperature", [(10, 1.0_f64)]))
+        .insert("temperature", points("temperature", [(10, 1.0_f64)]))
         .is_none());
-    let displaced = system.insert(points("temperature", [(20, 2.0_f64)]));
+    let displaced = system.insert("temperature", points("temperature", [(20, 2.0_f64)]));
 
-    let displaced = displaced.expect("the label was taken");
+    let displaced = displaced.expect("the key was taken");
     assert_eq!(
         displaced.as_time_point::<f64>().map(|s| s[0].timestamp()),
         Some(10)
@@ -169,7 +260,7 @@ fn recorded_spans_merge() -> Result<(), RecordError> {
 }
 
 #[test]
-fn recording_for_an_unknown_attribute_creates_nothing() {
+fn recording_for_an_unknown_key_creates_nothing() {
     let mut system = machine();
     let before = system.clone();
 
@@ -178,7 +269,7 @@ fn recording_for_an_unknown_attribute_creates_nothing() {
     assert_eq!(
         refused,
         Err(RecordError::Unknown {
-            attribute: String::from("humidity")
+            key: String::from("humidity")
         })
     );
     assert_eq!(system, before);
@@ -192,13 +283,13 @@ fn recording_the_wrong_shape_is_refused() {
     assert_eq!(
         system.record_point("up", TimePointEvent::new(10, true)),
         Err(RecordError::ShapeMismatch {
-            attribute: String::from("up")
+            key: String::from("up")
         })
     );
     assert_eq!(
         system.record_span("temperature", span(0, 10)),
         Err(RecordError::ShapeMismatch {
-            attribute: String::from("temperature")
+            key: String::from("temperature")
         })
     );
     assert_eq!(system, before);
@@ -214,7 +305,7 @@ fn recording_the_wrong_value_type_is_refused() {
     assert_eq!(
         refused,
         Err(RecordError::ValueTypeMismatch {
-            attribute: String::from("temperature"),
+            key: String::from("temperature"),
             expected: std::any::type_name::<f64>(),
             found: std::any::type_name::<i64>(),
         })
@@ -225,7 +316,7 @@ fn recording_the_wrong_value_type_is_refused() {
 #[test]
 fn record_errors_describe_themselves() {
     let unknown = RecordError::Unknown {
-        attribute: String::from("humidity"),
+        key: String::from("humidity"),
     };
 
     assert_eq!(
@@ -327,7 +418,7 @@ fn a_batch_reports_the_first_bad_push() {
     assert_eq!(
         system.record_batch(batch),
         Err(RecordError::ShapeMismatch {
-            attribute: String::from("temperature")
+            key: String::from("temperature")
         })
     );
 }
@@ -335,14 +426,20 @@ fn a_batch_reports_the_first_bad_push() {
 #[test]
 fn equality_ignores_insertion_order() {
     let forward: SequenceSystem = [
-        Sequence::from(points("a", [(10, 1.0_f64)])),
-        Sequence::from(TimeIntervalSequence::from_spans("b", vec![span(0, 10)])),
+        ("a", Sequence::from(points("a", [(10, 1.0_f64)]))),
+        (
+            "b",
+            Sequence::from(TimeIntervalSequence::from_spans("b", vec![span(0, 10)])),
+        ),
     ]
     .into_iter()
     .collect();
     let backward: SequenceSystem = [
-        Sequence::from(TimeIntervalSequence::from_spans("b", vec![span(0, 10)])),
-        Sequence::from(points("a", [(10, 1.0_f64)])),
+        (
+            "b",
+            Sequence::from(TimeIntervalSequence::from_spans("b", vec![span(0, 10)])),
+        ),
+        ("a", Sequence::from(points("a", [(10, 1.0_f64)]))),
     ]
     .into_iter()
     .collect();
@@ -351,11 +448,11 @@ fn equality_ignores_insertion_order() {
 }
 
 #[test]
-fn same_attribute_with_another_value_type_is_not_equal() {
-    let floats: SequenceSystem = [TimePointSequence::<f64>::new("reading")]
+fn same_key_with_another_value_type_is_not_equal() {
+    let floats: SequenceSystem = [("reading", TimePointSequence::<f64>::new("reading"))]
         .into_iter()
         .collect();
-    let integers: SequenceSystem = [TimePointSequence::<i64>::new("reading")]
+    let integers: SequenceSystem = [("reading", TimePointSequence::<i64>::new("reading"))]
         .into_iter()
         .collect();
 
@@ -379,25 +476,25 @@ fn a_clone_is_equal_and_independent() -> Result<(), RecordError> {
 }
 
 #[test]
-fn collecting_and_extending_keep_the_later_of_two_sequences_for_one_attribute() {
-    let mut system: SequenceSystem = [points("reading", [(10, 1)]), points("reading", [(20, 2)])]
-        .into_iter()
-        .collect();
+fn collecting_and_extending_keep_the_later_of_two_sequences_for_one_key() {
+    let mut system: SequenceSystem = [
+        ("reading", points("reading", [(10, 1)])),
+        ("reading", points("reading", [(20, 2)])),
+    ]
+    .into_iter()
+    .collect();
     assert_eq!(timestamps::<i32>(&system, "reading"), [20]);
 
-    system.extend([points("reading", [(30, 3)])]);
+    system.extend([("reading", points("reading", [(30, 3)]))]);
     assert_eq!(timestamps::<i32>(&system, "reading"), [30]);
 }
 
 #[test]
-fn consuming_iteration_yields_owned_sequences_in_attribute_order() {
-    let owned: Vec<(String, Sequence)> = machine().into_iter().collect();
+fn consuming_iteration_yields_owned_sequences_in_key_order() {
+    let owned: Vec<(Key, Sequence)> = machine().into_iter().collect();
 
-    let attributes: Vec<&str> = owned
-        .iter()
-        .map(|(attribute, _)| attribute.as_str())
-        .collect();
-    assert_eq!(attributes, ["log", "temperature", "up"]);
+    let keys: Vec<&str> = owned.iter().map(|(key, _)| key.as_str()).collect();
+    assert_eq!(keys, ["log", "temperature", "up"]);
 }
 
 #[test]
@@ -440,4 +537,115 @@ fn a_system_can_move_between_threads() {
 
     assert_send_and_sync::<SequenceSystem>();
     assert_send_and_sync::<Batch>();
+}
+
+fn described_system() -> SequenceSystem {
+    let mut system = SequenceSystem::new();
+    system.insert(
+        "up",
+        TimeIntervalSequence::from_spans("up", vec![span(0, 10)]),
+    );
+    system.insert(
+        "temperature",
+        points("temperature", [(2, 1.5_f64), (8, 2.5)]),
+    );
+    system
+        .metadata_mut()
+        .insert("unit".to_owned(), "seconds".to_owned());
+    system
+        .member_metadata_mut("up")
+        .expect("up is recorded")
+        .insert("sensor".to_owned(), "a".to_owned());
+    system
+}
+
+#[test]
+fn a_member_starts_with_empty_metadata() {
+    let system = described_system();
+    assert!(system.member_metadata("temperature").unwrap().is_empty());
+    assert!(system.member_metadata("missing").is_none());
+    assert_eq!(
+        system.metadata().get("unit").map(String::as_str),
+        Some("seconds")
+    );
+}
+
+#[test]
+fn metadata_survives_clone_slice_and_relabel() {
+    let mut system = described_system();
+    let cloned = system.clone();
+    assert_eq!(cloned, system);
+
+    let sliced = system.slice(0..5);
+    assert_eq!(sliced.metadata(), system.metadata());
+    assert_eq!(sliced.member_metadata("up"), system.member_metadata("up"));
+
+    system.relabel("up", "uptime").unwrap();
+    assert_eq!(
+        system
+            .member_metadata("up")
+            .unwrap()
+            .get("sensor")
+            .map(String::as_str),
+        Some("a")
+    );
+}
+
+#[test]
+fn metadata_takes_part_in_equality() {
+    let mut system = described_system();
+    let before = system.clone();
+    system.metadata_mut().clear();
+    assert_ne!(system, before);
+}
+
+#[test]
+fn remove_then_insert_drops_member_metadata() {
+    let mut system = described_system();
+    system.remove("up");
+    system.insert("up", TimeIntervalSequence::new("up"));
+    assert!(system.member_metadata("up").unwrap().is_empty());
+
+    // Replacing in place drops it as well.
+    system
+        .member_metadata_mut("up")
+        .unwrap()
+        .insert("k".to_owned(), "v".to_owned());
+    system.insert("up", TimeIntervalSequence::new("up"));
+    assert!(system.member_metadata("up").unwrap().is_empty());
+}
+
+#[test]
+fn slicing_a_system_cuts_every_member_and_keeps_labels() {
+    let system = described_system();
+    let sliced = system.slice(5..);
+
+    let up = sliced.intervals("up").unwrap();
+    assert_eq!(up.iter().map(|s| s.bounds()).collect::<Vec<_>>(), [(5, 10)]);
+    assert_eq!(up.label(), "up");
+    assert!(!up.is_observed(4) && up.is_observed(5));
+
+    let temperature = sliced.points::<f64>("temperature").unwrap();
+    assert_eq!(temperature.len(), 1);
+    assert_eq!(temperature.label(), "temperature");
+}
+
+#[test]
+fn slicing_with_unbounded_or_reversed_ranges() {
+    let system = described_system();
+    assert_eq!(system.slice(..), system);
+    assert_eq!(system.slice(..=i64::MAX), system);
+
+    let nothing = system.slice((Bound::Included(7), Bound::Excluded(3)));
+    assert!(nothing.intervals("up").unwrap().is_empty());
+    assert!(!nothing.intervals("up").unwrap().is_observed(5));
+    assert!(nothing.points::<f64>("temperature").unwrap().is_empty());
+}
+
+#[test]
+fn observing_still_works_with_metadata() {
+    let mut system = described_system();
+    system.observe(&chronoloom::Extent::from_spans(vec![span(0, 5)]));
+    assert_eq!(system.intervals("up").unwrap().active_duration(), 5);
+    assert_eq!(system.member_metadata("up").unwrap().len(), 1);
 }

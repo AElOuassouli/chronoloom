@@ -1,7 +1,7 @@
 //! Changing a sequence, each method restoring the maintained time order
 //! before it returns.
 
-use crate::primitives::{TimePointEvent, Timestamp};
+use crate::primitives::{TimeIntervalEvent, TimePointEvent, Timestamp};
 
 use super::TimePointSequence;
 
@@ -30,6 +30,8 @@ impl<T> TimePointSequence<T> {
     /// assert_eq!(values, ['a', 'b']);
     /// ```
     pub fn insert(&mut self, event: TimePointEvent<T>) {
+        self.observe_instant(event.timestamp());
+
         match self.events.last() {
             // Out of order, so pay for the search and the shift.
             Some(last) if last.timestamp() > event.timestamp() => {
@@ -53,5 +55,13 @@ impl<T> TimePointSequence<T> {
         let end = self.upper_bound(timestamp);
 
         self.events.drain(start..end).collect()
+    }
+
+    /// An event is evidence that its instant was observed.
+    pub(super) fn observe_instant(&mut self, timestamp: Timestamp) {
+        if timestamp < Timestamp::MAX && !self.observed.contains(timestamp) {
+            self.observed
+                .grow(&[TimeIntervalEvent::raw(timestamp, timestamp + 1)]);
+        }
     }
 }

@@ -1,3 +1,55 @@
+# Unreleased
+
+## Added
+
+- `Key`, the identity of a member of a `SequenceSystem`, kept apart from its
+  attribute (its description). Two members may share an attribute under
+  different keys, and `SequenceSystem::relabel` replaces a member's attribute
+  in place, keeping its key and data.
+- `Extent`, the instants a sequence was observed over, as normalized spans.
+  Every `TimeIntervalSequence` and `TimePointSequence` carries one, defaulting
+  to everything, so existing behaviour is unchanged. `observed()`,
+  `is_observed(t)`, `with_observed(extent)` and `observe(&extent)` read, set and
+  narrow it, clipping the data to it, and `SequenceSystem::observe` narrows
+  every member at once. Inserting an event outside the extent grows it.
+  Equality includes the extent; `covers_same` does not.
+- The set operations and `transform` of `TimeIntervalSequence` follow
+  three-valued logic: a result is known wherever it can be decided from what is
+  known, and its extent says where.
+- `TimeIntervalSequence::complement`, the observed instants that are not
+  active, and `Attribute::Complement` for its label `¬A`.
+- The `processing` module, re-exported at the crate root: a `Formula` is data
+  that describes a state (`State`, `Between`, `While`, `Occurs`, `Not`, `And`,
+  `Or`, `Shift`), read from a `SequenceSystem` through `Pattern`s, a key and a
+  `Condition` on the values of that member, and evaluated three-valued with an
+  extent; a `Shift` never fails, keeping bounds at the ends of time and
+  saturating the others. `Between` takes an `OpenEnd` (`Extent` or `Head`) for a span that no
+  end event closes. `Formula::conjunctive_normal_form` rewrites a formula as an
+  `And` of `Or`s of literals denoting the same timeline. `Events` (`Edges`,
+  `Matching`) are the formulas whose result is points, with `Edge` (`Start`,
+  `End`). A `Processor` is a set of formulas, each an `Output` filed under a
+  key, run into a new system with `run` or added to a system, all or nothing,
+  with `apply`; `ProcessError` reports what could not be evaluated.
+- Opaque `Metadata` (string maps) on a `SequenceSystem` and on each member:
+  `metadata`, `metadata_mut`, `member_metadata` and `member_metadata_mut`.
+  Inserting starts a member with empty metadata, replacing or removing drops it,
+  and equality includes it.
+- `slice(range)` on `TimePointSequence`, `TimeIntervalSequence`, `Sequence` and
+  `SequenceSystem`: the data and extent inside the range, with labels and
+  metadata kept. A reversed range gives an empty, unobserved result.
+
+## Removed
+
+- Filing a member under its own label: `SequenceSystem::insert` now takes the key
+  as its first argument, `insert(key, sequence)`. `FromIterator` and `Extend`
+  take `(key, sequence)` pairs, and `Batch::points` and `Batch::spans` take a
+  key.
+- `SequenceSystem::attributes()`, replaced by `keys()`.
+- The `btree_map` iterators of `SequenceSystem`: `iter()` and `into_iter()` now
+  return the named `sequence_system::Iter` and `IntoIter`, and yield `Key`
+  instead of `String`.
+- The `attribute` field of every `RecordError` variant, replaced by `key`.
+
 # 0.3.1 - 2026-10-22
 
 ## Added

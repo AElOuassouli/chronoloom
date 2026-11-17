@@ -65,6 +65,11 @@ pub enum Attribute {
         /// The shift applied to every upper bound.
         beta: Timestamp,
     },
+    /// The instants observed but not active, written `¬A`.
+    Complement {
+        /// What was complemented.
+        of: Box<Attribute>,
+    },
     /// Two timelines put through one of the set operations.
     Combined {
         /// Which operation combined them.
@@ -101,6 +106,12 @@ impl Attribute {
         }
     }
 
+    /// Record that this timeline was complemented.
+    #[must_use]
+    pub fn complement(of: Self) -> Self {
+        Self::Complement { of: Box::new(of) }
+    }
+
     /// Record that two timelines were combined by `operation`.
     #[must_use]
     pub fn combined(operation: SetOperation, left: Self, right: Self) -> Self {
@@ -121,7 +132,7 @@ impl Attribute {
     fn needs_parentheses_inside(&self, parent: SetOperation) -> bool {
         match self {
             Self::Combined { operation, .. } => !parent.is_associative() || *operation != parent,
-            Self::Name(_) | Self::Transformed { .. } => false,
+            Self::Name(_) | Self::Transformed { .. } | Self::Complement { .. } => false,
         }
     }
 
@@ -143,13 +154,21 @@ impl fmt::Display for Attribute {
                 // A transform binds to a single timeline, so a combination
                 // under one has to be grouped: `(A ∪ B)[1, 2]` moves both
                 // operands, `A ∪ B[1, 2]` only the second.
-                if matches!(**of, Self::Combined { .. }) {
+                if matches!(**of, Self::Combined { .. } | Self::Complement { .. }) {
                     write!(f, "({of})")?;
                 } else {
                     write!(f, "{of}")?;
                 }
 
                 write!(f, "[{alpha}, {beta}]")
+            }
+            Self::Complement { of } => {
+                // Like a transform, a complement binds to a single timeline.
+                if matches!(**of, Self::Combined { .. }) {
+                    write!(f, "¬({of})")
+                } else {
+                    write!(f, "¬{of}")
+                }
             }
             Self::Combined {
                 operation,

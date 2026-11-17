@@ -29,33 +29,17 @@ make lint    # lint and type-check both libraries
 make test    # test both libraries
 ```
 
-Each library also has its own makefile with the same targets, if you want to
-work on just one:
-
-```sh
-make -C chronoloom test
-make -C chronoloompy test
-```
-
-Git hooks (installed by `make setup`) run formatting on every commit, and
-formatting, linting, type-checking, and both test suites on every push.
+Each library also has its own makefile with the same targets
+(`make -C chronoloom test`, `make -C chronoloompy test`). Git hooks run
+formatting on every commit, and linting, type-checking and both test suites on
+every push. See [docs/conventions.md](docs/conventions.md) for how the
+repository is organised.
 
 ## Releasing
 
-The two libraries release independently, distinguished by tag prefix:
-
-| Tag | Effect |
-| --- | --- |
-| `chronoloom-v0.1.0` | publishes the Rust crate to crates.io |
-| `chronoloompy-v0.1.0` | builds wheels and publishes to PyPI |
-
-An unprefixed `v*` tag intentionally does nothing.
-
-PyPI uses trusted publishing (no secret needed). **crates.io requires a
-`CARGO_REGISTRY_TOKEN` repository secret** — add it under Settings → Secrets and
-variables → Actions before the first `chronoloom-v*` tag. Every change to the
-core also runs `cargo publish --dry-run` in CI, since published crate versions
-are permanent and cannot be reused.
+The two libraries release independently: a `chronoloom-v*` tag publishes the
+Rust crate to crates.io, a `chronoloompy-v*` tag publishes wheels to PyPI, both
+through Trusted Publishing. See [docs/releasing.md](docs/releasing.md).
 
 ## License
 

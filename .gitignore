@@ -143,3 +143,7 @@ cython_debug/
 # MacOs files
 
 **/.DS_Store
+
+# Claude Code configuration (private, local to each machine)
+CLAUDE.md
+.claude/

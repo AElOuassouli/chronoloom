@@ -40,6 +40,10 @@ impl SequenceSystem {
                     let member = Member {
                         sequence: member.sequence.slice(bounds),
                         metadata: member.metadata.clone(),
+                        frontier: None,
+                        lineage: member.lineage.clone(),
+                        entity: member.entity.clone(),
+                        schema: member.schema.clone(),
                     };
                     (key.clone(), member)
                 })

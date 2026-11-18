@@ -31,6 +31,9 @@ use super::evaluate;
 /// the two members the formula reads, whichever points match. A span opened at
 /// `s` is `[s, max(head, s + 1))`, so it always lasts at least one tick.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "json-schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 pub enum OpenEnd {
     /// Up to the end of the extent's run that contains the start.
     #[default]
@@ -51,7 +54,7 @@ pub enum OpenEnd {
 /// |---|---|---|
 /// | `State(key)` | wherever the timeline `key` is, as is | `up` |
 /// | `Between { start, end, open }` | from a point matching `start` until the next one matching `end` | `between(motion = "start", motion = "end")` |
-/// | `While(pattern)` | while the last sample of `pattern.key` matches (sample and hold) | `while(count > 5)` |
+/// | `While { pattern, timeout }` | while the last sample of `pattern.key` matches (sample and hold), for at most `timeout` ticks after it if there is one | `while(count > 5)`, `while(count > 5, within 30)` |
 /// | `Occurs(pattern)` | on `[t, t + 1)` for each matching point | `occurs(door = "open")` |
 /// | `Not(f)` | where `f` is observed and not active | `¬f` |
 /// | `And(fs)` / `Or(fs)` | where all / any of the `fs` are | `f ∧ g`, `f ∨ g` |
@@ -60,7 +63,8 @@ pub enum OpenEnd {
 /// A threshold (`count > 5`) is `While`, a range ("between this and that") is
 /// `While` with [`Condition::Within`], and an edge stream is `Between`.
 /// Holding an event for `h` ticks is `Shift { Occurs(p), 0, h - 1 }`, which
-/// needs no variant of its own.
+/// needs no variant of its own: [`hold`](Formula::hold) builds it, and holds
+/// that overlap or touch merge into one span like any other timeline.
 ///
 /// # Three-valued
 ///
@@ -93,13 +97,53 @@ pub enum OpenEnd {
 ///   point of the member at or before `t`, within the same run of its extent,
 ///   matches, and where several points share an instant the last recorded
 ///   one is the sample. Before the first point of a run the value is unknown,
-///   so the formula is observed from there to the end of the run.
+///   so the formula is observed from there to the end of the run. With a
+///   `timeout`, a sample at `t` holds on `[t, min(next sample, t + timeout))`
+///   and the formula is unknown from `t + timeout` to the next sample, or to
+///   the end of the run: a sensor that went silent says nothing about what
+///   follows, so the instants after it are neither active nor inactive.
 /// - **`Occurs`** is observed wherever the member is, and active on the
 ///   instant of each matching point: a point says nothing about the instants
 ///   between points.
 ///
 /// The label of the timeline a formula evaluates to is the formula written
 /// out.
+///
+/// # Step values
+///
+/// A value that holds until it changes (an occupancy, a counter) needs no
+/// sequence shape of its own: it is a point sequence of its changes, read with
+/// sample and hold, which is what `While` does, so "count above five" is
+/// `while_matching`. [`while_within`](Formula::while_within) adds a timeout for
+/// a sensor that may go silent: its last sample stops holding after that many
+/// ticks and what follows is unknown, not a value. [`Events::Changes`] is the
+/// canonical form of a step, the points with each repeat dropped, for a host
+/// that stores or streams only the changes. A live processor decides a
+/// sample's hold once the frontier passes either its next sample or its
+/// timeout, so `While` has no lag with or without one.
+///
+/// ```
+/// use chronoloom::{Condition, Formula, Pattern, Processor, SequenceSystem};
+/// use chronoloom::{TimePointEvent, TimePointSequence};
+///
+/// let mut room = SequenceSystem::new();
+/// room.insert("count", TimePointSequence::from_events("count", vec![
+///     TimePointEvent::new(0, 2_i64),
+///     TimePointEvent::new(10, 9),
+///     TimePointEvent::new(100, 1),
+/// ]));
+///
+/// // Busy while the last count is above five, for at most 30 ticks after it.
+/// let busy = Formula::while_within(Pattern::new("count", Condition::Greater(5_i64)), 30);
+/// let derived = Processor::new().with("busy", busy).run(&room)?;
+///
+/// let busy = derived.intervals("busy").unwrap();
+/// assert_eq!(busy[0].bounds(), (10, 40));
+/// // Past the timeout the sensor was silent: unknown, not inactive.
+/// assert!(!busy.contains(50) && !busy.is_observed(50));
+/// assert!(busy.is_observed(100));
+/// # Ok::<(), chronoloom::ProcessError>(())
+/// ```
 ///
 /// # Normal form
 ///
@@ -127,12 +171,16 @@ pub enum OpenEnd {
 /// ```
 ///
 /// [`Condition::Within`]: super::Condition::Within
+/// [`Events::Changes`]: super::Events::Changes
 /// [`complement`]: TimeIntervalSequence::complement
 /// [`conjunctive_normal_form`]: Formula::conjunctive_normal_form
 /// [`intersection`]: TimeIntervalSequence::intersection
 /// [`transform`]: TimeIntervalSequence::transform
 /// [`union`]: TimeIntervalSequence::union
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "json-schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 pub enum Formula {
     /// A timeline member, as it is.
     State(Key),
@@ -143,10 +191,21 @@ pub enum Formula {
         /// The points that close it.
         end: Pattern,
         /// Where a span with no end stops.
+        #[cfg_attr(feature = "serde", serde(default))]
         open: OpenEnd,
     },
-    /// Active while the last sample of the pattern's member matches.
-    While(Pattern),
+    /// Active while the last sample of the pattern's member matches, and for
+    /// at most `timeout` ticks after it if there is a timeout.
+    While {
+        /// The points that are samples.
+        pattern: Pattern,
+        /// How long a sample holds, if it does: unknown after that.
+        #[cfg_attr(
+            feature = "serde",
+            serde(default, deserialize_with = "crate::serialisation::positive_timeout")
+        )]
+        timeout: Option<Timestamp>,
+    },
     /// Active on the instant of each matching point.
     Occurs(Pattern),
     /// The observed instants where the formula is not active.
@@ -167,6 +226,50 @@ pub enum Formula {
 }
 
 impl Formula {
+    /// Every key the formula reads, with repeats, in the order the tree is
+    /// walked.
+    pub(super) fn read_keys<'a>(&'a self, keys: &mut Vec<&'a Key>) {
+        match self {
+            Self::State(key) => keys.push(key),
+            Self::Between { start, end, .. } => keys.extend([&start.key, &end.key]),
+            Self::While { pattern, .. } | Self::Occurs(pattern) => keys.push(&pattern.key),
+            Self::Not(inner) => inner.read_keys(keys),
+            Self::And(formulas) | Self::Or(formulas) => {
+                for formula in formulas {
+                    formula.read_keys(keys);
+                }
+            }
+            Self::Shift { formula, .. } => formula.read_keys(keys),
+        }
+    }
+
+    /// The formula with every `Between` that stops at the head stopping at the
+    /// end of the extent instead.
+    pub(super) fn open_until_extent(&self) -> Self {
+        match self {
+            Self::Between { start, end, .. } => Self::Between {
+                start: start.clone(),
+                end: end.clone(),
+                open: OpenEnd::Extent,
+            },
+            Self::State(_) | Self::While { .. } | Self::Occurs(_) => self.clone(),
+            Self::Not(inner) => Self::Not(Box::new(inner.open_until_extent())),
+            Self::And(formulas) => {
+                Self::And(formulas.iter().map(Self::open_until_extent).collect())
+            }
+            Self::Or(formulas) => Self::Or(formulas.iter().map(Self::open_until_extent).collect()),
+            Self::Shift {
+                formula,
+                alpha,
+                beta,
+            } => Self::Shift {
+                formula: Box::new(formula.open_until_extent()),
+                alpha: *alpha,
+                beta: *beta,
+            },
+        }
+    }
+
     /// The timeline member under `key`, as it is.
     #[must_use]
     pub fn state(key: impl Into<Key>) -> Self {
@@ -190,13 +293,59 @@ impl Formula {
     /// Active while the last sample of the pattern's member matches.
     #[must_use]
     pub const fn while_matching(pattern: Pattern) -> Self {
-        Self::While(pattern)
+        Self::While {
+            pattern,
+            timeout: None,
+        }
+    }
+
+    /// [`while_matching`](Formula::while_matching) where a sample stops holding
+    /// `timeout` ticks after it was taken, and what follows, until the next
+    /// sample, is unknown.
+    ///
+    /// # Panics
+    ///
+    /// If `timeout` is not positive: a sample that holds no time is no sample.
+    /// Like [`hold`](Formula::hold), the argument is a programming error rather
+    /// than data, so it is not a `Result`.
+    #[must_use]
+    pub fn while_within(pattern: Pattern, timeout: Timestamp) -> Self {
+        assert!(
+            timeout > 0,
+            "a sample holds at least one tick, got {timeout}"
+        );
+        Self::While {
+            pattern,
+            timeout: Some(timeout),
+        }
     }
 
     /// Active on the instant of each point the pattern matches.
     #[must_use]
     pub const fn occurs(pattern: Pattern) -> Self {
         Self::Occurs(pattern)
+    }
+
+    /// Active for `ticks` ticks from each point the pattern matches: a point at
+    /// `t` makes `[t, t + ticks)` active, and holds that overlap or touch merge.
+    ///
+    /// This is `Shift { Occurs(pattern), 0, ticks - 1 }` and no variant of its
+    /// own, so it is three-valued like any shift: an instant is known when it
+    /// is active, or when the `ticks` instants up to it were all observed. It
+    /// lags the member by nothing when run online, and `hold(pattern, 1)` is
+    /// `Occurs`.
+    /// A hold that would reach past the last timestamp saturates there.
+    ///
+    /// # Panics
+    ///
+    /// If `ticks` is not positive: a hold of no duration is no span, and a
+    /// negative one would be a shift back in time, which [`shift`](Formula::shift)
+    /// says better. Like the range of a point sequence, the argument is a
+    /// programming error rather than data, so it is not a `Result`.
+    #[must_use]
+    pub fn hold(pattern: Pattern, ticks: Timestamp) -> Self {
+        assert!(ticks > 0, "a hold lasts at least one tick, got {ticks}");
+        Self::occurs(pattern).shift(0, ticks - 1)
     }
 
     /// Active where both this and `other` are. Chains read flat: `a.and(b)
@@ -369,7 +518,14 @@ impl fmt::Display for Formula {
                 end,
                 open: OpenEnd::Head,
             } => write!(f, "between({start}, {end}, open until head)"),
-            Self::While(pattern) => write!(f, "while({pattern})"),
+            Self::While {
+                pattern,
+                timeout: None,
+            } => write!(f, "while({pattern})"),
+            Self::While {
+                pattern,
+                timeout: Some(timeout),
+            } => write!(f, "while({pattern}, within {timeout})"),
             Self::Occurs(pattern) => write!(f, "occurs({pattern})"),
             Self::Not(formula) => {
                 f.write_str("¬")?;

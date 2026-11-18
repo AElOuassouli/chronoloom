@@ -53,6 +53,8 @@ use crate::primitives::Timestamp;
 /// [`TimeIntervalSequence`]: crate::sequences::TimeIntervalSequence
 /// [`TimePointSequence`]: crate::sequences::TimePointSequence
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 pub enum Attribute {
     /// An attribute given outright, the leaf every expression is built from.
     Name(String),
@@ -188,6 +190,8 @@ impl fmt::Display for Attribute {
 /// Names the operation inside an [`Attribute`], and carries the symbol it is
 /// written with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 pub enum SetOperation {
     /// [`TimeIntervalSequence::union`], written `∪`.
     ///

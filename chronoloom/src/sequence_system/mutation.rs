@@ -1,10 +1,12 @@
 //! Changing a system: which sequences it holds, and recording events into
 //! them as they arrive.
 
-use core::any;
+use core::any::{self, Any};
 
 use crate::primitives::{TimeIntervalEvent, TimePointEvent};
+use crate::processing::{Output, ProcessError};
 use crate::sequences::{Extent, TimePointSequence};
+use crate::values::{Schema, SchemaError, Value};
 
 use super::batch::{Batch, Pending};
 use super::{Key, Member, Metadata, RecordError, Sequence, SequenceSystem};
@@ -36,11 +38,113 @@ impl SequenceSystem {
         let member = Member {
             sequence: sequence.into(),
             metadata: Metadata::new(),
+            frontier: None,
+            lineage: None,
+            entity: None,
+            schema: None,
         };
 
         self.members
             .insert(key.into(), member)
             .map(|replaced| replaced.sequence)
+    }
+
+    /// Add a sequence written by `output` under `key`, as [`insert`] does but
+    /// keeping the output as the member's lineage.
+    ///
+    /// [`insert`]: SequenceSystem::insert
+    pub(crate) fn insert_derived(
+        &mut self,
+        key: Key,
+        sequence: Sequence,
+        output: Output,
+        entity: Option<Value>,
+    ) {
+        let derived = Member {
+            sequence,
+            metadata: Metadata::new(),
+            frontier: None,
+            lineage: Some(output),
+            entity,
+            schema: None,
+        };
+        self.members.insert(key, derived);
+    }
+
+    /// Evaluate the lineage of the member under `key` again against the
+    /// system as it is now, and replace the member's sequence with the result.
+    ///
+    /// The member keeps its metadata and its lineage. This is the one-output
+    /// processor of the lineage, applied; the output may read other members,
+    /// which are read as they are, not derived again.
+    ///
+    /// # Errors
+    ///
+    /// [`ProcessError::UnknownKey`] if no sequence is for `key`,
+    /// [`ProcessError::NoLineage`] if the member has none,
+    /// [`ProcessError::SchemaMismatch`] if the member has a schema and the result
+    /// does not have its shape, or whatever the output meets evaluating.
+    /// Nothing changes in any of those cases.
+    pub fn rederive(&mut self, key: &str) -> Result<(), ProcessError> {
+        let member = self
+            .members
+            .get(key)
+            .ok_or_else(|| ProcessError::UnknownKey {
+                key: Key::from(key),
+            })?;
+        let output = member
+            .lineage
+            .clone()
+            .ok_or_else(|| ProcessError::NoLineage {
+                key: Key::from(key),
+            })?;
+
+        let sequence = match member.entity.as_ref() {
+            // The member of one entity: derive them all, and take its own.
+            Some(entity) => {
+                let name = crate::processing::entity_name(entity);
+                let output_key = key
+                    .strip_suffix(name.as_str())
+                    .and_then(|rest| rest.strip_suffix('/'))
+                    .map(Key::from)
+                    .ok_or_else(|| ProcessError::UnknownKey {
+                        key: Key::from(key),
+                    })?;
+                output
+                    .derive(&output_key, self)?
+                    .into_iter()
+                    .find(|derived| derived.key.as_str() == key)
+                    .map(|derived| derived.sequence)
+                    .ok_or_else(|| ProcessError::UnknownKey {
+                        key: Key::from(key),
+                    })?
+            }
+            None => output.evaluate(self)?,
+        };
+        if let Some(member) = self.members.get_mut(key) {
+            if let Some(error) = member
+                .schema
+                .as_ref()
+                .and_then(|schema| first_violation(&sequence, schema))
+            {
+                return Err(ProcessError::SchemaMismatch {
+                    key: Key::from(key),
+                    error,
+                });
+            }
+            member.sequence = sequence;
+        }
+
+        Ok(())
+    }
+
+    /// Drop the lineage of the member under `key`, because its data has been
+    /// recorded into.
+    fn forget_lineage(&mut self, key: &str) {
+        if let Some(member) = self.members.get_mut(key) {
+            member.lineage = None;
+            member.entity = None;
+        }
     }
 
     /// Replace the attribute of the sequence for `key`, keeping its key and its
@@ -60,6 +164,45 @@ impl SequenceSystem {
             Sequence::TimeInterval(timeline) => timeline.set_attribute(attribute),
         }
 
+        Ok(())
+    }
+
+    /// Require every value of the member for `key` to have the shape `schema`,
+    /// from now on, replacing the schema it had.
+    ///
+    /// See [`SequenceSystem`] for what a schema is checked against and kept
+    /// through.
+    ///
+    /// # Errors
+    ///
+    /// [`RecordError::Unknown`] if no sequence is for `key`,
+    /// [`RecordError::ShapeMismatch`] if it is a timeline,
+    /// [`RecordError::ValueTypeMismatch`] if its points carry values other than
+    /// [`Value`], and [`RecordError::SchemaMismatch`] naming the first recorded
+    /// event, in time order, that does not have the shape. Nothing changes in
+    /// any of those cases.
+    pub fn set_schema(&mut self, key: &str, schema: Schema) -> Result<(), RecordError> {
+        let member = self.members.get_mut(key).ok_or_else(|| unknown(key))?;
+        match &member.sequence {
+            Sequence::TimePoint(points) => {
+                let values = points.downcast_ref::<Value>().ok_or_else(|| {
+                    RecordError::ValueTypeMismatch {
+                        key: key.to_owned(),
+                        expected: points.value_type_name(),
+                        found: any::type_name::<Value>(),
+                    }
+                })?;
+                if let Some(error) = values
+                    .iter()
+                    .find_map(|event| schema.check(event.value()).err())
+                {
+                    return Err(schema_mismatch(key, error));
+                }
+            }
+            Sequence::TimeInterval(_) => return Err(shape_mismatch(key)),
+        }
+
+        member.schema = Some(schema);
         Ok(())
     }
 
@@ -106,7 +249,10 @@ impl SequenceSystem {
         key: &str,
         event: TimePointEvent<T>,
     ) -> Result<(), RecordError> {
-        match self.member_mut(key)? {
+        self.reject_late(key, Some(event.timestamp()))?;
+
+        let member = self.members.get_mut(key).ok_or_else(|| unknown(key))?;
+        let recorded = match &mut member.sequence {
             Sequence::TimePoint(points) => {
                 let expected = points.value_type_name();
                 let typed = points
@@ -119,11 +265,26 @@ impl SequenceSystem {
                         found: any::type_name::<T>(),
                     })?;
 
+                let as_value: &dyn Any = &event;
+                if let (Some(schema), Some(value)) = (
+                    &member.schema,
+                    as_value.downcast_ref::<TimePointEvent<Value>>(),
+                ) {
+                    schema
+                        .check(value.value())
+                        .map_err(|error| schema_mismatch(key, error))?;
+                }
+
                 typed.insert(event);
+                member.lineage = None;
+                member.entity = None;
                 Ok(())
             }
             Sequence::TimeInterval(_) => Err(shape_mismatch(key)),
-        }
+        };
+
+        self.confine_to_frontier(key);
+        recorded
     }
 
     /// Record a span into the timeline for `key`, merging it into what the
@@ -138,13 +299,19 @@ impl SequenceSystem {
         key: &str,
         span: TimeIntervalEvent<()>,
     ) -> Result<(), RecordError> {
-        match self.member_mut(key)? {
+        self.reject_late(key, Some(span.start()))?;
+
+        let recorded = match self.member_mut(key)? {
             Sequence::TimeInterval(timeline) => {
                 timeline.insert(span);
+                self.forget_lineage(key);
                 Ok(())
             }
             Sequence::TimePoint(_) => Err(shape_mismatch(key)),
-        }
+        };
+
+        self.confine_to_frontier(key);
+        recorded
     }
 
     /// Record every event in `batch`, all or nothing.
@@ -184,6 +351,7 @@ impl SequenceSystem {
     pub fn record_batch(&mut self, batch: Batch) -> Result<(), RecordError> {
         for (key, pending) in &batch.chunks {
             self.check(key.as_str(), pending)?;
+            self.reject_late(key.as_str(), pending.earliest())?;
         }
 
         for (key, pending) in batch.chunks {
@@ -197,6 +365,9 @@ impl SequenceSystem {
                 (Sequence::TimeInterval(timeline), Pending::Spans(spans)) => timeline.extend(spans),
                 _ => unreachable!("every push was checked against its sequence above"),
             }
+
+            self.confine_to_frontier(key.as_str());
+            self.forget_lineage(key.as_str());
         }
 
         Ok(())
@@ -204,22 +375,25 @@ impl SequenceSystem {
 
     /// Whether `pending` could be recorded into the sequence for `key`.
     fn check(&self, key: &str, pending: &Pending) -> Result<(), RecordError> {
-        let member = self
-            .members
-            .get(key)
-            .map(|member| &member.sequence)
-            .ok_or_else(|| unknown(key))?;
+        let member = self.members.get(key).ok_or_else(|| unknown(key))?;
 
-        match (member, pending) {
+        match (&member.sequence, pending) {
             (Sequence::TimePoint(points), Pending::Points(events)) => {
-                if events.fits(&*points.0) {
-                    Ok(())
-                } else {
-                    Err(RecordError::ValueTypeMismatch {
+                if !events.fits(&*points.0) {
+                    return Err(RecordError::ValueTypeMismatch {
                         key: key.to_owned(),
                         expected: points.value_type_name(),
                         found: events.value_type_name(),
-                    })
+                    });
+                }
+
+                match member
+                    .schema
+                    .as_ref()
+                    .and_then(|schema| events.first_violation(schema))
+                {
+                    Some(error) => Err(schema_mismatch(key, error)),
+                    None => Ok(()),
                 }
             }
             (Sequence::TimeInterval(_), Pending::Spans(_)) => Ok(()),
@@ -240,6 +414,22 @@ fn unknown(key: &str) -> RecordError {
     RecordError::Unknown {
         key: key.to_owned(),
     }
+}
+
+fn schema_mismatch(key: &str, error: SchemaError) -> RecordError {
+    RecordError::SchemaMismatch {
+        key: key.to_owned(),
+        error,
+    }
+}
+
+/// The first event of `sequence`, in time order, that is a `Value` without the
+/// shape of `schema`. Any other sequence has no such event.
+fn first_violation(sequence: &Sequence, schema: &Schema) -> Option<SchemaError> {
+    sequence
+        .as_time_point::<Value>()?
+        .iter()
+        .find_map(|event| schema.check(event.value()).err())
 }
 
 fn shape_mismatch(key: &str) -> RecordError {

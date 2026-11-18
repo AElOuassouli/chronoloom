@@ -639,9 +639,10 @@ fn random_formulas_match_the_three_valued_oracle() {
 /// Whether `formula` is an `And` of `Or`s of literals.
 fn is_conjunctive_normal_form(formula: &Formula) -> bool {
     let atom = |formula: &Formula| match formula {
-        Formula::State(_) | Formula::Between { .. } | Formula::While(_) | Formula::Occurs(_) => {
-            true
-        }
+        Formula::State(_)
+        | Formula::Between { .. }
+        | Formula::While { .. }
+        | Formula::Occurs(_) => true,
         Formula::Shift { formula, .. } => is_conjunctive_normal_form(formula),
         _ => false,
     };

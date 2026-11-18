@@ -243,6 +243,12 @@ impl TimeIntervalSequence {
         &self.observed
     }
 
+    /// The extent, for the system to move a live member's frontier without
+    /// cutting data.
+    pub(crate) fn observed_mut(&mut self) -> &mut Extent {
+        &mut self.observed
+    }
+
     /// Whether `timestamp` was observed, so that not being active there means
     /// inactive rather than unknown.
     #[must_use]

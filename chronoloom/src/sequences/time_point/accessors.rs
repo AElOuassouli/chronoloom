@@ -161,6 +161,12 @@ impl<T> TimePointSequence<T> {
         &self.observed
     }
 
+    /// The extent, for the system to move a live member's frontier without
+    /// cutting data.
+    pub(crate) fn observed_mut(&mut self) -> &mut Extent {
+        &mut self.observed
+    }
+
     /// Whether `timestamp` was observed, so that holding no event there means
     /// nothing happened rather than nothing is known.
     #[must_use]

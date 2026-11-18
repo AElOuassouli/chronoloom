@@ -6,6 +6,7 @@ use core::fmt;
 use crate::primitives::Timestamp;
 use crate::sequence_system::{AnyPointSequence, Key, PointValue};
 use crate::sequences::TimePointSequence;
+use crate::values::Value;
 
 /// What a point's value must satisfy, as data over the value type `T`.
 ///
@@ -41,6 +42,9 @@ use crate::sequences::TimePointSequence;
 /// [`Display`]: core::fmt::Display
 /// [`matches`]: Condition::matches
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "json-schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 pub enum Condition<T> {
     /// Every value.
     Any,
@@ -177,6 +181,9 @@ pub(crate) trait ErasedCondition: fmt::Debug + Send + Sync {
     /// The matching points of `points`, values kept; `None` when the points
     /// carry another value type.
     fn matching(&self, points: &AnyPointSequence) -> Option<AnyPointSequence>;
+    /// A point sequence with no events, of the value type the condition is
+    /// over.
+    fn empty_points(&self, label: &str) -> AnyPointSequence;
 }
 
 impl<T: PointValue + PartialOrd> ErasedCondition for Condition<T> {
@@ -204,32 +211,109 @@ impl<T: PointValue + PartialOrd> ErasedCondition for Condition<T> {
     }
 
     fn marks(&self, points: &AnyPointSequence) -> Option<Vec<(Timestamp, bool)>> {
-        let typed = points.downcast_ref::<T>()?;
+        marks_with(points, |value| self.matches(value))
+    }
 
-        Some(
-            typed
-                .iter()
-                .map(|event| (event.timestamp(), self.matches(event.value())))
-                .collect(),
-        )
+    fn empty_points(&self, label: &str) -> AnyPointSequence {
+        TimePointSequence::<T>::new(label).into()
     }
 
     fn matching(&self, points: &AnyPointSequence) -> Option<AnyPointSequence> {
-        let typed = points.downcast_ref::<T>()?;
-        let events = typed
-            .iter()
-            .filter(|event| self.matches(event.value()))
-            .cloned()
-            .collect();
+        matching_with(points, |value| self.matches(value))
+    }
+}
 
-        Some(
-            TimePointSequence::from_parts(
-                typed.attribute().clone(),
-                events,
-                typed.observed().clone(),
-            )
+/// The timestamp of each point of `points`, with whether `accepts` holds for
+/// its value; `None` when the points carry another value type than `T`.
+fn marks_with<T: PointValue>(
+    points: &AnyPointSequence,
+    accepts: impl Fn(&T) -> bool,
+) -> Option<Vec<(Timestamp, bool)>> {
+    let typed = points.downcast_ref::<T>()?;
+
+    Some(
+        typed
+            .iter()
+            .map(|event| (event.timestamp(), accepts(event.value())))
+            .collect(),
+    )
+}
+
+/// The points of `points` whose value `accepts`, values and extent kept;
+/// `None` when the points carry another value type than `T`.
+fn matching_with<T: PointValue>(
+    points: &AnyPointSequence,
+    accepts: impl Fn(&T) -> bool,
+) -> Option<AnyPointSequence> {
+    let typed = points.downcast_ref::<T>()?;
+    let events = typed
+        .iter()
+        .filter(|event| accepts(event.value()))
+        .cloned()
+        .collect();
+
+    Some(
+        TimePointSequence::from_parts(typed.attribute().clone(), events, typed.observed().clone())
             .into(),
-        )
+    )
+}
+
+/// A condition on the field of a record value at a dotted path: the erased
+/// condition behind [`Pattern::field`].
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct FieldCondition {
+    pub(crate) path: String,
+    pub(crate) condition: Condition<Value>,
+}
+
+impl FieldCondition {
+    /// Whether the field of `value` at the path exists and satisfies the
+    /// condition; a missing field never does.
+    fn accepts(&self, value: &Value) -> bool {
+        value
+            .get(&self.path)
+            .is_some_and(|field| self.condition.matches(field))
+    }
+}
+
+impl ErasedCondition for FieldCondition {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn clone_box(&self) -> Box<dyn ErasedCondition> {
+        Box::new(self.clone())
+    }
+
+    fn equals(&self, other: &dyn ErasedCondition) -> bool {
+        other
+            .as_any()
+            .downcast_ref::<Self>()
+            .is_some_and(|other| self == other)
+    }
+
+    fn write(&self, subject: &str, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.path.is_empty() {
+            self.condition.write(subject, f)
+        } else {
+            self.condition.write(&format!("{subject}.{}", self.path), f)
+        }
+    }
+
+    fn value_type_name(&self) -> &'static str {
+        any::type_name::<Value>()
+    }
+
+    fn marks(&self, points: &AnyPointSequence) -> Option<Vec<(Timestamp, bool)>> {
+        marks_with(points, |value| self.accepts(value))
+    }
+
+    fn matching(&self, points: &AnyPointSequence) -> Option<AnyPointSequence> {
+        matching_with(points, |value| self.accepts(value))
+    }
+
+    fn empty_points(&self, label: &str) -> AnyPointSequence {
+        TimePointSequence::<Value>::new(label).into()
     }
 }
 
@@ -255,8 +339,74 @@ impl<T: PointValue + PartialOrd> ErasedCondition for Condition<T> {
 /// assert_ne!(busy, Pattern::new("count", Condition::Greater(5.0_f64)));
 /// ```
 ///
+/// # Field patterns
+///
+/// [`Pattern::field`] reads a member of record [`Value`]s through one of their
+/// fields, at a dotted path as [`Value::get`] reads it, and applies a
+/// `Condition<Value>` to that field: `"direction"` is `"in"`, `"count"` is
+/// above five. It works wherever a pattern does (`Between`, `While`, `Occurs`,
+/// `hold`, `Events::Matching`), in batch and online, and is written
+/// `motion.direction = "in"`: the key, a dot and the path. Two field patterns
+/// are equal when they read the same key and path with an equal condition. A
+/// condition over two fields is two field patterns combined as formulas, an
+/// `And` of two `While`s.
+///
+/// - A point whose record has no field at the path does not match, whatever
+///   the condition (`Any` and `NotEquals` included). That is not an error. For
+///   `While` and `hold` such a point is a sample that does not satisfy the
+///   condition, so it ends a span, where `Events::Project` skips it.
+/// - A field that is `Null` is a value like any other: the condition is
+///   applied to it, so `Equals(Value::Null)` and `Any` match it, and the
+///   orderings do not, as `Null` is unordered with everything else. This is
+///   what a plain pattern reads from a member projected with `Kind::Value`,
+///   which keeps nulls; a projection into any other kind skips them.
+/// - Numbers compare as numbers across `Integer` and `Float`, so
+///   `Greater(Value::from(5))` matches `5.5`.
+/// - Only a member of `Value` points can be read: any other member is
+///   [`ProcessError::ValueTypeMismatch`], in batch and when a live processor
+///   is built.
+///
+/// `Between` and `While` over a field equal the same formulas over the field
+/// projected with `Kind::Value` and read with a plain pattern, provided every
+/// event has the field. They differ only for an event without it: the
+/// projection drops that event, so its absence changes nothing, while the
+/// field pattern reads it as a sample that does not match, which ends a
+/// `While` span and counts as no `start` or `end` of a `Between`.
+///
+/// ```
+/// use chronoloom::{
+///     Condition, Formula, Pattern, Processor, SequenceSystem, TimePointEvent,
+///     TimePointSequence, Value,
+/// };
+///
+/// let reading = |count: i64| Value::record([("count", Value::from(count))]);
+/// let mut system = SequenceSystem::new();
+/// system.insert("motion", TimePointSequence::from_events("motion", vec![
+///     TimePointEvent::new(10, reading(7)),
+///     TimePointEvent::new(20, Value::record([("zone", Value::from("a"))])),
+///     TimePointEvent::new(30, reading(2)),
+/// ]));
+///
+/// let busy = Pattern::field("motion", "count", Condition::Greater(Value::from(5)));
+/// assert_eq!(busy.to_string(), "motion.count > 5");
+///
+/// // The reading without a count does not match, so it ends the span.
+/// let processor = Processor::new().with("busy", Formula::while_matching(busy));
+/// let result = processor.run(&system)?;
+/// let spans: Vec<(i64, i64)> = result
+///     .intervals("busy")
+///     .unwrap()
+///     .iter()
+///     .map(|span| (span.start(), span.end()))
+///     .collect();
+/// assert_eq!(spans, [(10, 20)]);
+/// # Ok::<(), chronoloom::ProcessError>(())
+/// ```
+///
 /// [`Display`]: core::fmt::Display
 /// [`ProcessError::ValueTypeMismatch`]: super::ProcessError::ValueTypeMismatch
+/// [`Value`]: crate::Value
+/// [`Value::get`]: crate::Value::get
 pub struct Pattern {
     pub(crate) key: Key,
     pub(crate) condition: Box<dyn ErasedCondition>,
@@ -269,6 +419,24 @@ impl Pattern {
         Self {
             key: key.into(),
             condition: Box::new(condition),
+        }
+    }
+
+    /// The points of the member under `key`, a member of record [`Value`]s,
+    /// whose field at the dotted `path` exists and satisfies `condition`.
+    ///
+    #[must_use]
+    pub fn field(
+        key: impl Into<Key>,
+        path: impl Into<String>,
+        condition: Condition<Value>,
+    ) -> Self {
+        Self {
+            key: key.into(),
+            condition: Box::new(FieldCondition {
+                path: path.into(),
+                condition,
+            }),
         }
     }
 

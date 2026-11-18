@@ -1,16 +1,20 @@
 //! Evaluating formulas against a system: the meaning of each node.
 
+use core::any;
+
 use crate::primitives::{TimeIntervalEvent, TimePointEvent, Timestamp};
-use crate::sequence_system::{AnyPointSequence, Sequence, SequenceSystem};
+use crate::sequence_system::{AnyPointSequence, Key, PointValue, Sequence, SequenceSystem};
 use crate::sequences::attribute::Attribute;
 use crate::sequences::interval::normalization::normalize;
 use crate::sequences::{Extent, TimeIntervalSequence, TimePointSequence};
+use crate::values::Value;
 
 use super::condition::Pattern;
 use super::edge::Edge;
 use super::errors::ProcessError;
 use super::events::Events;
 use super::formula::{Formula, OpenEnd};
+use super::kind::Kind;
 
 /// Whether each point of a member matches, in the member's order, and where it
 /// was observed.
@@ -68,6 +72,103 @@ pub(super) fn evaluate_events(
 
             Ok(Sequence::from(matching))
         }
+        Events::Project { key, path, into } => project(key, path, *into, label, system),
+        Events::Changes { key } => match system.get(key.as_str()) {
+            Some(Sequence::TimePoint(points)) => {
+                let mut changes = points.changes();
+                changes.set_attribute(label);
+
+                Ok(Sequence::from(changes))
+            }
+            Some(Sequence::TimeInterval(_)) => Err(ProcessError::NotPoints { key: key.clone() }),
+            None => Err(ProcessError::UnknownKey { key: key.clone() }),
+        },
+    }
+}
+
+/// The points of the member `key`, with the field at `path` of each record read
+/// into the type `into` stands for.
+fn project(
+    key: &Key,
+    path: &str,
+    into: Kind,
+    label: String,
+    system: &SequenceSystem,
+) -> Result<Sequence, ProcessError> {
+    let records = records(key, system)?;
+
+    let read = Reading {
+        records,
+        key,
+        path,
+        into,
+        label,
+    };
+    match into {
+        Kind::Bool => read.collect(Value::as_bool),
+        Kind::Integer => read.collect(Value::as_integer),
+        Kind::Float => read.collect(Value::as_float),
+        Kind::Text => read.collect(|value| value.as_text().map(str::to_owned)),
+        Kind::Value => read.collect(|value| Some(value.clone())),
+    }
+}
+
+/// The record points of the member `key`.
+pub(super) fn records<'a>(
+    key: &Key,
+    system: &'a SequenceSystem,
+) -> Result<&'a TimePointSequence<Value>, ProcessError> {
+    match system.get(key.as_str()) {
+        Some(Sequence::TimePoint(points)) => {
+            points
+                .downcast_ref::<Value>()
+                .ok_or_else(|| ProcessError::ValueTypeMismatch {
+                    key: key.clone(),
+                    expected: points.value_type_name(),
+                    found: any::type_name::<Value>(),
+                })
+        }
+        Some(Sequence::TimeInterval(_)) => Err(ProcessError::NotPoints { key: key.clone() }),
+        None => Err(ProcessError::UnknownKey { key: key.clone() }),
+    }
+}
+
+/// What a projection reads, and how it is named.
+struct Reading<'a> {
+    records: &'a TimePointSequence<Value>,
+    key: &'a Key,
+    path: &'a str,
+    into: Kind,
+    label: String,
+}
+
+impl Reading<'_> {
+    /// The points whose field `convert` reads, skipping the records without it.
+    fn collect<T: PointValue>(
+        self,
+        convert: impl Fn(&Value) -> Option<T>,
+    ) -> Result<Sequence, ProcessError> {
+        let mut events = Vec::new();
+        for event in self.records {
+            let field = match event.value().get(self.path) {
+                None => continue,
+                Some(Value::Null) if self.into != Kind::Value => continue,
+                Some(field) => field,
+            };
+            let converted = convert(field).ok_or_else(|| ProcessError::ProjectionMismatch {
+                key: self.key.clone(),
+                path: self.path.to_owned(),
+                expected: self.into,
+                found: field.kind_name(),
+            })?;
+            events.push(TimePointEvent::new(event.timestamp(), converted));
+        }
+
+        Ok(Sequence::from(TimePointSequence::from_parts(
+            Attribute::name(self.label),
+            events,
+            self.records.observed().clone(),
+        )))
     }
 }
 
@@ -80,7 +181,7 @@ fn node(formula: &Formula, system: &SequenceSystem) -> Result<TimeIntervalSequen
             None => Err(ProcessError::UnknownKey { key: key.clone() }),
         },
         Formula::Between { start, end, open } => between(start, end, *open, system),
-        Formula::While(pattern) => hold(pattern, system),
+        Formula::While { pattern, timeout } => hold(pattern, *timeout, system),
         Formula::Occurs(pattern) => occurs(pattern, system),
         Formula::Not(inner) => Ok(node(inner, system)?.complement()),
         Formula::And(formulas) => {
@@ -180,8 +281,13 @@ fn occurs(
     ))
 }
 
-/// `While`: each sample holds until the next one, within a run of the extent.
-fn hold(pattern: &Pattern, system: &SequenceSystem) -> Result<TimeIntervalSequence, ProcessError> {
+/// `While`: each sample holds until the next one, or until its timeout, within
+/// a run of the extent.
+fn hold(
+    pattern: &Pattern,
+    timeout: Option<Timestamp>,
+    system: &SequenceSystem,
+) -> Result<TimeIntervalSequence, ProcessError> {
     let marks = read(pattern, system)?;
     let mut spans = Vec::new();
     let mut known = Vec::new();
@@ -200,11 +306,6 @@ fn hold(pattern: &Pattern, system: &SequenceSystem) -> Result<TimeIntervalSequen
         let samples = &marks.points[first..cursor];
 
         // Before the first sample of the run nothing is known.
-        let Some(&(first_sample, _)) = samples.first() else {
-            continue;
-        };
-        known.push(TimeIntervalEvent::raw(first_sample, run_end));
-
         let mut index = 0;
         while index < samples.len() {
             // Of the points sharing an instant, the last recorded is the sample.
@@ -217,8 +318,12 @@ fn hold(pattern: &Pattern, system: &SequenceSystem) -> Result<TimeIntervalSequen
                 last += 1;
             }
 
+            // The sample holds until the next one, or until its timeout, after
+            // which nothing is known until the next sample.
+            let next = samples.get(last + 1).map_or(run_end, |next| next.0);
+            let until = timeout.map_or(next, |timeout| next.min(timestamp.saturating_add(timeout)));
+            known.push(TimeIntervalEvent::raw(timestamp, until));
             if samples[last].1 {
-                let until = samples.get(last + 1).map_or(run_end, |next| next.0);
                 spans.push(TimeIntervalEvent::raw(timestamp, until));
             }
             index = last + 1;
@@ -229,7 +334,7 @@ fn hold(pattern: &Pattern, system: &SequenceSystem) -> Result<TimeIntervalSequen
         Attribute::name(format!("while({pattern})")),
         (0, 0),
         normalize(spans),
-        Extent::from_normalized(known),
+        Extent::from_normalized(normalize(known)),
     ))
 }
 

@@ -1,10 +1,11 @@
 //! Events for many sequences, gathered to be recorded in one call.
 
-use core::any;
+use core::any::{self, Any};
 use core::fmt;
 
-use crate::primitives::{TimeIntervalEvent, TimePointEvent};
+use crate::primitives::{TimeIntervalEvent, TimePointEvent, Timestamp};
 use crate::sequences::TimePointSequence;
+use crate::values::{Schema, SchemaError, Value};
 
 use super::erased::{ErasedPoints, PointValue};
 use super::key::Key;
@@ -106,6 +107,14 @@ impl Pending {
             Self::Spans(spans) => spans.len(),
         }
     }
+
+    /// The earliest instant any event of the push starts at.
+    pub(crate) fn earliest(&self) -> Option<Timestamp> {
+        match self {
+            Self::Points(events) => events.earliest(),
+            Self::Spans(spans) => spans.iter().map(TimeIntervalEvent::start).min(),
+        }
+    }
 }
 
 /// A `Vec` of point events whose value type is known only at run time, and
@@ -113,6 +122,10 @@ impl Pending {
 pub(crate) trait ErasedEvents: fmt::Debug + Send + Sync {
     fn len(&self) -> usize;
     fn value_type_name(&self) -> &'static str;
+    fn earliest(&self) -> Option<Timestamp>;
+    /// The first event, in push order, that is a `Value` without the shape of
+    /// `schema`; none when the events are of another value type.
+    fn first_violation(&self, schema: &Schema) -> Option<SchemaError>;
     /// Whether `target` is a point sequence these events can be recorded into.
     fn fits(&self, target: &dyn ErasedPoints) -> bool;
     /// Move the events into `target`.
@@ -130,6 +143,18 @@ impl<T: PointValue> ErasedEvents for Vec<TimePointEvent<T>> {
 
     fn value_type_name(&self) -> &'static str {
         any::type_name::<T>()
+    }
+
+    fn earliest(&self) -> Option<Timestamp> {
+        self.iter().map(TimePointEvent::timestamp).min()
+    }
+
+    fn first_violation(&self, schema: &Schema) -> Option<SchemaError> {
+        let as_values: &dyn Any = self;
+        as_values
+            .downcast_ref::<Vec<TimePointEvent<Value>>>()?
+            .iter()
+            .find_map(|event| schema.check(event.value()).err())
     }
 
     fn fits(&self, target: &dyn ErasedPoints) -> bool {

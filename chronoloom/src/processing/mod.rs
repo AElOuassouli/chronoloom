@@ -14,15 +14,31 @@
 
 mod condition;
 mod edge;
+mod emission;
 mod errors;
 mod evaluate;
 mod events;
 mod formula;
+mod group;
+mod input;
+mod kind;
+mod live;
 mod processor;
+#[cfg(feature = "serde")]
+mod serialisation;
+mod validate;
 
 pub use condition::{Condition, Pattern};
 pub use edge::Edge;
+pub use emission::{Emission, Emitted};
 pub use errors::ProcessError;
 pub use events::Events;
 pub use formula::{Formula, OpenEnd};
+pub(crate) use group::render as entity_name;
+pub use group::Group;
+pub use input::Input;
+pub use kind::Kind;
+pub use live::LiveProcessor;
+#[cfg(feature = "serde")]
+pub(crate) use live::{Checkpoint, Untyped};
 pub use processor::{Output, Processor};

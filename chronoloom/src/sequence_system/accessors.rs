@@ -1,6 +1,8 @@
 //! Reading a system: which keys it records, and the sequence for each.
 
+use crate::processing::Output;
 use crate::sequences::{TimeIntervalSequence, TimePointSequence};
+use crate::values::{Schema, Value};
 
 use super::{Iter, Key, Metadata, Sequence, SequenceSystem};
 
@@ -21,6 +23,25 @@ impl SequenceSystem {
     #[must_use]
     pub fn contains(&self, key: &str) -> bool {
         self.members.contains_key(key)
+    }
+
+    /// The output that produced the member under `key`, if a processor wrote
+    /// it and nothing has been recorded into it since.
+    #[must_use]
+    pub fn lineage(&self, key: &str) -> Option<&Output> {
+        self.members
+            .get(key)
+            .and_then(|member| member.lineage.as_ref())
+    }
+
+    /// The entity the member under `key` is the timeline of, if it was written
+    /// by a [`PerEntity`](Output::PerEntity) output and nothing has been recorded
+    /// into it since.
+    #[must_use]
+    pub fn lineage_entity(&self, key: &str) -> Option<&Value> {
+        self.members
+            .get(key)
+            .and_then(|member| member.entity.as_ref())
     }
 
     /// The sequence for `key`, of whichever shape.
@@ -69,6 +90,13 @@ impl SequenceSystem {
     /// Walk every sequence with its key, in key order.
     pub fn iter(&self) -> Iter<'_> {
         Iter(self.members.iter())
+    }
+
+    /// The schema of the member for `key`, if the system records one and a
+    /// schema was set for it.
+    #[must_use]
+    pub fn schema(&self, key: &str) -> Option<&Schema> {
+        self.members.get(key)?.schema.as_ref()
     }
 
     /// The metadata of the system as a whole.

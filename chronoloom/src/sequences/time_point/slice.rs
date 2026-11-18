@@ -45,4 +45,17 @@ impl<T: Clone> TimePointSequence<T> {
             observed,
         }
     }
+
+    /// Hand over the events before `frontier`, with the extent before it.
+    pub(crate) fn split_before(&mut self, frontier: Timestamp) -> Self {
+        let split = self.lower_bound(frontier);
+        let kept = self.events.split_off(split);
+        let finalised = std::mem::replace(&mut self.events, kept);
+
+        let mut finalised_observed = self.observed.clone();
+        finalised_observed.narrow(&Extent::of_range(&(..frontier)));
+        self.observed.narrow(&Extent::of_range(&(frontier..)));
+
+        Self::from_parts(self.attribute.clone(), finalised, finalised_observed)
+    }
 }

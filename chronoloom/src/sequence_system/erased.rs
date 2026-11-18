@@ -5,7 +5,7 @@ use core::any::{self, Any};
 use core::fmt;
 use core::ops::Bound;
 
-use crate::primitives::Timestamp;
+use crate::primitives::{TimePointEvent, Timestamp};
 use crate::sequences::attribute::Attribute;
 use crate::sequences::extent::Extent;
 use crate::sequences::TimePointSequence;
@@ -37,9 +37,19 @@ pub(crate) trait ErasedPoints: fmt::Debug + Send + Sync {
     fn set_attribute(&mut self, attribute: String);
     fn observed(&self) -> &Extent;
     fn observe(&mut self, extent: &Extent);
+    fn observed_mut(&mut self) -> &mut Extent;
     fn slice_bounds(&self, range: (Bound<Timestamp>, Bound<Timestamp>)) -> Box<dyn ErasedPoints>;
+    fn split_before(&mut self, frontier: Timestamp) -> Box<dyn ErasedPoints>;
     fn len(&self) -> usize;
     fn value_type_name(&self) -> &'static str;
+    /// The events at or after `from`, their values erased.
+    fn events_from(&self, from: Timestamp) -> Vec<TimePointEvent<AnyValue>>;
+    /// The sequence without the points equal to the sample before them.
+    fn changes(&self) -> Box<dyn ErasedPoints>;
+    /// The instant of the last event strictly before `instant`.
+    fn last_timestamp_before(&self, instant: Timestamp) -> Option<Timestamp>;
+    /// The distinct instants holding an event in `[start, end)`, in order.
+    fn instants_in(&self, start: Timestamp, end: Timestamp) -> Vec<Timestamp>;
 }
 
 impl<T: PointValue> ErasedPoints for TimePointSequence<T> {
@@ -82,8 +92,26 @@ impl<T: PointValue> ErasedPoints for TimePointSequence<T> {
         Self::observe(self, extent);
     }
 
+    fn observed_mut(&mut self) -> &mut Extent {
+        Self::observed_mut(self)
+    }
+
+    fn instants_in(&self, start: Timestamp, end: Timestamp) -> Vec<Timestamp> {
+        let mut instants: Vec<Timestamp> = self
+            .range(start..end)
+            .iter()
+            .map(TimePointEvent::timestamp)
+            .collect();
+        instants.dedup();
+        instants
+    }
+
     fn slice_bounds(&self, range: (Bound<Timestamp>, Bound<Timestamp>)) -> Box<dyn ErasedPoints> {
         Box::new(self.slice(range))
+    }
+
+    fn split_before(&mut self, frontier: Timestamp) -> Box<dyn ErasedPoints> {
+        Box::new(Self::split_before(self, frontier))
     }
 
     fn len(&self) -> usize {
@@ -92,6 +120,177 @@ impl<T: PointValue> ErasedPoints for TimePointSequence<T> {
 
     fn value_type_name(&self) -> &'static str {
         any::type_name::<T>()
+    }
+
+    fn events_from(&self, from: Timestamp) -> Vec<TimePointEvent<AnyValue>> {
+        self.iter()
+            .filter(|event| event.timestamp() >= from)
+            .map(|event| {
+                TimePointEvent::new(event.timestamp(), AnyValue::new(event.value().clone()))
+            })
+            .collect()
+    }
+
+    fn changes(&self) -> Box<dyn ErasedPoints> {
+        let events: Vec<&TimePointEvent<T>> = self.iter().collect();
+        let mut kept = Vec::new();
+        let mut cursor = 0;
+
+        for run in self.observed().as_slice() {
+            let (run_start, run_end) = run.bounds();
+            while cursor < events.len() && events[cursor].timestamp() < run_start {
+                cursor += 1;
+            }
+
+            let mut previous: Option<&T> = None;
+            while cursor < events.len() && events[cursor].timestamp() < run_end {
+                let event = events[cursor];
+                cursor += 1;
+                // Of the points sharing an instant, the last recorded is the sample.
+                let is_sample = events
+                    .get(cursor)
+                    .is_none_or(|next| next.timestamp() != event.timestamp());
+                if !is_sample {
+                    continue;
+                }
+                if previous != Some(event.value()) {
+                    kept.push(event.clone());
+                }
+                previous = Some(event.value());
+            }
+        }
+
+        Box::new(TimePointSequence::from_parts(
+            self.attribute().clone(),
+            kept,
+            self.observed().clone(),
+        ))
+    }
+
+    fn last_timestamp_before(&self, instant: Timestamp) -> Option<Timestamp> {
+        self.iter()
+            .rev()
+            .map(TimePointEvent::timestamp)
+            .find(|&timestamp| timestamp < instant)
+    }
+}
+
+/// The operations an [`AnyValue`] needs from a value without knowing its type.
+/// Private: [`AnyValue`] is the public face.
+trait ErasedValue: fmt::Debug + Send + Sync {
+    fn as_any(&self) -> &dyn Any;
+    fn into_any(self: Box<Self>) -> Box<dyn Any>;
+    fn clone_box(&self) -> Box<dyn ErasedValue>;
+    /// Equal when `other` holds the same type and an equal value.
+    fn equals(&self, other: &dyn ErasedValue) -> bool;
+    fn value_type_name(&self) -> &'static str;
+}
+
+impl<T: PointValue> ErasedValue for T {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn into_any(self: Box<Self>) -> Box<dyn Any> {
+        self
+    }
+
+    fn clone_box(&self) -> Box<dyn ErasedValue> {
+        Box::new(self.clone())
+    }
+
+    fn equals(&self, other: &dyn ErasedValue) -> bool {
+        other
+            .as_any()
+            .downcast_ref::<Self>()
+            .is_some_and(|other| self == other)
+    }
+
+    fn value_type_name(&self) -> &'static str {
+        any::type_name::<T>()
+    }
+}
+
+/// One point value whose type is known only at run time, as an
+/// [`AnyPointSequence`] holds its values together: the way a processor hands
+/// over the points of a member whose value type it does not know.
+///
+/// The type is checked when the value is read back with [`downcast_ref`] or
+/// [`downcast`].
+///
+/// ```
+/// use chronoloom::AnyValue;
+///
+/// let reading = AnyValue::new(21.5_f64);
+///
+/// assert_eq!(reading.downcast_ref::<f64>(), Some(&21.5));
+/// assert!(reading.downcast_ref::<String>().is_none());
+/// assert_eq!(reading, AnyValue::new(21.5_f64));
+/// assert_ne!(reading, AnyValue::new(21_i64));
+/// ```
+///
+/// [`downcast`]: AnyValue::downcast
+/// [`downcast_ref`]: AnyValue::downcast_ref
+pub struct AnyValue(Box<dyn ErasedValue>);
+
+impl AnyValue {
+    /// Erase `value`.
+    #[must_use]
+    pub fn new<T: PointValue>(value: T) -> Self {
+        Self(Box::new(value))
+    }
+
+    /// The name of the value's type, as [`core::any::type_name`] spells it;
+    /// meant for messages.
+    #[must_use]
+    pub fn value_type_name(&self) -> &'static str {
+        self.0.value_type_name()
+    }
+
+    /// The value, if it is of type `T`.
+    #[must_use]
+    pub fn downcast_ref<T: 'static>(&self) -> Option<&T> {
+        self.0.as_any().downcast_ref()
+    }
+
+    /// Recover the value, or get `self` back unchanged when it is not of type
+    /// `T`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `self` when `T` is not the value's type.
+    pub fn downcast<T: 'static>(self) -> Result<T, Self> {
+        if self.0.as_any().is::<T>() {
+            let typed = self
+                .0
+                .into_any()
+                .downcast()
+                .expect("the type was checked just above");
+
+            Ok(*typed)
+        } else {
+            Err(self)
+        }
+    }
+}
+
+impl Clone for AnyValue {
+    fn clone(&self) -> Self {
+        Self(self.0.clone_box())
+    }
+}
+
+impl fmt::Debug for AnyValue {
+    /// The typed value's own `Debug`, as though it had never been erased.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(&*self.0, f)
+    }
+}
+
+impl PartialEq for AnyValue {
+    /// Equal when both are of the same type and the values are equal.
+    fn eq(&self, other: &Self) -> bool {
+        self.0.equals(&*other.0)
     }
 }
 
@@ -197,6 +396,27 @@ impl AnyPointSequence {
         } else {
             Err(self)
         }
+    }
+
+    /// The events at or after `from`, with their values erased.
+    pub(crate) fn events_from(&self, from: Timestamp) -> Vec<TimePointEvent<AnyValue>> {
+        self.0.events_from(from)
+    }
+
+    /// The sequence without the points equal to the sample before them, the
+    /// first sample of each run of the extent kept.
+    pub(crate) fn changes(&self) -> Self {
+        Self(self.0.changes())
+    }
+
+    /// The instant of the last event strictly before `instant`.
+    pub(crate) fn last_timestamp_before(&self, instant: Timestamp) -> Option<Timestamp> {
+        self.0.last_timestamp_before(instant)
+    }
+
+    /// The distinct instants holding an event in `[start, end)`, in order.
+    pub(crate) fn instants_in(&self, start: Timestamp, end: Timestamp) -> Vec<Timestamp> {
+        self.0.instants_in(start, end)
     }
 
     /// Replace the attribute, for the system's own relabelling.

@@ -1,0 +1,1650 @@
+{
+  "$defs": {
+    "Condition": {
+      "oneOf": [
+        {
+          "const": "any",
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "equals": {
+              "format": "double",
+              "type": "number"
+            }
+          },
+          "required": [
+            "equals"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "not_equals": {
+              "format": "double",
+              "type": "number"
+            }
+          },
+          "required": [
+            "not_equals"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "less": {
+              "format": "double",
+              "type": "number"
+            }
+          },
+          "required": [
+            "less"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "less_or_equal": {
+              "format": "double",
+              "type": "number"
+            }
+          },
+          "required": [
+            "less_or_equal"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "greater": {
+              "format": "double",
+              "type": "number"
+            }
+          },
+          "required": [
+            "greater"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "greater_or_equal": {
+              "format": "double",
+              "type": "number"
+            }
+          },
+          "required": [
+            "greater_or_equal"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "within": {
+              "properties": {
+                "high": {
+                  "format": "double",
+                  "type": "number"
+                },
+                "low": {
+                  "format": "double",
+                  "type": "number"
+                }
+              },
+              "required": [
+                "low",
+                "high"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "within"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "in": {
+              "items": {
+                "format": "double",
+                "type": "number"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "in"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "and": {
+              "items": {
+                "$ref": "#/$defs/Condition"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "and"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "or": {
+              "items": {
+                "$ref": "#/$defs/Condition"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "or"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "not": {
+              "$ref": "#/$defs/Condition"
+            }
+          },
+          "required": [
+            "not"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "Condition2": {
+      "oneOf": [
+        {
+          "const": "any",
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "equals": {
+              "format": "int64",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "equals"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "not_equals": {
+              "format": "int64",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "not_equals"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "less": {
+              "format": "int64",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "less"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "less_or_equal": {
+              "format": "int64",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "less_or_equal"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "greater": {
+              "format": "int64",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "greater"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "greater_or_equal": {
+              "format": "int64",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "greater_or_equal"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "within": {
+              "properties": {
+                "high": {
+                  "format": "int64",
+                  "type": "integer"
+                },
+                "low": {
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "low",
+                "high"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "within"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "in": {
+              "items": {
+                "format": "int64",
+                "type": "integer"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "in"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "and": {
+              "items": {
+                "$ref": "#/$defs/Condition2"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "and"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "or": {
+              "items": {
+                "$ref": "#/$defs/Condition2"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "or"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "not": {
+              "$ref": "#/$defs/Condition2"
+            }
+          },
+          "required": [
+            "not"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "Condition3": {
+      "oneOf": [
+        {
+          "const": "any",
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "equals": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "equals"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "not_equals": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "not_equals"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "less": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "less"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "less_or_equal": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "less_or_equal"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "greater": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "greater"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "greater_or_equal": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "greater_or_equal"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "within": {
+              "properties": {
+                "high": {
+                  "type": "boolean"
+                },
+                "low": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "low",
+                "high"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "within"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "in": {
+              "items": {
+                "type": "boolean"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "in"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "and": {
+              "items": {
+                "$ref": "#/$defs/Condition3"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "and"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "or": {
+              "items": {
+                "$ref": "#/$defs/Condition3"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "or"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "not": {
+              "$ref": "#/$defs/Condition3"
+            }
+          },
+          "required": [
+            "not"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "Condition4": {
+      "oneOf": [
+        {
+          "const": "any",
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "equals": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "equals"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "not_equals": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "not_equals"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "less": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "less"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "less_or_equal": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "less_or_equal"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "greater": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "greater"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "greater_or_equal": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "greater_or_equal"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "within": {
+              "properties": {
+                "high": {
+                  "type": "string"
+                },
+                "low": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "low",
+                "high"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "within"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "in": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "in"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "and": {
+              "items": {
+                "$ref": "#/$defs/Condition4"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "and"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "or": {
+              "items": {
+                "$ref": "#/$defs/Condition4"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "or"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "not": {
+              "$ref": "#/$defs/Condition4"
+            }
+          },
+          "required": [
+            "not"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "Condition5": {
+      "oneOf": [
+        {
+          "const": "any",
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "equals": {
+              "$ref": "#/$defs/Value"
+            }
+          },
+          "required": [
+            "equals"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "not_equals": {
+              "$ref": "#/$defs/Value"
+            }
+          },
+          "required": [
+            "not_equals"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "less": {
+              "$ref": "#/$defs/Value"
+            }
+          },
+          "required": [
+            "less"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "less_or_equal": {
+              "$ref": "#/$defs/Value"
+            }
+          },
+          "required": [
+            "less_or_equal"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "greater": {
+              "$ref": "#/$defs/Value"
+            }
+          },
+          "required": [
+            "greater"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "greater_or_equal": {
+              "$ref": "#/$defs/Value"
+            }
+          },
+          "required": [
+            "greater_or_equal"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "within": {
+              "properties": {
+                "high": {
+                  "$ref": "#/$defs/Value"
+                },
+                "low": {
+                  "$ref": "#/$defs/Value"
+                }
+              },
+              "required": [
+                "low",
+                "high"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "within"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "in": {
+              "items": {
+                "$ref": "#/$defs/Value"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "in"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "and": {
+              "items": {
+                "$ref": "#/$defs/Condition5"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "and"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "or": {
+              "items": {
+                "$ref": "#/$defs/Condition5"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "or"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "not": {
+              "$ref": "#/$defs/Condition5"
+            }
+          },
+          "required": [
+            "not"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "Condition6": {
+      "oneOf": [
+        {
+          "const": "any",
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "equals": {
+              "$ref": "#/$defs/Edge"
+            }
+          },
+          "required": [
+            "equals"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "not_equals": {
+              "$ref": "#/$defs/Edge"
+            }
+          },
+          "required": [
+            "not_equals"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "less": {
+              "$ref": "#/$defs/Edge"
+            }
+          },
+          "required": [
+            "less"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "less_or_equal": {
+              "$ref": "#/$defs/Edge"
+            }
+          },
+          "required": [
+            "less_or_equal"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "greater": {
+              "$ref": "#/$defs/Edge"
+            }
+          },
+          "required": [
+            "greater"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "greater_or_equal": {
+              "$ref": "#/$defs/Edge"
+            }
+          },
+          "required": [
+            "greater_or_equal"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "within": {
+              "properties": {
+                "high": {
+                  "$ref": "#/$defs/Edge"
+                },
+                "low": {
+                  "$ref": "#/$defs/Edge"
+                }
+              },
+              "required": [
+                "low",
+                "high"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "within"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "in": {
+              "items": {
+                "$ref": "#/$defs/Edge"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "in"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "and": {
+              "items": {
+                "$ref": "#/$defs/Condition6"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "and"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "or": {
+              "items": {
+                "$ref": "#/$defs/Condition6"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "or"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "not": {
+              "$ref": "#/$defs/Condition6"
+            }
+          },
+          "required": [
+            "not"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "Edge": {
+      "oneOf": [
+        {
+          "const": "start",
+          "type": "string"
+        },
+        {
+          "const": "end",
+          "type": "string"
+        }
+      ]
+    },
+    "Events": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "edges": {
+              "$ref": "#/$defs/Formula"
+            }
+          },
+          "required": [
+            "edges"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "matching": {
+              "$ref": "#/$defs/Pattern"
+            }
+          },
+          "required": [
+            "matching"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "changes": {
+              "properties": {
+                "key": {
+                  "$ref": "#/$defs/Key"
+                }
+              },
+              "required": [
+                "key"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "changes"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "project": {
+              "properties": {
+                "into": {
+                  "$ref": "#/$defs/Kind"
+                },
+                "key": {
+                  "$ref": "#/$defs/Key"
+                },
+                "path": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "key",
+                "path",
+                "into"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "project"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "Formula": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "state": {
+              "$ref": "#/$defs/Key"
+            }
+          },
+          "required": [
+            "state"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "between": {
+              "properties": {
+                "end": {
+                  "$ref": "#/$defs/Pattern"
+                },
+                "open": {
+                  "$ref": "#/$defs/OpenEnd",
+                  "default": "extent"
+                },
+                "start": {
+                  "$ref": "#/$defs/Pattern"
+                }
+              },
+              "required": [
+                "start",
+                "end"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "between"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "while": {
+              "properties": {
+                "pattern": {
+                  "$ref": "#/$defs/Pattern"
+                },
+                "timeout": {
+                  "default": null,
+                  "format": "int64",
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "pattern"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "while"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "occurs": {
+              "$ref": "#/$defs/Pattern"
+            }
+          },
+          "required": [
+            "occurs"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "not": {
+              "$ref": "#/$defs/Formula"
+            }
+          },
+          "required": [
+            "not"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "and": {
+              "items": {
+                "$ref": "#/$defs/Formula"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "and"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "or": {
+              "items": {
+                "$ref": "#/$defs/Formula"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "or"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "shift": {
+              "properties": {
+                "alpha": {
+                  "format": "int64",
+                  "type": "integer"
+                },
+                "beta": {
+                  "format": "int64",
+                  "type": "integer"
+                },
+                "formula": {
+                  "$ref": "#/$defs/Formula"
+                }
+              },
+              "required": [
+                "formula",
+                "alpha",
+                "beta"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "shift"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "Group": {
+      "properties": {
+        "key": {
+          "$ref": "#/$defs/Key"
+        },
+        "path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "path"
+      ],
+      "type": "object"
+    },
+    "Input": {
+      "oneOf": [
+        {
+          "const": "timeline",
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "points": {
+              "$ref": "#/$defs/Kind"
+            }
+          },
+          "required": [
+            "points"
+          ],
+          "type": "object"
+        },
+        {
+          "const": "edges",
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "records": {
+              "$ref": "#/$defs/Schema"
+            }
+          },
+          "required": [
+            "records"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "Key": {
+      "type": "string"
+    },
+    "Kind": {
+      "oneOf": [
+        {
+          "const": "bool",
+          "type": "string"
+        },
+        {
+          "const": "integer",
+          "type": "string"
+        },
+        {
+          "const": "float",
+          "type": "string"
+        },
+        {
+          "const": "text",
+          "type": "string"
+        },
+        {
+          "const": "value",
+          "type": "string"
+        }
+      ]
+    },
+    "OpenEnd": {
+      "oneOf": [
+        {
+          "const": "extent",
+          "type": "string"
+        },
+        {
+          "const": "head",
+          "type": "string"
+        }
+      ]
+    },
+    "Output": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "state": {
+              "$ref": "#/$defs/Formula"
+            }
+          },
+          "required": [
+            "state"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "events": {
+              "$ref": "#/$defs/Events"
+            }
+          },
+          "required": [
+            "events"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "per_entity": {
+              "properties": {
+                "by": {
+                  "$ref": "#/$defs/Group"
+                },
+                "formula": {
+                  "$ref": "#/$defs/Formula"
+                }
+              },
+              "required": [
+                "by",
+                "formula"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "per_entity"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "any_entity": {
+              "properties": {
+                "by": {
+                  "$ref": "#/$defs/Group"
+                },
+                "formula": {
+                  "$ref": "#/$defs/Formula"
+                }
+              },
+              "required": [
+                "by",
+                "formula"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "any_entity"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "count_entities": {
+              "properties": {
+                "by": {
+                  "$ref": "#/$defs/Group"
+                },
+                "formula": {
+                  "$ref": "#/$defs/Formula"
+                }
+              },
+              "required": [
+                "by",
+                "formula"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "count_entities"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "Pattern": {
+      "oneOf": [
+        {
+          "not": {
+            "required": [
+              "path"
+            ]
+          },
+          "properties": {
+            "condition": {
+              "$ref": "#/$defs/Condition"
+            },
+            "type": {
+              "const": "f64"
+            }
+          }
+        },
+        {
+          "not": {
+            "required": [
+              "path"
+            ]
+          },
+          "properties": {
+            "condition": {
+              "$ref": "#/$defs/Condition2"
+            },
+            "type": {
+              "const": "i64"
+            }
+          }
+        },
+        {
+          "not": {
+            "required": [
+              "path"
+            ]
+          },
+          "properties": {
+            "condition": {
+              "$ref": "#/$defs/Condition3"
+            },
+            "type": {
+              "const": "bool"
+            }
+          }
+        },
+        {
+          "not": {
+            "required": [
+              "path"
+            ]
+          },
+          "properties": {
+            "condition": {
+              "$ref": "#/$defs/Condition4"
+            },
+            "type": {
+              "const": "text"
+            }
+          }
+        },
+        {
+          "properties": {
+            "condition": {
+              "$ref": "#/$defs/Condition5"
+            },
+            "type": {
+              "const": "value"
+            }
+          }
+        },
+        {
+          "not": {
+            "required": [
+              "path"
+            ]
+          },
+          "properties": {
+            "condition": {
+              "$ref": "#/$defs/Condition6"
+            },
+            "type": {
+              "const": "edge"
+            }
+          }
+        }
+      ],
+      "properties": {
+        "condition": true,
+        "key": {
+          "$ref": "#/$defs/Key"
+        },
+        "path": {
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "f64",
+            "i64",
+            "bool",
+            "text",
+            "value",
+            "edge"
+          ]
+        }
+      },
+      "required": [
+        "key",
+        "type",
+        "condition"
+      ],
+      "type": "object"
+    },
+    "Schema": {
+      "oneOf": [
+        {
+          "const": "any",
+          "type": "string"
+        },
+        {
+          "const": "null",
+          "type": "string"
+        },
+        {
+          "const": "bool",
+          "type": "string"
+        },
+        {
+          "const": "integer",
+          "type": "string"
+        },
+        {
+          "const": "float",
+          "type": "string"
+        },
+        {
+          "const": "text",
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "record": {
+              "additionalProperties": {
+                "$ref": "#/$defs/Schema"
+              },
+              "type": "object"
+            }
+          },
+          "required": [
+            "record"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "optional": {
+              "$ref": "#/$defs/Schema"
+            }
+          },
+          "required": [
+            "optional"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "Value": {
+      "additionalProperties": {
+        "$ref": "#/$defs/Value"
+      },
+      "type": [
+        "null",
+        "boolean",
+        "number",
+        "string",
+        "object"
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "format": {
+      "const": 1
+    },
+    "inputs": {
+      "items": {
+        "properties": {
+          "input": {
+            "$ref": "#/$defs/Input"
+          },
+          "key": {
+            "$ref": "#/$defs/Key"
+          }
+        },
+        "required": [
+          "key",
+          "input"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "outputs": {
+      "items": {
+        "properties": {
+          "key": {
+            "$ref": "#/$defs/Key"
+          },
+          "output": {
+            "$ref": "#/$defs/Output"
+          }
+        },
+        "required": [
+          "key",
+          "output"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "format",
+    "outputs"
+  ],
+  "type": "object"
+}

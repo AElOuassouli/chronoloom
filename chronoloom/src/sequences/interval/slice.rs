@@ -32,4 +32,41 @@ impl TimeIntervalSequence {
             observed,
         )
     }
+
+    /// Hand over the final part: the spans ending before `frontier`, whole,
+    /// and the extent before the earliest instant this keeps.
+    ///
+    /// A span reaching `frontier` stays, since it may still grow. That instant
+    /// is the start of the first span kept, or `frontier` when none is, so the
+    /// two halves share the extent and the data of each lies inside its own.
+    pub(crate) fn split_before(&mut self, frontier: Timestamp) -> Self {
+        let split = self.spans.partition_point(|span| span.end() < frontier);
+        let cut = self
+            .spans
+            .get(split)
+            .map_or(frontier, |span| span.start().min(frontier));
+
+        let kept = self.spans.split_off(split);
+        let finalised = std::mem::replace(&mut self.spans, kept);
+
+        let mut finalised_observed = self.observed.clone();
+        finalised_observed.narrow(&Extent::of_range(&(..cut)));
+        let mut kept_observed = self.observed.clone();
+        kept_observed.narrow(&Extent::of_range(&(cut..)));
+
+        let remaining = Self::from_parts(
+            self.attribute.clone(),
+            self.transformation,
+            std::mem::take(&mut self.spans),
+            kept_observed,
+        );
+        let drained = Self::from_parts(
+            self.attribute.clone(),
+            self.transformation,
+            finalised,
+            finalised_observed,
+        );
+        *self = remaining;
+        drained
+    }
 }

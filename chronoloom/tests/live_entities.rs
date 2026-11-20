@@ -1,6 +1,9 @@
 //! One timeline per entity, online: entities appear on first sight, and what is
 //! emitted is what the batch evaluation gives.
 
+#[path = "common/update.rs"]
+mod update;
+
 use chronoloom::{
     Condition, Edge, Emission, Emitted, Extent, Formula, Group, LiveProcessor, Output, Pattern,
     ProcessError, Processor, SequenceSystem, TimeIntervalEvent, TimePointEvent, TimePointSequence,
@@ -24,11 +27,12 @@ fn by_agent() -> Group {
 }
 
 /// Presence per agent, whether anyone is present, and how many.
-fn presence() -> Processor {
-    Processor::new()
-        .with("presence", Output::per_entity(by_agent(), present()))
-        .with("anyone", Output::any_entity(by_agent(), present()))
-        .with("crowd", Output::count_entities(by_agent(), present()))
+fn presence() -> Vec<Processor> {
+    vec![
+        Processor::new("presence", Output::per_entity(by_agent(), present())),
+        Processor::new("anyone", Output::any_entity(by_agent(), present())),
+        Processor::new("crowd", Output::count_entities(by_agent(), present())),
+    ]
 }
 
 /// What a key emitted, as `(instant, edge or count)`: `0` for a start and `1`
@@ -49,7 +53,7 @@ fn emitted(emissions: &[Emission], key: &str) -> Vec<(i64, i64)> {
 
 #[test]
 fn entities_appear_on_first_sight_and_emissions_carry_the_member_key() {
-    let mut live = presence().live(0).expect("valid");
+    let mut live = LiveProcessor::new(&presence(), 0).expect("valid");
     assert_eq!(live.frontier("presence/agent-7"), None);
 
     live.on_point(
@@ -99,7 +103,7 @@ fn the_emissions_are_the_batch_result() {
         (40, "a", "in"),
     ];
 
-    let mut live = presence().live(0).expect("valid");
+    let mut live = LiveProcessor::new(&presence(), 0).expect("valid");
     let mut all = Vec::new();
     for (index, (at, agent, way)) in events.into_iter().enumerate() {
         live.on_point(
@@ -129,7 +133,7 @@ fn the_emissions_are_the_batch_result() {
         )
         .expect("ordered")])),
     );
-    let batch = presence().run(&system).expect("a result");
+    let batch = update::run(&system, &presence()).expect("a result");
 
     for agent in ["a", "b", "c"] {
         let key = format!("presence/{agent}");
@@ -159,12 +163,13 @@ fn the_emissions_are_the_batch_result() {
 
 #[test]
 fn another_output_reads_the_union_and_the_count_online() {
-    let processor = presence().with(
+    let mut processors = presence();
+    processors.push(Processor::new(
         "alone",
         Formula::while_matching(Pattern::new("crowd", Condition::Equals(1_i64)))
             .and(Formula::state("anyone")),
-    );
-    let mut live = processor.live(0).expect("valid");
+    ));
+    let mut live = LiveProcessor::new(&processors, 0).expect("valid");
 
     live.on_point(
         "gate",
@@ -190,25 +195,27 @@ fn another_output_reads_the_union_and_the_count_online() {
 
 #[test]
 fn a_live_processor_cannot_read_the_members_of_a_per_entity_output() {
-    let processor = Processor::new()
-        .with("presence", Output::per_entity(by_agent(), present()))
-        .with("seven", Formula::state("presence/7"));
+    let processors = [
+        Processor::new("presence", Output::per_entity(by_agent(), present())),
+        Processor::new("seven", Formula::state("presence/7")),
+    ];
     assert_eq!(
-        processor.live(0).err(),
+        LiveProcessor::new(&processors, 0).err(),
         Some(ProcessError::GroupedRead {
             key: "presence/7".into()
         })
     );
 
     // The records a group reads are an input, not an output.
-    let chained = Processor::new()
-        .with("changes", chronoloom::Events::changes("gate"))
-        .with(
+    let chained = [
+        Processor::new("changes", chronoloom::Events::changes("gate")),
+        Processor::new(
             "presence",
             Output::per_entity(Group::new("changes", "agent"), present()),
-        );
+        ),
+    ];
     assert_eq!(
-        chained.live(0).err(),
+        LiveProcessor::new(&chained, 0).err(),
         Some(ProcessError::GroupedRead {
             key: "changes".into()
         })
@@ -217,7 +224,7 @@ fn a_live_processor_cannot_read_the_members_of_a_per_entity_output() {
 
 #[test]
 fn two_entities_with_one_name_are_refused_and_nothing_is_recorded() {
-    let mut live = presence().live(0).expect("valid");
+    let mut live = LiveProcessor::new(&presence(), 0).expect("valid");
     live.on_point(
         "gate",
         TimePointEvent::new(10, crossing(Value::from("5"), "in")),
@@ -248,10 +255,11 @@ fn two_entities_with_one_name_are_refused_and_nothing_is_recorded() {
 
 #[test]
 fn an_entity_cannot_take_the_key_of_an_output_online() {
-    let processor = Processor::new()
-        .with("presence", Output::per_entity(by_agent(), present()))
-        .with("presence/7", Formula::state("door"));
-    let mut live = processor.live(0).expect("valid");
+    let processors = [
+        Processor::new("presence", Output::per_entity(by_agent(), present())),
+        Processor::new("presence/7", Formula::state("door")),
+    ];
+    let mut live = LiveProcessor::new(&processors, 0).expect("valid");
 
     assert_eq!(
         live.on_point(
@@ -267,7 +275,7 @@ fn an_entity_cannot_take_the_key_of_an_output_online() {
 #[test]
 fn the_state_grows_with_the_entities_seen_and_not_with_the_stream() {
     fn run(agents: i64, ticks: i64) -> (usize, LiveProcessor) {
-        let mut live = presence().live(0).expect("valid");
+        let mut live = LiveProcessor::new(&presence(), 0).expect("valid");
         let mut worst = 0;
         for tick in 0..ticks {
             // Each agent comes and goes on its own turn.

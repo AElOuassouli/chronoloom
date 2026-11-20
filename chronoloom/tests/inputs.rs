@@ -1,9 +1,13 @@
 //! Declared inputs and `Processor::validate`: every problem of a processor
-//! listed in a stable order, and a system or a stream held to the declarations.
+//! listed in a stable order, and a stream system or a live processor held to
+//! the declarations.
+
+#[path = "common/update.rs"]
+mod update;
 
 use chronoloom::{
-    Condition, Events, Formula, Group, Input, Kind, Output, Pattern, ProcessError, Processor,
-    Schema, SequenceSystem, TimeIntervalEvent, TimeIntervalSequence, TimePointEvent,
+    Condition, Events, Formula, Group, Input, Kind, LiveProcessor, Output, Pattern, ProcessError,
+    Processor, Schema, SequenceSystem, TimeIntervalEvent, TimeIntervalSequence, TimePointEvent,
     TimePointSequence, Value,
 };
 
@@ -22,8 +26,9 @@ fn in_output(output: &str, error: ProcessError) -> ProcessError {
     }
 }
 
-fn declared() -> Processor {
-    Processor::new()
+/// A processor of `output` that declares the three inputs of the world.
+fn declared(output: &str, formula: impl Into<Output>) -> Processor {
+    Processor::new(output, formula)
         .with_input("temperature", Input::Points(Kind::Float))
         .with_input("door", Input::Timeline)
         .with_input("records", Input::Records(schema()))
@@ -31,138 +36,156 @@ fn declared() -> Processor {
 
 #[test]
 fn a_valid_processor_validates_with_and_without_declarations() {
-    let processor = declared()
-        .with(
+    let processors = [
+        declared(
             "hot",
             Formula::while_matching(Pattern::new("temperature", Condition::Greater(5.0))),
-        )
-        .with("open", Formula::state("door").or(Formula::state("hot")))
-        .with(
+        ),
+        // Reading another processor's output: declared like any other input.
+        declared("open", Formula::state("door").or(Formula::state("hot")))
+            .with_input("hot", Input::Timeline),
+        declared(
             "busy",
             Formula::while_matching(Pattern::field(
                 "records",
                 "site.zone",
                 Condition::Equals(Value::from("gate")),
             )),
-        )
-        .with("counts", Events::project("records", "count", Kind::Float))
-        .with(
+        ),
+        declared("counts", Events::project("records", "count", Kind::Float)),
+        declared(
             "each",
             Output::per_entity(Group::new("records", "agent"), Formula::state("door")),
-        )
-        .with("later", Formula::state("each/agent-7"));
-
-    assert_eq!(processor.validate(), Ok(()));
-    assert_eq!(Processor::new().validate(), Ok(()));
+        ),
+    ];
+    for processor in &processors {
+        assert_eq!(processor.validate(), Ok(()), "{processor}");
+    }
 
     // Without declarations, nothing is known about the keys that are read.
-    let bare = Processor::new().with("a", Formula::state("anything"));
+    let bare = Processor::new("later", Formula::state("each/agent-7"));
     assert_eq!(bare.validate(), Ok(()));
 }
 
 #[test]
-fn validate_lists_every_problem_in_output_then_formula_order() {
-    let processor = declared()
-        .with_input("zeta", Input::Timeline)
-        .with_input("shadowed", Input::Timeline)
-        .with("shadowed", Formula::state("door"))
-        .with(
-            // Two problems in one formula, left to right.
-            "b",
-            Formula::state("temperature").and(Formula::state("missing")),
-        )
-        .with(
-            "a",
-            Formula::while_matching(Pattern::new("door", Condition::Equals(1_i64))).or(
-                Formula::occurs(Pattern::new("temperature", Condition::Any::<i64>)),
-            ),
-        )
-        .with(
-            "c",
-            Output::per_entity(
-                Group::new("records", "nobody"),
-                Formula::while_matching(Pattern::field(
-                    "records",
-                    "agent",
-                    Condition::Equals(Value::Integer(3)),
-                )),
-            ),
-        )
-        .with("d", Events::project("records", "agent", Kind::Integer))
-        .with("e", Events::project("records", "site.street", Kind::Text))
-        .with("f", Events::project("records", "count", Kind::Float));
-
+fn validate_lists_every_problem_of_a_processor_in_formula_order() {
     let float = std::any::type_name::<f64>();
     let integer = std::any::type_name::<i64>();
-    assert_eq!(
-        processor.validate(),
-        Err(vec![
-            ProcessError::InputIsOutput {
-                key: "shadowed".into()
-            },
-            in_output("a", ProcessError::NotPoints { key: "door".into() }),
-            in_output(
+    let cases = [
+        (
+            declared("shadowed", Formula::state("door")).with_input("shadowed", Input::Timeline),
+            vec![ProcessError::InputIsOutput {
+                key: "shadowed".into(),
+            }],
+        ),
+        (
+            declared(
                 "a",
-                ProcessError::ValueTypeMismatch {
-                    key: "temperature".into(),
-                    expected: float,
-                    found: integer,
-                }
+                Formula::while_matching(Pattern::new("door", Condition::Equals(1_i64))).or(
+                    Formula::occurs(Pattern::new("temperature", Condition::Any::<i64>)),
+                ),
             ),
-            in_output(
+            vec![
+                in_output("a", ProcessError::NotPoints { key: "door".into() }),
+                in_output(
+                    "a",
+                    ProcessError::ValueTypeMismatch {
+                        key: "temperature".into(),
+                        expected: float,
+                        found: integer,
+                    },
+                ),
+            ],
+        ),
+        (
+            // Two problems in one formula, left to right.
+            declared(
                 "b",
-                ProcessError::NotATimeline {
-                    key: "temperature".into()
-                }
+                Formula::state("temperature").and(Formula::state("missing")),
             ),
-            in_output(
-                "b",
-                ProcessError::UnknownKey {
-                    key: "missing".into()
-                }
-            ),
-            in_output(
+            vec![
+                in_output(
+                    "b",
+                    ProcessError::NotATimeline {
+                        key: "temperature".into(),
+                    },
+                ),
+                in_output(
+                    "b",
+                    ProcessError::UnknownKey {
+                        key: "missing".into(),
+                    },
+                ),
+            ],
+        ),
+        (
+            declared(
                 "c",
-                ProcessError::MissingField {
-                    key: "records".into(),
-                    path: "nobody".into()
-                }
+                Output::per_entity(
+                    Group::new("records", "nobody"),
+                    Formula::while_matching(Pattern::field(
+                        "records",
+                        "agent",
+                        Condition::Equals(Value::Integer(3)),
+                    )),
+                ),
             ),
-            in_output(
-                "c",
-                ProcessError::FieldMismatch {
-                    key: "records".into(),
-                    path: "agent".into(),
-                    expected: "text".into(),
-                    found: "integer",
-                }
-            ),
-            in_output(
+            vec![
+                in_output(
+                    "c",
+                    ProcessError::MissingField {
+                        key: "records".into(),
+                        path: "nobody".into(),
+                    },
+                ),
+                in_output(
+                    "c",
+                    ProcessError::FieldMismatch {
+                        key: "records".into(),
+                        path: "agent".into(),
+                        expected: "text".into(),
+                        found: "integer",
+                    },
+                ),
+            ],
+        ),
+        (
+            declared("d", Events::project("records", "agent", Kind::Integer)),
+            vec![in_output(
                 "d",
                 ProcessError::ProjectionMismatch {
                     key: "records".into(),
                     path: "agent".into(),
                     expected: Kind::Integer,
                     found: "text",
-                }
-            ),
-            in_output(
+                },
+            )],
+        ),
+        (
+            declared("e", Events::project("records", "site.street", Kind::Text)),
+            vec![in_output(
                 "e",
                 ProcessError::MissingField {
                     key: "records".into(),
-                    path: "site.street".into()
-                }
-            ),
-        ])
+                    path: "site.street".into(),
+                },
+            )],
+        ),
+    ];
+
+    for (processor, problems) in cases {
+        assert_eq!(processor.validate(), Err(problems), "{processor}");
+    }
+    // An integer field widens into a float projection.
+    assert_eq!(
+        declared("f", Events::project("records", "count", Kind::Float)).validate(),
+        Ok(())
     );
 }
 
 #[test]
-fn validate_agrees_with_check_on_a_cycle() {
-    let processor = declared()
-        .with("a", Formula::state("b"))
-        .with("b", Formula::state("a"))
-        .with("c", Formula::state("nowhere"));
+fn validate_agrees_with_check_on_a_formula_that_reads_its_own_output() {
+    let processor = declared("a", Formula::state("a").or(Formula::state("nowhere")));
 
     let problems = processor.validate().unwrap_err();
     assert_eq!(Err(problems[0].clone()), processor.check());
@@ -172,15 +195,14 @@ fn validate_agrees_with_check_on_a_cycle() {
 
 #[test]
 fn a_path_through_an_any_shape_is_not_missing() {
-    let processor = Processor::new()
-        .with_input(
-            "loose",
-            Input::Records(Schema::record([("data", Schema::Any)])),
-        )
-        .with(
-            "a",
-            Formula::occurs(Pattern::field("loose", "data.deep.er", Condition::Any)),
-        );
+    let processor = Processor::new(
+        "a",
+        Formula::occurs(Pattern::field("loose", "data.deep.er", Condition::Any)),
+    )
+    .with_input(
+        "loose",
+        Input::Records(Schema::record([("data", Schema::Any)])),
+    );
 
     assert_eq!(processor.validate(), Ok(()));
 }
@@ -213,29 +235,29 @@ fn world() -> SequenceSystem {
 }
 
 #[test]
-fn run_and_apply_hold_the_system_to_the_declarations() {
-    let processor = declared().with("open", Formula::state("door"));
-    assert!(processor.run(&world()).is_ok());
+fn a_stream_system_holds_its_streams_to_the_declarations() {
+    let processor = [declared("open", Formula::state("door"))];
+    assert!(update::run(&world(), &processor).is_ok());
 
     let mut missing = world();
     missing.remove("door");
     assert_eq!(
-        processor.run(&missing),
-        Err(ProcessError::UnknownKey { key: "door".into() })
+        update::run(&missing, &processor).err(),
+        Some(ProcessError::UnknownKey { key: "door".into() })
     );
 
     let mut flipped = world();
     flipped.insert("door", TimePointSequence::<f64>::new("door"));
     assert_eq!(
-        processor.run(&flipped),
-        Err(ProcessError::NotATimeline { key: "door".into() })
+        update::run(&flipped, &processor).err(),
+        Some(ProcessError::NotATimeline { key: "door".into() })
     );
 
     let mut flipped = world();
     flipped.insert("temperature", TimeIntervalSequence::new("temperature"));
     assert_eq!(
-        processor.run(&flipped),
-        Err(ProcessError::NotPoints {
+        update::run(&flipped, &processor).err(),
+        Some(ProcessError::NotPoints {
             key: "temperature".into()
         })
     );
@@ -243,7 +265,7 @@ fn run_and_apply_hold_the_system_to_the_declarations() {
     let mut integers = world();
     integers.insert("temperature", TimePointSequence::<i64>::new("temperature"));
     assert!(matches!(
-        processor.run(&integers),
+        update::run(&integers, &processor),
         Err(ProcessError::ValueTypeMismatch { key, .. }) if key.as_str() == "temperature"
     ));
 
@@ -259,59 +281,60 @@ fn run_and_apply_hold_the_system_to_the_declarations() {
         ),
     );
     assert!(matches!(
-        processor.run(&stray),
+        update::run(&stray, &processor),
         Err(ProcessError::SchemaMismatch { key, .. }) if key.as_str() == "records"
     ));
 
-    // Nothing is inserted when the system does not satisfy a declaration.
-    let mut system = missing;
-    assert!(processor.apply(&mut system).is_err());
-    assert!(!system.contains("open"));
+    // Nothing is added when the streams do not satisfy a declaration.
+    let mut system = update::run(&missing, &[]).expect("streams alone");
+    let before = system.clone();
+    assert!(system.add_processor(processor[0].clone()).is_err());
+    assert_eq!(system, before);
 }
 
 #[test]
-fn a_processor_without_declarations_behaves_as_before() {
-    let processor = Processor::new().with("open", Formula::state("door"));
+fn a_processor_without_declarations_reads_what_its_formula_reads() {
+    let processor = [Processor::new("open", Formula::state("door"))];
     let mut system = SequenceSystem::new();
     system.insert("door", TimeIntervalSequence::new("door"));
 
-    assert!(processor.run(&system).is_ok());
+    assert!(update::run(&system, &processor).is_ok());
     assert_eq!(
-        processor.run(&SequenceSystem::new()),
-        Err(ProcessError::UnknownKey { key: "door".into() })
+        update::run(&SequenceSystem::new(), &processor).err(),
+        Some(ProcessError::UnknownKey { key: "door".into() })
     );
 }
 
 #[test]
 fn live_refuses_reads_that_contradict_the_declarations() {
-    let contradicting = declared().with(
+    let contradicting = [declared(
         "a",
         Formula::while_matching(Pattern::new("temperature", Condition::Greater(5_i64))),
-    );
+    )];
     assert!(matches!(
-        contradicting.live(0),
+        LiveProcessor::new(&contradicting, 0),
         Err(ProcessError::ValueTypeMismatch { key, .. }) if key.as_str() == "temperature"
     ));
 
-    let shape = declared().with("a", Formula::state("temperature"));
+    let shape = [declared("a", Formula::state("temperature"))];
     assert_eq!(
-        shape.live(0).err(),
+        LiveProcessor::new(&shape, 0).err(),
         Some(ProcessError::NotATimeline {
             key: "temperature".into()
         })
     );
 
-    let shadowed = declared().with("door", Formula::state("temperature"));
+    let shadowed = [declared("door", Formula::state("temperature"))];
     assert_eq!(
-        shadowed.live(0).err(),
+        LiveProcessor::new(&shadowed, 0).err(),
         Some(ProcessError::InputIsOutput { key: "door".into() })
     );
 }
 
 #[test]
 fn live_creates_the_declared_inputs_and_refuses_records_off_the_schema() {
-    let processor = declared().with("changes", Events::changes("temperature"));
-    let mut live = processor.live(0).unwrap();
+    let processor = [declared("changes", Events::changes("temperature"))];
+    let mut live = LiveProcessor::new(&processor, 0).unwrap();
 
     // `door` is declared and read by nothing, and still an input.
     live.on_span("door", TimeIntervalEvent::span(1, 2).unwrap())

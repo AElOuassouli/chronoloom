@@ -19,27 +19,30 @@ use super::formula::Formula;
 use super::group::{self, EntityId, Group};
 use super::input::Input;
 use super::kind::Kind;
-use super::processor::{Output, Processor};
+use super::processor::{Output, ProcessorSet};
+use crate::processor::Processor;
 
 #[cfg(feature = "serde")]
 mod checkpoint;
 #[cfg(feature = "serde")]
 pub(crate) use checkpoint::{Checkpoint, Untyped};
 
-/// A [`Processor`] run online: a state machine that is fed input events and
-/// watermarks, and emits each part of its outputs as soon as it is final.
+/// A list of [`Processor`]s run online: a state machine that is fed input
+/// events and watermarks, and emits each part of their outputs as soon as it is
+/// final.
 ///
 /// It has no clock, no input or output and no threads: a host feeds it with
 /// [`on_point`] and [`on_span`], moves the frontier of an input with
 /// [`advance`], and takes what each call returns. It is built by
-/// [`Processor::live`], and what it emits is what [`Processor::run`] gives over
-/// the whole stream, no more and no less.
+/// [`LiveProcessor::new`], and what it emits is what the same processors give
+/// in a [`StreamSystem`] over the whole stream, no more and no less.
 ///
 /// ```
-/// use chronoloom::{Condition, Edge, Emitted, Formula, Pattern, Processor, TimePointEvent};
+/// use chronoloom::{Condition, Edge, Emitted, Formula, LiveProcessor, Pattern, Processor};
+/// use chronoloom::TimePointEvent;
 ///
 /// let busy = Formula::while_matching(Pattern::new("count", Condition::Greater(5_i64)));
-/// let mut live = Processor::new().with("busy", busy).live(0)?;
+/// let mut live = LiveProcessor::new(&[Processor::new("busy", busy)], 0)?;
 ///
 /// live.on_point("count", TimePointEvent::new(3, 2_i64))?;
 /// live.on_point("count", TimePointEvent::new(7, 9_i64))?;
@@ -140,7 +143,8 @@ pub(crate) use checkpoint::{Checkpoint, Untyped};
 /// input, and emits everything the outputs still have, ends of open spans
 /// included. Over the inputs as recorded, with the extent of each ending at
 /// the later of `horizon` and its frontier, the emissions of every call put
-/// together are exactly the edges and points of [`Processor::run`], and the
+/// together are exactly the edges and points the processors give in a batch
+/// [`StreamSystem`], and the
 /// frontier of every output becomes `Timestamp::MAX`. The processor then
 /// refuses further events with [`ProcessError::Finished`].
 ///
@@ -215,7 +219,7 @@ pub(crate) use checkpoint::{Checkpoint, Untyped};
 /// `{ "format": 1, .. }`, that a host saves with its own input offsets and loads
 /// to go on where it stopped: what is emitted after the restore, and the
 /// [`frontier`] and [`retained`] of every call, are those of a processor that
-/// never stopped. A checkpoint holds the [`processor`] itself, so it cannot be
+/// never stopped. A checkpoint holds the [`processors`] themselves, so it cannot be
 /// restored against another one, and what the processor does not determine:
 /// the live inputs with their frontiers and the events they hold (the retained
 /// window), the instant each output has emitted up to and the one it is trusted
@@ -227,8 +231,8 @@ pub(crate) use checkpoint::{Checkpoint, Untyped};
 /// checkpoint is the state bound described above: the retained window and the
 /// entities seen. An input that no event has typed yet is saved as such.
 ///
-/// A checkpoint is checked on load as every document is: its processor passes
-/// `Processor::check` and runs online, its inputs are those the processor
+/// A checkpoint is checked on load as every document is: its processors pass
+/// [`Processor::check`] and run online, its inputs are those the processors
 /// reads, in the shape and value type it reads them, and each live; the views
 /// of the entities hold the records of their entity, no earlier than it was
 /// first seen and as far on as their input; every output has a state, whose
@@ -249,12 +253,13 @@ pub(crate) use checkpoint::{Checkpoint, Untyped};
 /// [`frontier`]: LiveProcessor::frontier
 /// [`on_point`]: LiveProcessor::on_point
 /// [`on_span`]: LiveProcessor::on_span
-/// [`processor`]: LiveProcessor::processor
+/// [`processors`]: LiveProcessor::processors
 /// [`retained`]: LiveProcessor::retained
+/// [`StreamSystem`]: crate::stream_system::StreamSystem
 #[derive(Debug, Clone)]
 pub struct LiveProcessor {
-    /// The processor this was built from, as it was given.
-    processor: Processor,
+    /// The processors this was built from, as they were given.
+    processors: Vec<Processor>,
     /// The outputs in dependency order, with every `Head` read as the extent.
     outputs: Vec<(Key, Output)>,
     /// The live members every output reads: the retained window.
@@ -397,7 +402,7 @@ enum Leaf<'a> {
     },
 }
 
-impl Processor {
+impl ProcessorSet {
     /// A [`LiveProcessor`] for the outputs, whose inputs are final before
     /// `from`.
     ///
@@ -411,7 +416,7 @@ impl Processor {
     /// [`ProcessError::NotATimeline`], [`ProcessError::NotPoints`] or
     /// [`ProcessError::ValueTypeMismatch`] if the outputs read one key as two
     /// shapes or value types, or read an output as the wrong one.
-    pub fn live(&self, from: Timestamp) -> Result<LiveProcessor, ProcessError> {
+    pub(crate) fn live(&self, from: Timestamp) -> Result<LiveProcessor, ProcessError> {
         let order = self.order()?;
 
         // A member of a per-entity output is only known once its entity is
@@ -574,7 +579,7 @@ impl Processor {
         }
 
         let mut live = LiveProcessor {
-            processor: self.clone(),
+            processors: Vec::new(),
             outputs: Vec::new(),
             inputs,
             through: BTreeMap::new(),
@@ -600,10 +605,30 @@ impl Processor {
 }
 
 impl LiveProcessor {
-    /// The processor this was built from.
+    /// A live processor for `processors`, whose inputs are final before
+    /// `from`.
+    ///
+    /// Every key the processors read that is not one of their outputs is an
+    /// input, a live member of the shape and value type its reads need (or its
+    /// declaration says), with nothing recorded yet.
+    ///
+    /// # Errors
+    ///
+    /// [`ProcessError::DuplicateMember`] if two processors produce one key or
+    /// declare one input differently, [`ProcessError::Cycle`] if they read
+    /// each other in a circle, and [`ProcessError::NotATimeline`],
+    /// [`ProcessError::NotPoints`] or [`ProcessError::ValueTypeMismatch`] if
+    /// they read one key as two shapes or value types.
+    pub fn new(processors: &[Processor], from: Timestamp) -> Result<Self, ProcessError> {
+        let mut live = ProcessorSet::from_processors(processors)?.live(from)?;
+        live.processors = processors.to_vec();
+        Ok(live)
+    }
+
+    /// The processors this was built from, in the order they were given.
     #[must_use]
-    pub fn processor(&self) -> &Processor {
-        &self.processor
+    pub fn processors(&self) -> &[Processor] {
+        &self.processors
     }
 
     /// Record a point event into the input `key`.

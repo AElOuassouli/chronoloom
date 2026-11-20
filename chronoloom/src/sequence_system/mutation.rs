@@ -4,12 +4,13 @@
 use core::any::{self, Any};
 
 use crate::primitives::{TimeIntervalEvent, TimePointEvent};
-use crate::processing::{Output, ProcessError};
+use crate::processing::Output;
 use crate::sequences::{Extent, TimePointSequence};
 use crate::values::{Schema, SchemaError, Value};
 
-use super::batch::{Batch, Pending};
 use super::{Key, Member, Metadata, RecordError, Sequence, SequenceSystem};
+use crate::stream_system::update::Pending;
+use crate::stream_system::Update;
 
 impl SequenceSystem {
     /// Add a sequence under `key`, returning whichever sequence that key filed
@@ -69,73 +70,6 @@ impl SequenceSystem {
             schema: None,
         };
         self.members.insert(key, derived);
-    }
-
-    /// Evaluate the lineage of the member under `key` again against the
-    /// system as it is now, and replace the member's sequence with the result.
-    ///
-    /// The member keeps its metadata and its lineage. This is the one-output
-    /// processor of the lineage, applied; the output may read other members,
-    /// which are read as they are, not derived again.
-    ///
-    /// # Errors
-    ///
-    /// [`ProcessError::UnknownKey`] if no sequence is for `key`,
-    /// [`ProcessError::NoLineage`] if the member has none,
-    /// [`ProcessError::SchemaMismatch`] if the member has a schema and the result
-    /// does not have its shape, or whatever the output meets evaluating.
-    /// Nothing changes in any of those cases.
-    pub fn rederive(&mut self, key: &str) -> Result<(), ProcessError> {
-        let member = self
-            .members
-            .get(key)
-            .ok_or_else(|| ProcessError::UnknownKey {
-                key: Key::from(key),
-            })?;
-        let output = member
-            .lineage
-            .clone()
-            .ok_or_else(|| ProcessError::NoLineage {
-                key: Key::from(key),
-            })?;
-
-        let sequence = match member.entity.as_ref() {
-            // The member of one entity: derive them all, and take its own.
-            Some(entity) => {
-                let name = crate::processing::entity_name(entity);
-                let output_key = key
-                    .strip_suffix(name.as_str())
-                    .and_then(|rest| rest.strip_suffix('/'))
-                    .map(Key::from)
-                    .ok_or_else(|| ProcessError::UnknownKey {
-                        key: Key::from(key),
-                    })?;
-                output
-                    .derive(&output_key, self)?
-                    .into_iter()
-                    .find(|derived| derived.key.as_str() == key)
-                    .map(|derived| derived.sequence)
-                    .ok_or_else(|| ProcessError::UnknownKey {
-                        key: Key::from(key),
-                    })?
-            }
-            None => output.evaluate(self)?,
-        };
-        if let Some(member) = self.members.get_mut(key) {
-            if let Some(error) = member
-                .schema
-                .as_ref()
-                .and_then(|schema| first_violation(&sequence, schema))
-            {
-                return Err(ProcessError::SchemaMismatch {
-                    key: Key::from(key),
-                    error,
-                });
-            }
-            member.sequence = sequence;
-        }
-
-        Ok(())
     }
 
     /// Drop the lineage of the member under `key`, because its data has been
@@ -314,12 +248,12 @@ impl SequenceSystem {
         recorded
     }
 
-    /// Record every event in `batch`, all or nothing.
+    /// Record every event in `update`, all or nothing.
     ///
-    /// Every push in the batch is checked against its sequence before anything
-    /// is recorded, so a batch that fails leaves the system exactly as it was.
+    /// Every push in the update is checked against its sequence before anything
+    /// is recorded, so an update that fails leaves the system exactly as it was.
     /// Each push then goes in through its sequence's `Extend`, which reorders
-    /// only when the arrivals broke the time order — so a batch of in-order
+    /// only when the arrivals broke the time order — so an update of in-order
     /// events costs no sorting, and is cheaper than recording them one by one.
     ///
     /// # Errors
@@ -330,31 +264,32 @@ impl SequenceSystem {
     /// ```
     /// use chronoloom::primitives::TimePointEvent;
     /// use chronoloom::sequences::TimePointSequence;
-    /// use chronoloom::sequence_system::{Batch, RecordError, SequenceSystem};
+    /// use chronoloom::sequence_system::{RecordError, SequenceSystem};
+    /// use chronoloom::stream_system::Update;
     ///
     /// let mut system = SequenceSystem::new();
     /// system.insert("temperature", TimePointSequence::<f64>::new("temperature"));
     ///
-    /// let mut batch = Batch::new();
-    /// batch
+    /// let mut update = Update::new();
+    /// update
     ///     .points("temperature", [TimePointEvent::new(10, 21.5_f64)])
     ///     .points("humidity", [TimePointEvent::new(10, 0.4_f64)]);
     ///
     /// // No sequence for `humidity`, so not even the temperature goes in.
-    /// let refused = system.record_batch(batch);
+    /// let refused = system.record_update(update);
     /// assert!(matches!(refused, Err(RecordError::Unknown { .. })));
     /// assert_eq!(system.points::<f64>("temperature").map(|s| s.len()), Some(0));
     /// ```
     ///
     /// [`record_point`]: SequenceSystem::record_point
     /// [`record_span`]: SequenceSystem::record_span
-    pub fn record_batch(&mut self, batch: Batch) -> Result<(), RecordError> {
-        for (key, pending) in &batch.chunks {
+    pub fn record_update(&mut self, update: Update) -> Result<(), RecordError> {
+        for (key, pending) in &update.chunks {
             self.check(key.as_str(), pending)?;
             self.reject_late(key.as_str(), pending.earliest())?;
         }
 
-        for (key, pending) in batch.chunks {
+        for (key, pending) in update.chunks {
             match (
                 self.member_mut(key.as_str()).expect("checked above"),
                 pending,
@@ -421,15 +356,6 @@ fn schema_mismatch(key: &str, error: SchemaError) -> RecordError {
         key: key.to_owned(),
         error,
     }
-}
-
-/// The first event of `sequence`, in time order, that is a `Value` without the
-/// shape of `schema`. Any other sequence has no such event.
-fn first_violation(sequence: &Sequence, schema: &Schema) -> Option<SchemaError> {
-    sequence
-        .as_time_point::<Value>()?
-        .iter()
-        .find_map(|event| schema.check(event.value()).err())
 }
 
 fn shape_mismatch(key: &str) -> RecordError {

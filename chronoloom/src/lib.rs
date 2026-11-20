@@ -72,7 +72,7 @@
 //! A [`SequenceSystem`] holds the sequences describing one subject side by
 //! side, the way a sensor system holds its sensors: point sequences of any
 //! value type next to timelines, one sequence per key. Events are
-//! recorded into it as they arrive, one at a time or a [`Batch`] at a time, all
+//! recorded into it as they arrive, one at a time or an [`Update`] at a time, all
 //! or nothing.
 //!
 //! ```
@@ -114,11 +114,11 @@
 //!
 //! A [`Formula`] describes a state as data: active between one kind of event
 //! and the next, while a value stays within bounds, held for a duration after
-//! an event, or wherever other states are. A [`Processor`] is a set of
-//! formulas, each producing one member of a system, and it is how point
-//! sequences become timelines and timelines become [`Edge`] events.
-//! [`Processor::live`] makes a [`LiveProcessor`], which produces the same
-//! outputs online: a state machine with no clock, input or output that a host
+//! an event, or wherever other states are. A [`Processor`] is one recipe: the
+//! inputs it reads, a formula over them, and the one output it produces; it is
+//! how point sequences become timelines and timelines become [`Edge`] events.
+//! [`LiveProcessor::new`] runs a list of them online and produces the same
+//! outputs as in batch: a state machine with no clock, input or output that a host
 //! drives with events and watermarks, and that emits each [`Emission`] once it
 //! is final. What it emitted equals the batch result over the whole stream.
 //! [`Processor::with_input`] declares what a processor expects of its inputs,
@@ -149,6 +149,15 @@
 //! `<output key>/<entity>`, their union, and how many are active, as the changes
 //! of a count. A [`LiveProcessor`] makes an entity when its first record is fed.
 //! The README walks through a presence example.
+//!
+//! # Stream systems
+//!
+//! A [`StreamSystem`] holds the streams of a subject and a list of
+//! [`processor::Processor`]s, each one recipe: inputs, a formula, one
+//! output. Its derived streams are read-only and follow every change: an
+//! [`update`](StreamSystem::update) records into the streams and evaluates
+//! again the processors that read what changed, and no others. It has a mode
+//! as a type parameter; batch mode is here, and a live mode is to come.
 //!
 //! # Saving and loading
 //!
@@ -205,20 +214,23 @@ struct Readme;
 
 pub mod primitives;
 pub mod processing;
+pub mod processor;
 pub mod sequence_system;
 pub mod sequences;
 #[cfg(feature = "serde")]
 pub mod serialisation;
+pub mod stream_system;
 pub mod values;
 
 pub use primitives::{IntervalError, TimeIntervalEvent, TimePointEvent, Timestamp};
 pub use processing::{
     Condition, Edge, Emission, Emitted, Events, Formula, Group, Input, Kind, LiveProcessor,
-    OpenEnd, Output, Pattern, ProcessError, Processor,
+    OpenEnd, Output, Pattern, ProcessError,
 };
+pub use processor::Processor;
 pub use sequence_system::{
-    AnyPointSequence, AnyValue, Batch, Key, Metadata, PointValue, RecordError, Sequence,
-    SequenceSystem,
+    AnyPointSequence, AnyValue, Key, Metadata, PointValue, RecordError, Sequence, SequenceSystem,
 };
 pub use sequences::{Attribute, Extent, SetOperation, TimeIntervalSequence, TimePointSequence};
+pub use stream_system::{Batch, Mode, Report, StreamSystem, Update, UpdateError};
 pub use values::{Schema, SchemaError, Value};

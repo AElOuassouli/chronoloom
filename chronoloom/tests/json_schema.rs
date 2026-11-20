@@ -69,34 +69,32 @@ fn written(processor: &Processor) -> Json {
 
 #[test]
 fn the_schema_accepts_a_document_with_declared_inputs() {
-    let processor = Processor::new()
-        .with_input("timeline", Input::Timeline)
-        .with_input("floats", Input::Points(Kind::Float))
-        .with_input("edges", Input::Edges)
-        .with_input(
-            "records",
-            Input::Records(Schema::record([
-                ("agent", Schema::Text),
-                ("dwell", Schema::optional(Schema::Float)),
-            ])),
-        )
-        .with(
-            "busy",
-            Formula::while_matching(Pattern::new("floats", Condition::Greater(5.0))),
-        )
-        .with(
-            "presence",
-            chronoloom::Output::per_entity(
-                Group::new("records", "agent"),
-                Formula::state("timeline"),
-            ),
-        );
+    let presence = Processor::new(
+        "presence",
+        chronoloom::Output::per_entity(Group::new("records", "agent"), Formula::state("timeline")),
+    )
+    .with_input("timeline", Input::Timeline)
+    .with_input("edges", Input::Edges)
+    .with_input(
+        "records",
+        Input::Records(Schema::record([
+            ("agent", Schema::Text),
+            ("dwell", Schema::optional(Schema::Float)),
+        ])),
+    );
+    let busy = Processor::new(
+        "busy",
+        Formula::while_matching(Pattern::new("floats", Condition::Greater(5.0))),
+    )
+    .with_input("floats", Input::Points(Kind::Float));
 
-    let document = written(&processor);
-    assert!(document["inputs"].is_array());
-    assert_eq!(problems(&document), Vec::<String>::new());
+    for processor in [presence, busy] {
+        let document = written(&processor);
+        assert!(document["inputs"].is_array());
+        assert_eq!(problems(&document), Vec::<String>::new());
+    }
 
-    let empty = written(&Processor::new().with("a", Formula::state("b")));
+    let empty = written(&Processor::new("a", Formula::state("b")));
     assert!(empty.get("inputs").is_none());
     assert_eq!(problems(&empty), Vec::<String>::new());
 }
@@ -111,7 +109,7 @@ fn the_schema_accepts_every_shape_of_value_in_a_condition() {
         Value::from("text"),
         Value::record([("inner", Value::record([("n", Value::Integer(-1))]))]),
     ] {
-        let processor = Processor::new().with(
+        let processor = Processor::new(
             "a",
             Formula::occurs(Pattern::field("r", "path", Condition::Equals(constant))),
         );
@@ -121,7 +119,7 @@ fn the_schema_accepts_every_shape_of_value_in_a_condition() {
 
 #[test]
 fn the_schema_refuses_what_a_reader_refuses() {
-    let output = |output: Json| json!({"format": 1, "outputs": [{"key": "a", "output": output}]});
+    let output = |formula: Json| json!({"format": 1, "output": "a", "formula": formula});
     let pattern = |extra: Json| {
         let mut base = json!({"key": "k", "type": "i64", "condition": {"equals": 1}});
         base.as_object_mut()
@@ -133,12 +131,15 @@ fn the_schema_refuses_what_a_reader_refuses() {
     assert_eq!(problems(&pattern(json!({}))), Vec::<String>::new());
 
     let refused = [
-        json!({"format": 2, "outputs": []}),
-        json!({"outputs": []}),
-        json!({"format": 1}),
-        json!({"format": 1, "outputs": [{"key": 5, "output": {"state": {"state": "a"}}}]}),
-        json!({"format": 1, "inputs": [{"key": "a", "input": "points"}], "outputs": []}),
-        json!({"format": 1, "inputs": [{"key": "a", "input": {"points": "edge"}}], "outputs": []}),
+        json!({"format": 2, "output": "a", "formula": {"state": {"state": "b"}}}),
+        json!({"output": "a", "formula": {"state": {"state": "b"}}}),
+        json!({"format": 1, "output": "a"}),
+        json!({"format": 1, "formula": {"state": {"state": "b"}}}),
+        json!({"format": 1, "output": 5, "formula": {"state": {"state": "a"}}}),
+        json!({"format": 1, "output": "a", "inputs": [{"key": "b", "input": "points"}],
+               "formula": {"state": {"state": "b"}}}),
+        json!({"format": 1, "output": "a", "inputs": [{"key": "b", "input": {"points": "edge"}}],
+               "formula": {"state": {"state": "b"}}}),
         output(json!({"state": {"nonsense": 1}})),
         pattern(json!({"type": "char"})),
         pattern(json!({"path": "a.b"})),

@@ -1,19 +1,15 @@
-//! A [`Processor`] as a document: its outputs in key order.
+//! A [`Processor`] as a document: its output key, its declared inputs in key
+//! order, and its formula.
 
 use std::collections::BTreeSet;
 
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::processing::{Input, Output, Processor};
+use crate::processing::{Input, Output};
+use crate::processor::Processor;
 use crate::sequence_system::Key;
 
 use super::{Document, Format};
-
-#[derive(Serialize)]
-struct OutputRef<'a> {
-    key: &'a Key,
-    output: &'a Output,
-}
 
 #[derive(Serialize)]
 struct InputRef<'a> {
@@ -23,15 +19,10 @@ struct InputRef<'a> {
 
 #[derive(Serialize)]
 struct ProcessorBodyRef<'a> {
+    output: &'a Key,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     inputs: Vec<InputRef<'a>>,
-    outputs: Vec<OutputRef<'a>>,
-}
-
-#[derive(Deserialize)]
-struct OutputBody {
-    key: Key,
-    output: Output,
+    formula: &'a Output,
 }
 
 #[derive(Deserialize)]
@@ -42,9 +33,10 @@ struct InputBody {
 
 #[derive(Deserialize)]
 struct ProcessorBody {
+    output: Key,
     #[serde(default)]
     inputs: Vec<InputBody>,
-    outputs: Vec<OutputBody>,
+    formula: Output,
 }
 
 impl Serialize for Processor {
@@ -52,16 +44,13 @@ impl Serialize for Processor {
         Document {
             format: Format,
             body: ProcessorBodyRef {
+                output: self.output(),
                 inputs: self
-                    .inputs()
+                    .declared_inputs()
                     .iter()
                     .map(|(key, input)| InputRef { key, input })
                     .collect(),
-                outputs: self
-                    .outputs()
-                    .iter()
-                    .map(|(key, output)| OutputRef { key, output })
-                    .collect(),
+                formula: self.formula(),
             },
         }
         .serialize(serializer)
@@ -73,32 +62,23 @@ impl<'de> Deserialize<'de> for Processor {
     ///
     /// # Errors
     ///
-    /// Refuses a key that appears twice among the outputs or the inputs, and a processor whose outputs read
-    /// each other in a loop.
+    /// Refuses an input declared twice, and a processor that
+    /// [`Processor::check`] refuses.
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let Document {
             format: Format,
             body,
         } = Document::<ProcessorBody>::deserialize(deserializer)?;
 
-        let mut seen = BTreeSet::new();
-        let mut processor = Self::new();
-        for OutputBody { key, output } in body.outputs {
-            if !seen.insert(key.clone()) {
-                return Err(de::Error::custom(format_args!(
-                    "the output `{key}` appears twice in the processor"
-                )));
-            }
-            processor.insert(key, output);
-        }
         let mut declared = BTreeSet::new();
+        let mut processor = Self::new(body.output, body.formula);
         for InputBody { key, input } in body.inputs {
             if !declared.insert(key.clone()) {
                 return Err(de::Error::custom(format_args!(
                     "the input `{key}` is declared twice in the processor"
                 )));
             }
-            processor.insert_input(key, input);
+            processor = processor.with_input(key, input);
         }
         processor.check().map_err(de::Error::custom)?;
 

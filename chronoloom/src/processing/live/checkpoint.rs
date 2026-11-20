@@ -7,17 +7,18 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 
 use crate::primitives::{TimePointEvent, Timestamp};
-use crate::processing::{Output, Processor};
+use crate::processing::Output;
+use crate::processor::Processor;
 use crate::sequence_system::{Key, MemberParts, Metadata, Sequence, SequenceSystem};
 use crate::sequences::TimePointSequence;
 use crate::values::Value;
 
 use super::{group, leaves, Aggregation, Leaf, LiveProcessor, Role};
 
-/// What a checkpoint holds beyond the processor itself.
+/// What a checkpoint holds beyond the processors themselves.
 #[derive(Serialize, Deserialize)]
 pub(crate) struct Checkpoint {
-    pub(crate) processor: Processor,
+    pub(crate) processors: Vec<Processor>,
     /// The live inputs, and the views of the records of each entity.
     pub(crate) inputs: SequenceSystem,
     /// The inputs that have no value type yet, which the system cannot hold.
@@ -139,7 +140,7 @@ impl LiveProcessor {
             .collect();
 
         Checkpoint {
-            processor: self.processor.clone(),
+            processors: self.processors.clone(),
             inputs,
             untyped,
             outputs,
@@ -152,7 +153,7 @@ impl LiveProcessor {
     /// A live processor in the state of a checkpoint, once every check passes.
     pub(crate) fn from_checkpoint(checkpoint: Checkpoint) -> Result<Self, String> {
         let Checkpoint {
-            processor,
+            processors,
             inputs,
             untyped,
             outputs,
@@ -161,9 +162,8 @@ impl LiveProcessor {
             finished,
         } = checkpoint;
 
-        let mut live = processor
-            .live(0)
-            .map_err(|error| format!("the processor cannot run online: {error}"))?;
+        let mut live = Self::new(&processors, 0)
+            .map_err(|error| format!("the processors cannot run online: {error}"))?;
         live.restore_entities(groups)?;
         live.restore_inputs(inputs, untyped, finished)?;
         live.restore_outputs(outputs, finished)?;

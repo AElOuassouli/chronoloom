@@ -27,8 +27,8 @@ use super::kind::Kind;
 ///   `schema`, which a processor can then check its field patterns,
 ///   projections and groups against before it runs.
 ///
-/// [`Processor`]: super::Processor
-/// [`Processor::with_input`]: super::Processor::with_input
+/// [`Processor`]: crate::processor::Processor
+/// [`Processor::with_input`]: crate::processor::Processor::with_input
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]

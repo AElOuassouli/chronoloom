@@ -7,6 +7,8 @@
 mod common;
 #[path = "common/streams.rs"]
 mod streams;
+#[path = "common/update.rs"]
+mod update;
 
 use serde_json::{json, Value as Json};
 
@@ -17,7 +19,7 @@ use chronoloom::{
 };
 
 use common::{bounds, for_each_seed, span, Random};
-use streams::{processor, stream, Op, Stream, POINT_INPUTS, RECORD_INPUTS, STATE_INPUTS};
+use streams::{processors, stream, Op, Stream, POINT_INPUTS, RECORD_INPUTS, STATE_INPUTS};
 
 const CASES: u64 = 400;
 
@@ -67,12 +69,12 @@ fn apply(live: &mut LiveProcessor, op: &Op) -> Vec<Emission> {
     }
 }
 
-fn seen(live: &LiveProcessor, processor: &Processor, emitted: Vec<Emission>) -> Seen {
+fn seen(live: &LiveProcessor, processor: &[Processor], emitted: Vec<Emission>) -> Seen {
     Seen {
         emitted,
         frontiers: processor
-            .outputs()
-            .keys()
+            .iter()
+            .map(Processor::output)
             .map(|key| live.frontier(key.as_str()))
             .collect(),
         retained: live.retained(),
@@ -81,8 +83,8 @@ fn seen(live: &LiveProcessor, processor: &Processor, emitted: Vec<Emission>) -> 
 
 /// Run the stream, saving and restoring before the operations at `stops`, then
 /// finish; every call is observed.
-fn run(processor: &Processor, stream: &Stream, stops: &[usize]) -> Vec<Seen> {
-    let mut live = processor.live(stream.from).expect("a valid processor");
+fn run(processor: &[Processor], stream: &Stream, stops: &[usize]) -> Vec<Seen> {
+    let mut live = LiveProcessor::new(processor, stream.from).expect("a valid processor");
     let mut observed = Vec::new();
 
     for (index, op) in stream.ops.iter().enumerate() {
@@ -108,7 +110,7 @@ fn stop(random: &mut Random, stream: &Stream) -> usize {
 #[test]
 fn a_restored_processor_goes_on_as_one_that_never_stopped() {
     for_each_seed(CASES, |random, _| {
-        let processor = processor(random);
+        let processor = processors(random);
         let stream = stream(random);
         let uninterrupted = run(&processor, &stream, &[]);
 
@@ -130,9 +132,9 @@ fn a_restored_processor_goes_on_as_one_that_never_stopped() {
 #[test]
 fn a_checkpoint_after_finish_stays_finished() {
     for_each_seed(100, |random, _| {
-        let processor = processor(random);
+        let processor = processors(random);
         let stream = stream(random);
-        let mut live = processor.live(stream.from).expect("valid");
+        let mut live = LiveProcessor::new(&processor, stream.from).expect("valid");
         for op in &stream.ops {
             apply(&mut live, op);
         }
@@ -141,8 +143,8 @@ fn a_checkpoint_after_finish_stays_finished() {
         let mut restored = restore(&save(&live));
         assert_eq!(restored.finish(stream.horizon), Ok(Vec::new()));
         assert_eq!(restored.retained(), 0);
-        assert_eq!(restored.processor(), &processor);
-        for key in processor.outputs().keys() {
+        assert_eq!(restored.processors(), &processor);
+        for key in processor.iter().map(Processor::output) {
             assert_eq!(restored.frontier(key.as_str()), Some(i64::MAX));
         }
         for key in POINT_INPUTS
@@ -156,11 +158,11 @@ fn a_checkpoint_after_finish_stays_finished() {
     });
 }
 
-fn busy() -> Processor {
-    Processor::new().with(
+fn busy() -> Vec<Processor> {
+    vec![Processor::new(
         "busy",
         Formula::while_matching(Pattern::new("count", Condition::Greater(5_i64))),
-    )
+    )]
 }
 
 #[test]
@@ -168,7 +170,7 @@ fn a_host_that_restarts_gets_the_batch_result() {
     let processor = busy();
     let readings = [(3, 2_i64), (7, 9), (25, 1), (40, 8)];
 
-    let mut live = processor.live(0).expect("valid");
+    let mut live = LiveProcessor::new(&processor, 0).expect("valid");
     let mut edges = Vec::new();
     for (index, (at, value)) in readings.into_iter().enumerate() {
         live.on_point("count", TimePointEvent::new(at, value))
@@ -195,7 +197,7 @@ fn a_host_that_restarts_gets_the_batch_result() {
             chronoloom::TimeIntervalEvent::span(i64::MIN, 50).expect("ordered"),
         ])),
     );
-    let batch = processor.run(&recorded).expect("the batch result");
+    let batch = update::run(&recorded, &processor).expect("the batch result");
 
     let mut rebuilt = SequenceSystem::new();
     rebuilt.insert(
@@ -225,21 +227,21 @@ fn a_host_that_restarts_gets_the_batch_result() {
 
 #[test]
 fn the_checkpoint_holds_its_processor() {
-    let mut live = busy().live(0).expect("valid");
+    let mut live = LiveProcessor::new(&busy(), 0).expect("valid");
     live.on_point("count", TimePointEvent::new(7, 9_i64))
         .expect("on time");
     live.advance("count", 10).expect("known");
 
     let restored = restore(&save(&live));
-    assert_eq!(restored.processor(), live.processor());
-    assert_eq!(restored.processor(), &busy());
+    assert_eq!(restored.processors(), live.processors());
+    assert_eq!(restored.processors(), &busy());
     assert_eq!(restored.frontier("busy"), Some(10));
 }
 
 #[test]
 fn an_input_without_a_type_yet_is_checkpointed_as_such() {
-    let processor = Processor::new().with("steps", Events::changes("level"));
-    let mut live = processor.live(0).expect("valid");
+    let processor = vec![Processor::new("steps", Events::changes("level"))];
+    let mut live = LiveProcessor::new(&processor, 0).expect("valid");
     let mut restored = restore(&save(&live));
 
     // The type is still the first event's to give, before and after.
@@ -264,8 +266,8 @@ fn an_input_without_a_type_yet_is_checkpointed_as_such() {
 
 #[test]
 fn an_input_of_another_value_type_cannot_be_checkpointed() {
-    let processor = Processor::new().with("steps", Events::changes("level"));
-    let mut live = processor.live(0).expect("valid");
+    let processor = vec![Processor::new("steps", Events::changes("level"))];
+    let mut live = LiveProcessor::new(&processor, 0).expect("valid");
     live.on_point("level", TimePointEvent::new(2, 7_u8))
         .expect("any value type types an input");
 
@@ -278,15 +280,16 @@ fn an_input_of_another_value_type_cannot_be_checkpointed() {
 }
 
 /// A processor of every kind that keeps state of its own.
-fn entities() -> Processor {
+fn entities() -> Vec<Processor> {
     let direction = |text: &'static str| {
         Pattern::field("gate", "direction", Condition::Equals(Value::from(text)))
     };
     let present = Formula::between(direction("in"), direction("out"));
     let by = Group::new("gate", "agent");
-    Processor::new()
-        .with("presence", Output::per_entity(by.clone(), present.clone()))
-        .with("crowd", Output::count_entities(by, present))
+    vec![
+        Processor::new("presence", Output::per_entity(by.clone(), present.clone())),
+        Processor::new("crowd", Output::count_entities(by, present)),
+    ]
 }
 
 fn crossing(agent: i64, direction: &str) -> Value {
@@ -297,7 +300,7 @@ fn crossing(agent: i64, direction: &str) -> Value {
 }
 
 fn entity_checkpoint() -> Json {
-    let mut live = entities().live(0).expect("valid");
+    let mut live = LiveProcessor::new(&entities(), 0).expect("valid");
     for (at, agent, way) in [(1, 7, "in"), (2, 9, "in"), (5, 7, "out")] {
         live.on_point("gate", TimePointEvent::new(at, crossing(agent, way)))
             .expect("on time");
@@ -308,7 +311,7 @@ fn entity_checkpoint() -> Json {
 
 #[test]
 fn a_checkpoint_of_entities_keeps_each_of_them() {
-    let mut live = entities().live(0).expect("valid");
+    let mut live = LiveProcessor::new(&entities(), 0).expect("valid");
     live.on_point("gate", TimePointEvent::new(1, crossing(7, "in")))
         .expect("on time");
     live.advance("gate", 2).expect("known");
@@ -336,7 +339,7 @@ fn a_checkpoint_of_another_format_version_is_refused() {
 
 #[test]
 fn a_cursor_past_its_frontier_is_refused() {
-    let mut live = busy().live(0).expect("valid");
+    let mut live = LiveProcessor::new(&busy(), 0).expect("valid");
     live.advance("count", 10).expect("known");
     let mut document: Json = serde_json::from_str(&save(&live)).expect("json");
 
@@ -353,12 +356,12 @@ fn a_cursor_past_its_frontier_is_refused() {
 }
 
 fn empty_checkpoint() -> Json {
-    serde_json::from_str(&save(&busy().live(0).expect("valid"))).expect("json")
+    serde_json::from_str(&save(&LiveProcessor::new(&busy(), 0).expect("valid"))).expect("json")
 }
 
 #[test]
 fn inputs_that_contradict_the_processor_are_refused() {
-    let mut live = busy().live(0).expect("valid");
+    let mut live = LiveProcessor::new(&busy(), 0).expect("valid");
     live.on_point("count", TimePointEvent::new(7, 9_i64))
         .expect("on time");
     let saved: Json = serde_json::from_str(&save(&live)).expect("json");
@@ -373,7 +376,7 @@ fn inputs_that_contradict_the_processor_are_refused() {
 
     // With no event in it, an input of another type is a well-formed member.
     let mut mistyped: Json =
-        serde_json::from_str(&save(&busy().live(0).expect("valid"))).expect("json");
+        serde_json::from_str(&save(&LiveProcessor::new(&busy(), 0).expect("valid"))).expect("json");
     mistyped["inputs"]["members"][0]["sequence"]["type"] = json!("text");
     assert!(refusal(&mistyped).contains("`count` holds"));
 
@@ -425,7 +428,7 @@ fn entities_and_their_views_must_agree() {
 
 #[test]
 fn a_finished_checkpoint_with_open_cursors_is_refused() {
-    let mut live = busy().live(0).expect("valid");
+    let mut live = LiveProcessor::new(&busy(), 0).expect("valid");
     live.finish(10).expect("finishing");
     let mut document: Json = serde_json::from_str(&save(&live)).expect("json");
     document["outputs"][0]["through"] = json!(5);
@@ -435,7 +438,7 @@ fn a_finished_checkpoint_with_open_cursors_is_refused() {
 #[test]
 fn the_state_a_checkpoint_stores_is_the_retained_window() {
     // A long stream with spans that close checkpoints to a small document.
-    let mut live = busy().live(0).expect("valid");
+    let mut live = LiveProcessor::new(&busy(), 0).expect("valid");
     for tick in 0..2000 {
         live.on_point("count", TimePointEvent::new(tick, tick % 10))
             .expect("on time");
@@ -448,22 +451,21 @@ fn the_state_a_checkpoint_stores_is_the_retained_window() {
 #[test]
 fn a_processor_with_declared_inputs_checkpoints_and_keeps_its_declarations() {
     let readings = Schema::record([("count", Schema::Integer)]);
-    let processor = Processor::new()
-        .with_input("room", Input::Records(readings))
-        // Declared but read by no output: it is an input all the same.
-        .with_input("spare", Input::Points(Kind::Float))
-        .with(
-            "crowded",
-            Formula::while_matching(Pattern::field(
-                "room",
-                "count",
-                Condition::Greater(Value::from(5_i64)),
-            )),
-        );
+    let processor = vec![Processor::new(
+        "crowded",
+        Formula::while_matching(Pattern::field(
+            "room",
+            "count",
+            Condition::Greater(Value::from(5_i64)),
+        )),
+    )
+    .with_input("room", Input::Records(readings))
+    // Declared but read by no formula: it is an input all the same.
+    .with_input("spare", Input::Points(Kind::Float))];
     let record = |count: i64| Value::record([("count", Value::from(count))]);
 
-    let mut uninterrupted = processor.live(0).expect("valid");
-    let mut resumed = processor.live(0).expect("valid");
+    let mut uninterrupted = LiveProcessor::new(&processor, 0).expect("valid");
+    let mut resumed = LiveProcessor::new(&processor, 0).expect("valid");
     for live in [&mut uninterrupted, &mut resumed] {
         live.on_point("room", TimePointEvent::new(2, record(7)))
             .unwrap();
@@ -473,8 +475,8 @@ fn a_processor_with_declared_inputs_checkpoints_and_keeps_its_declarations() {
     }
 
     let mut resumed = restore(&save(&resumed));
-    assert_eq!(resumed.processor(), &processor);
-    assert_eq!(resumed.processor().inputs(), processor.inputs());
+    assert_eq!(resumed.processors(), &processor);
+    assert!(resumed.processors()[0].declared("spare").is_some());
 
     // The declaration still holds after the restore: a record off the schema
     // is refused, and the processor goes on as one that never stopped.
@@ -498,20 +500,19 @@ fn a_processor_with_declared_inputs_checkpoints_and_keeps_its_declarations() {
 
 #[test]
 fn a_checkpoint_whose_input_lost_its_declared_schema_is_refused() {
-    let processor = Processor::new()
-        .with_input(
+    let processor = vec![Processor::new(
+        "crowded",
+        Formula::while_matching(Pattern::field(
             "room",
-            Input::Records(Schema::record([("count", Schema::Integer)])),
-        )
-        .with(
-            "crowded",
-            Formula::while_matching(Pattern::field(
-                "room",
-                "count",
-                Condition::Greater(Value::from(5_i64)),
-            )),
-        );
-    let live = processor.live(0).expect("valid");
+            "count",
+            Condition::Greater(Value::from(5_i64)),
+        )),
+    )
+    .with_input(
+        "room",
+        Input::Records(Schema::record([("count", Schema::Integer)])),
+    )];
+    let live = LiveProcessor::new(&processor, 0).expect("valid");
     let mut document: Json = serde_json::from_str(&save(&live)).expect("json");
 
     let members = document["inputs"]["members"]

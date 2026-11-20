@@ -107,7 +107,7 @@
   record rejects unknown fields) is filed on the system with
   `SequenceSystem::set_schema` and read with `schema`; `check` says where a
   value differs through a `SchemaError`. Recording a value without the shape is
-  `RecordError::SchemaMismatch`, in a batch too, which stays all or nothing.
+  `RecordError::SchemaMismatch`, in an update too, which stays all or nothing.
 - `Events::Project { key, path, into: Kind }` reads a field of each record into
   a point sequence of the type the `Kind` names (`Bool`, `Integer`, `Float`,
   `Text`, `Value`), skipping records without the field.
@@ -157,12 +157,25 @@
 - The optional `json-schema` feature (implies `serde`; adds `schemars` and
   `serde_json`): `serialisation::processor_json_schema()` returns the JSON
   Schema of the processor document.
+- `StreamSystem`, in module `stream_system`: the streams of a subject and a
+  list of `processor::Processor`s, each one recipe (the inputs it reads, a
+  formula over them, one output), whose derived streams are read-only and
+  follow every change. `update(Update)` records into the streams, all or
+  nothing, and evaluates again only the processors that read what changed,
+  directly or through another output, returning a `Report` of the derived
+  streams that changed. `insert_stream`, `remove_stream`, `add_processor` and
+  `remove_processor` refuse what would break that (`UpdateError`). The mode is
+  a type parameter; batch mode is the first.
 
 ## Removed
 
+- `sequence_system::Batch`, the recording buffer: it is now `stream_system::Update`
+  (also at the crate root), and `SequenceSystem::record_batch` is
+  `record_update`. `Batch` at the root now names the batch mode of a
+  `StreamSystem`.
 - Filing a member under its own label: `SequenceSystem::insert` now takes the key
   as its first argument, `insert(key, sequence)`. `FromIterator` and `Extend`
-  take `(key, sequence)` pairs, and `Batch::points` and `Batch::spans` take a
+  take `(key, sequence)` pairs, and `Update::points` and `Update::spans` take a
   key.
 - `SequenceSystem::attributes()`, replaced by `keys()`.
 - The `btree_map` iterators of `SequenceSystem`: `iter()` and `into_iter()` now

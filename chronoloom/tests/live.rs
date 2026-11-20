@@ -7,8 +7,8 @@ mod common;
 use std::collections::BTreeSet;
 
 use chronoloom::{
-    Batch, Condition, Extent, Formula, Pattern, Processor, RecordError, SequenceSystem,
-    TimeIntervalSequence, TimePointEvent, TimePointSequence,
+    Extent, RecordError, SequenceSystem, TimeIntervalSequence, TimePointEvent, TimePointSequence,
+    Update,
 };
 
 use common::{bounds, extent, for_each_seed, span, spans, Random, DOMAIN_END, DOMAIN_START};
@@ -231,8 +231,8 @@ fn a_late_event_inside_a_batch_records_nothing() {
     let mut system = machine();
     let before = system.clone();
 
-    let mut batch = Batch::new();
-    batch
+    let mut update = Update::new();
+    update
         .points("batch", [TimePointEvent::new(-5, 1_u64)])
         .points(
             "live",
@@ -241,7 +241,7 @@ fn a_late_event_inside_a_batch_records_nothing() {
         .spans("up", [span(10, 20)]);
 
     assert_eq!(
-        system.record_batch(batch),
+        system.record_update(update),
         Err(RecordError::Late {
             key: "live".to_owned(),
             timestamp: 9,
@@ -250,10 +250,10 @@ fn a_late_event_inside_a_batch_records_nothing() {
     );
     assert_eq!(system, before);
 
-    let mut late_span = Batch::new();
+    let mut late_span = Update::new();
     late_span.spans("up", [span(12, 14), span(8, 12)]);
     assert!(matches!(
-        system.record_batch(late_span),
+        system.record_update(late_span),
         Err(RecordError::Late { timestamp: 8, .. })
     ));
     assert_eq!(system, before);
@@ -668,50 +668,6 @@ fn draining_is_per_member_and_leaves_batch_members_and_their_metadata() {
     assert_eq!(system.frontier_of("live"), Some(40));
     assert_eq!(system.frontier_of("up"), Some(20));
     assert_eq!(drained.frontier_of("live"), None);
-}
-
-#[test]
-fn a_derived_member_is_a_batch_member_and_rederives_from_what_is_left() {
-    let mut system = SequenceSystem::new();
-    system.insert_live("motion", TimePointSequence::<&str>::new("motion"), 0);
-    for (timestamp, value) in [(2, "start"), (6, "end"), (10, "start"), (14, "end")] {
-        system
-            .record_point("motion", TimePointEvent::new(timestamp, value))
-            .unwrap();
-    }
-    system.advance("motion", 12).unwrap();
-
-    let present = Formula::between(
-        Pattern::new("motion", Condition::Equals("start")),
-        Pattern::new("motion", Condition::Equals("end")),
-    );
-    Processor::new()
-        .with("present", present)
-        .apply(&mut system)
-        .unwrap();
-    assert_eq!(
-        bounds(system.intervals("present").unwrap()),
-        [(2, 6), (10, 12)]
-    );
-    let lineage = system.lineage("present").cloned();
-    assert!(lineage.is_some());
-
-    let drained = system.drain_finalised();
-    assert!(!drained.contains("present"));
-    assert_eq!(drained.points::<&str>("motion").unwrap().len(), 3);
-
-    // The derived member keeps its lineage and its data.
-    assert_eq!(system.lineage("present").cloned(), lineage);
-    assert_eq!(
-        bounds(system.intervals("present").unwrap()),
-        [(2, 6), (10, 12)]
-    );
-
-    // Deriving it again reads what is left of its input.
-    system.rederive("present").unwrap();
-    assert!(system.lineage("present").is_some());
-    // Its start was drained, so the end left over is an orphan: no span.
-    assert!(bounds(system.intervals("present").unwrap()).is_empty());
 }
 
 #[test]

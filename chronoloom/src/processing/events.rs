@@ -60,7 +60,7 @@ use super::kind::Kind;
 ///
 /// ```
 /// use chronoloom::{
-///     Events, Kind, Processor, SequenceSystem, TimePointEvent, TimePointSequence, Value,
+///     Events, Kind, SequenceSystem, TimePointEvent, TimePointSequence, Value,
 /// };
 ///
 /// let mut system = SequenceSystem::new();
@@ -70,11 +70,10 @@ use super::kind::Kind;
 ///     TimePointEvent::new(30, Value::record([("agent", Value::record([("id", Value::from(9))]))])),
 /// ]));
 ///
-/// let processor = Processor::new().with("agent", Events::project("sensor", "agent.id", Kind::Integer));
-/// let result = processor.run(&system)?;
+/// let agents = Events::project("sensor", "agent.id", Kind::Integer).evaluate(&system)?;
 ///
 /// // The event without an agent is skipped.
-/// let agents = result.points::<i64>("agent").unwrap();
+/// let agents = agents.as_time_point::<i64>().unwrap();
 /// let seen: Vec<(i64, i64)> = agents.iter().map(|e| (e.timestamp(), *e.value())).collect();
 /// assert_eq!(seen, [(10, 7), (30, 9)]);
 /// assert_eq!(agents.label(), "sensor.agent.id");

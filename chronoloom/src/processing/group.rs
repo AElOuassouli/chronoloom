@@ -28,29 +28,27 @@ use super::formula::Formula;
 ///
 /// ```
 /// use chronoloom::{Condition, Formula, Group, Output, Pattern, Processor, Value};
-/// use chronoloom::{SequenceSystem, TimePointEvent, TimePointSequence};
+/// use chronoloom::{StreamSystem, TimePointEvent, TimePointSequence};
 ///
 /// let crossing = |agent: i64, direction: &str| {
 ///     Value::record([("agent", Value::from(agent)), ("direction", Value::from(direction))])
 /// };
-/// let mut system = SequenceSystem::new();
-/// system.insert("gate", TimePointSequence::from_events("gate", vec![
+/// let mut result = StreamSystem::new();
+/// result.insert_stream("gate", TimePointSequence::from_events("gate", vec![
 ///     TimePointEvent::new(10, crossing(7, "in")),
 ///     TimePointEvent::new(12, crossing(9, "in")),
 ///     TimePointEvent::new(20, crossing(7, "out")),
 ///     TimePointEvent::new(30, crossing(9, "out")),
-/// ]));
+/// ]))?;
 ///
 /// // Present from an "in" of an agent until the next "out" of the same agent.
 /// let direction = |text: &'static str| Pattern::field("gate", "direction", Condition::Equals(Value::from(text)));
 /// let present = Formula::between(direction("in"), direction("out"));
 /// let by_agent = Group::new("gate", "agent");
 ///
-/// let processor = Processor::new()
-///     .with("presence", Output::per_entity(by_agent.clone(), present.clone()))
-///     .with("anyone", Output::any_entity(by_agent.clone(), present.clone()))
-///     .with("crowd", Output::count_entities(by_agent, present));
-/// let result = processor.run(&system)?;
+/// result.add_processor(Processor::new("presence", Output::per_entity(by_agent.clone(), present.clone())))?;
+/// result.add_processor(Processor::new("anyone", Output::any_entity(by_agent.clone(), present.clone())))?;
+/// result.add_processor(Processor::new("crowd", Output::count_entities(by_agent, present)))?;
 ///
 /// // One timeline per agent, keyed `<output>/<agent>`.
 /// let seven = result.intervals("presence/7").unwrap();
@@ -66,7 +64,7 @@ use super::formula::Formula;
 ///     .map(|change| (change.timestamp(), *change.value()))
 ///     .collect();
 /// assert_eq!(&crowd[1..], [(10, 1), (12, 2), (20, 1), (30, 0)]);
-/// # Ok::<(), chronoloom::ProcessError>(())
+/// # Ok::<(), chronoloom::stream_system::UpdateError>(())
 /// ```
 ///
 /// # Entities
@@ -126,7 +124,7 @@ use super::formula::Formula;
 /// [`Output::AnyEntity`]: super::Output::AnyEntity
 /// [`Output::CountEntities`]: super::Output::CountEntities
 /// [`Output::PerEntity`]: super::Output::PerEntity
-/// [`Processor`]: super::Processor
+/// [`Processor`]: crate::processor::Processor
 /// [`Value::get`]: crate::Value::get
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "json-schema", derive(schemars::JsonSchema))]

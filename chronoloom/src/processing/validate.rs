@@ -12,7 +12,7 @@ use super::formula::Formula;
 use super::group;
 use super::input::Input;
 use super::kind::Kind;
-use super::processor::{Output, Processor};
+use super::processor::{Output, ProcessorSet};
 
 /// How a read uses the fields of the records it reaches.
 enum Usage<'a> {
@@ -249,9 +249,10 @@ fn check_read(read: &Read<'_>, input: &Input) -> Option<ProcessError> {
     }
 }
 
-impl Processor {
+impl ProcessorSet {
     /// Every problem the processor has on its own, without a system, in a
-    /// stable order; see [`Processor`] for what is checked and in what order.
+    /// stable order; see [`Processor`](crate::processor::Processor) for what is
+    /// checked and in what order.
     ///
     /// # Errors
     ///

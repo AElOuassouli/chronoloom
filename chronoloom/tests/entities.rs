@@ -2,10 +2,13 @@
 
 #[path = "common/random.rs"]
 mod common;
+#[path = "common/update.rs"]
+mod update;
 
+use chronoloom::stream_system::Update;
 use chronoloom::{
     Condition, Extent, Formula, Group, Key, Output, Pattern, ProcessError, Processor,
-    SequenceSystem, TimeIntervalSequence, TimePointEvent, TimePointSequence, Value,
+    SequenceSystem, StreamSystem, TimeIntervalSequence, TimePointEvent, TimePointSequence, Value,
 };
 
 use common::{bounds, extent, for_each_seed, span, spans, Random, DOMAIN_END, DOMAIN_START};
@@ -45,11 +48,11 @@ fn gate(events: Vec<(i64, Value)>) -> SequenceSystem {
     system
 }
 
-fn spans_of(system: &SequenceSystem, key: &str) -> Vec<(i64, i64)> {
+fn spans_of(system: &StreamSystem, key: &str) -> Vec<(i64, i64)> {
     bounds(system.intervals(key).expect("a timeline"))
 }
 
-fn changes_of(system: &SequenceSystem, key: &str) -> Vec<(i64, i64)> {
+fn changes_of(system: &StreamSystem, key: &str) -> Vec<(i64, i64)> {
     system
         .points::<i64>(key)
         .expect("a count")
@@ -59,11 +62,12 @@ fn changes_of(system: &SequenceSystem, key: &str) -> Vec<(i64, i64)> {
 }
 
 /// The three outputs on one formula.
-fn processor(formula: &Formula) -> Processor {
-    Processor::new()
-        .with("presence", Output::per_entity(by_agent(), formula.clone()))
-        .with("anyone", Output::any_entity(by_agent(), formula.clone()))
-        .with("crowd", Output::count_entities(by_agent(), formula.clone()))
+fn processor(formula: &Formula) -> Vec<Processor> {
+    vec![
+        Processor::new("presence", Output::per_entity(by_agent(), formula.clone())),
+        Processor::new("anyone", Output::any_entity(by_agent(), formula.clone())),
+        Processor::new("crowd", Output::count_entities(by_agent(), formula.clone())),
+    ]
 }
 
 // ---------------------------------------------------------------------------
@@ -117,7 +121,7 @@ fn an_entity_is_the_formula_over_its_own_records() {
 
         // The door is shared by every agent, the records are not.
         let formula = present().and(Formula::state("door"));
-        let result = processor(&formula).run(&system).expect("a result");
+        let result = update::run(&system, &processor(&formula)).expect("a result");
 
         for agent in 0..4 {
             let (hand, first) = filtered(&system, agent);
@@ -139,7 +143,7 @@ fn an_entity_is_the_formula_over_its_own_records() {
 fn any_is_the_union_of_the_entities() {
     for_each_seed(CASES, |random, _| {
         let system = gate(crossings(random));
-        let result = processor(&present()).run(&system).expect("a result");
+        let result = update::run(&system, &processor(&present())).expect("a result");
 
         let members: Vec<&TimeIntervalSequence> = result
             .keys()
@@ -166,7 +170,7 @@ fn the_count_is_the_number_of_active_entities_at_every_instant() {
             DOMAIN_START,
             DOMAIN_END + 8,
         )]));
-        let result = processor(&present()).run(&system).expect("a result");
+        let result = update::run(&system, &processor(&present())).expect("a result");
 
         let members: Vec<&TimeIntervalSequence> = result
             .keys()
@@ -204,7 +208,7 @@ fn the_durations_of_the_entities_add_up_to_the_count_times_its_duration() {
         let mut system = gate(crossings(random));
         let horizon = DOMAIN_END + 8;
         system.observe(&Extent::from_spans(vec![span(0, horizon)]));
-        let result = processor(&present()).run(&system).expect("a result");
+        let result = update::run(&system, &processor(&present())).expect("a result");
 
         let entities: u64 = result
             .keys()
@@ -257,12 +261,16 @@ fn members_are_filed_under_the_output_and_the_entity() {
         ]
         .concat(),
     );
-    let result = Processor::new()
-        .with("presence", Output::per_entity(by_agent(), present()))
-        .run(&system)
-        .expect("a result");
+    let result = update::run(
+        &system,
+        &[Processor::new(
+            "presence",
+            Output::per_entity(by_agent(), present()),
+        )],
+    )
+    .expect("a result");
 
-    let keys: Vec<&str> = result.keys().map(Key::as_str).collect();
+    let keys: Vec<&str> = result.derived().map(Key::as_str).collect();
     assert_eq!(
         keys,
         [
@@ -279,14 +287,18 @@ fn members_are_filed_under_the_output_and_the_entity() {
 #[test]
 fn a_slash_in_the_text_of_an_entity_is_kept() {
     let system = gate(visits(Value::from("zone/east"), &[(10, "in"), (20, "out")]));
-    let result = Processor::new()
-        .with("presence", Output::per_entity(by_agent(), present()))
-        .run(&system)
-        .expect("a result");
+    let result = update::run(
+        &system,
+        &[Processor::new(
+            "presence",
+            Output::per_entity(by_agent(), present()),
+        )],
+    )
+    .expect("a result");
 
     assert_eq!(spans_of(&result, "presence/zone/east"), [(10, 20)]);
     assert_eq!(
-        result.lineage_entity("presence/zone/east"),
+        result.entity("presence/zone/east"),
         Some(&Value::from("zone/east"))
     );
 }
@@ -301,12 +313,16 @@ fn only_a_boolean_a_number_or_text_names_an_entity() {
         (14, crossing(Value::from(7), "in")),
         (15, Value::from(3)),
     ];
-    let result = Processor::new()
-        .with("presence", Output::per_entity(by_agent(), present()))
-        .run(&gate(records))
-        .expect("a result");
+    let result = update::run(
+        &gate(records),
+        &[Processor::new(
+            "presence",
+            Output::per_entity(by_agent(), present()),
+        )],
+    )
+    .expect("a result");
 
-    let keys: Vec<&str> = result.keys().map(Key::as_str).collect();
+    let keys: Vec<&str> = result.derived().map(Key::as_str).collect();
     assert_eq!(keys, ["presence/7"]);
 }
 
@@ -320,10 +336,14 @@ fn records_of_other_entities_and_of_none_are_not_part_of_an_entity() {
         (14, crossing(Value::from(9), "out")),
         (20, crossing(Value::from(7), "out")),
     ]);
-    let result = Processor::new()
-        .with("presence", Output::per_entity(by_agent(), present()))
-        .run(&system)
-        .expect("a result");
+    let result = update::run(
+        &system,
+        &[Processor::new(
+            "presence",
+            Output::per_entity(by_agent(), present()),
+        )],
+    )
+    .expect("a result");
 
     assert_eq!(spans_of(&result, "presence/7"), [(10, 20)]);
     // Agent 9 only ever left: nothing began.
@@ -337,12 +357,16 @@ fn equal_numbers_are_one_entity_named_after_the_first() {
         (15, crossing(Value::from(5.0), "out")),
         (20, crossing(Value::from(5.0), "in")),
     ]);
-    let result = Processor::new()
-        .with("presence", Output::per_entity(by_agent(), present()))
-        .run(&system)
-        .expect("a result");
+    let result = update::run(
+        &system,
+        &[Processor::new(
+            "presence",
+            Output::per_entity(by_agent(), present()),
+        )],
+    )
+    .expect("a result");
 
-    let keys: Vec<&str> = result.keys().map(Key::as_str).collect();
+    let keys: Vec<&str> = result.derived().map(Key::as_str).collect();
     assert_eq!(keys, ["presence/5"]);
     assert_eq!(result.intervals("presence/5").expect("a member").len(), 2);
 }
@@ -357,7 +381,7 @@ fn two_entities_with_one_name_are_refused() {
     let output = Output::per_entity(by_agent(), present());
 
     assert_eq!(
-        Processor::new().with("presence", output).run(&system),
+        update::run(&system, &[Processor::new("presence", output)]),
         Err(ProcessError::DuplicateMember {
             key: "presence/5".into()
         })
@@ -367,20 +391,22 @@ fn two_entities_with_one_name_are_refused() {
 #[test]
 fn an_entity_cannot_take_the_key_of_another_output() {
     let system = gate(visits(Value::from(7), &[(10, "in")]));
-    let processor = Processor::new()
-        .with("presence", Output::per_entity(by_agent(), present()))
-        .with("presence/7", Formula::state("nothing"));
+    let processor = vec![
+        Processor::new("presence", Output::per_entity(by_agent(), present())),
+        Processor::new("presence/7", Formula::state("nothing")),
+    ];
 
     assert!(matches!(
-        processor.run(&system),
+        update::run(&system, &processor),
         Err(ProcessError::UnknownKey { .. } | ProcessError::DuplicateMember { .. })
     ));
 
-    let processor = Processor::new()
-        .with("presence", Output::per_entity(by_agent(), present()))
-        .with("presence/7", Output::any_entity(by_agent(), present()));
+    let processor = vec![
+        Processor::new("presence", Output::per_entity(by_agent(), present())),
+        Processor::new("presence/7", Output::any_entity(by_agent(), present())),
+    ];
     assert_eq!(
-        processor.run(&system),
+        update::run(&system, &processor),
         Err(ProcessError::DuplicateMember {
             key: "presence/7".into()
         })
@@ -400,7 +426,7 @@ fn an_entity_exists_from_its_first_record() {
     ]);
     // Absent: observed and not present.
     let absent = !present();
-    let result = processor(&absent).run(&system).expect("a result");
+    let result = update::run(&system, &processor(&absent)).expect("a result");
 
     // Agent 7 is absent from its leaving, and nothing is said before its first
     // record.
@@ -425,9 +451,9 @@ fn with_no_entity_nothing_is_active_and_the_count_is_zero() {
         10,
         Value::record([("direction", Value::from("in"))]),
     )]);
-    let result = processor(&present()).run(&system).expect("a result");
+    let result = update::run(&system, &processor(&present())).expect("a result");
 
-    assert_eq!(result.keys().count(), 2);
+    assert_eq!(result.derived().count(), 2);
     assert!(result.intervals("anyone").expect("a timeline").is_empty());
     assert_eq!(changes_of(&result, "crowd"), [(i64::MIN, 0)]);
 }
@@ -440,7 +466,7 @@ fn a_hand_over_at_one_instant_counts_once() {
         (20, crossing(Value::from(2), "in")),
         (30, crossing(Value::from(2), "out")),
     ]);
-    let result = processor(&present()).run(&system).expect("a result");
+    let result = update::run(&system, &processor(&present())).expect("a result");
 
     // No point at 20: one agent leaves as another enters.
     assert_eq!(
@@ -462,13 +488,14 @@ fn the_count_is_known_where_every_entity_is() {
         TimeIntervalSequence::from_spans("door", vec![span(0, 100)])
             .with_observed(Extent::from_spans(vec![span(0, 40), span(60, 100)])),
     );
-    let result = Processor::new()
-        .with(
+    let result = update::run(
+        &system,
+        &[Processor::new(
             "crowd",
             Output::count_entities(by_agent(), present().and(Formula::state("door"))),
-        )
-        .run(&system)
-        .expect("a result");
+        )],
+    )
+    .expect("a result");
 
     let crowd = result.points::<i64>("crowd").expect("a count");
     // Two runs, each opening with a point; the gap [40, 60) has none. Before
@@ -502,23 +529,25 @@ fn two_agents() -> SequenceSystem {
 #[test]
 fn another_formula_may_read_a_member_of_a_per_entity_output() {
     // Added before the output it reads: the order does not matter.
-    let processor = Processor::new()
-        .with("seven_again", Formula::state("presence/7").shift(0, 5))
-        .with("presence", Output::per_entity(by_agent(), present()));
-    let result = processor.run(&two_agents()).expect("a result");
+    let processor = vec![
+        Processor::new("seven_again", Formula::state("presence/7").shift(0, 5)),
+        Processor::new("presence", Output::per_entity(by_agent(), present())),
+    ];
+    let result = update::run(&two_agents(), &processor).expect("a result");
 
     assert_eq!(spans_of(&result, "seven_again"), [(10, 25)]);
-    assert!(processor.check().is_ok());
+    assert!(processor.iter().all(|processor| processor.check().is_ok()));
 }
 
 #[test]
 fn a_member_of_an_entity_that_does_not_exist_is_unknown() {
-    let processor = Processor::new()
-        .with("presence", Output::per_entity(by_agent(), present()))
-        .with("ghost", Formula::state("presence/12"));
+    let processor = vec![
+        Processor::new("presence", Output::per_entity(by_agent(), present())),
+        Processor::new("ghost", Formula::state("presence/12")),
+    ];
 
     assert_eq!(
-        processor.run(&two_agents()),
+        update::run(&two_agents(), &processor),
         Err(ProcessError::UnknownKey {
             key: "presence/12".into()
         })
@@ -527,13 +556,13 @@ fn a_member_of_an_entity_that_does_not_exist_is_unknown() {
 
 #[test]
 fn a_per_entity_formula_that_reads_its_own_members_is_a_cycle() {
-    let processor = Processor::new().with(
+    let processor = [Processor::new(
         "presence",
         Output::per_entity(by_agent(), present().or(Formula::state("presence/7"))),
-    );
+    )];
 
     assert_eq!(
-        processor.check(),
+        processor[0].check(),
         Err(ProcessError::Cycle {
             keys: vec!["presence".into()]
         })
@@ -542,15 +571,16 @@ fn a_per_entity_formula_that_reads_its_own_members_is_a_cycle() {
 
 #[test]
 fn any_and_count_are_read_by_their_own_key_like_any_output() {
-    let processor = Processor::new()
-        .with(
+    let processor = vec![
+        Processor::new(
             "alone",
             Formula::while_matching(Pattern::new("crowd", Condition::Equals(1_i64)))
                 .and(Formula::state("anyone")),
-        )
-        .with("anyone", Output::any_entity(by_agent(), present()))
-        .with("crowd", Output::count_entities(by_agent(), present()));
-    let result = processor.run(&two_agents()).expect("a result");
+        ),
+        Processor::new("anyone", Output::any_entity(by_agent(), present())),
+        Processor::new("crowd", Output::count_entities(by_agent(), present())),
+    ];
+    let result = update::run(&two_agents(), &processor).expect("a result");
 
     // Agent 7 alone from 10 to 12, agent 9 alone from 20 to 30.
     assert_eq!(spans_of(&result, "alone"), [(10, 12), (20, 30)]);
@@ -559,23 +589,24 @@ fn any_and_count_are_read_by_their_own_key_like_any_output() {
 #[test]
 fn the_group_reads_an_output_of_the_same_processor() {
     // The records of a group may be an output of the processor.
-    let processor = Processor::new()
-        .with(
+    let processor = vec![
+        Processor::new(
             "entered",
             chronoloom::Events::Matching(Pattern::field(
                 "gate",
                 "direction",
                 Condition::Equals(Value::from("in")),
             )),
-        )
-        .with(
+        ),
+        Processor::new(
             "arrivals",
             Output::per_entity(
                 Group::new("entered", "agent"),
                 Formula::occurs(Pattern::field("entered", "direction", Condition::Any)),
             ),
-        );
-    let result = processor.run(&two_agents()).expect("a result");
+        ),
+    ];
+    let result = update::run(&two_agents(), &processor).expect("a result");
 
     assert_eq!(spans_of(&result, "arrivals/7"), [(10, 11)]);
     assert_eq!(spans_of(&result, "arrivals/9"), [(12, 13)]);
@@ -586,56 +617,62 @@ fn the_group_reads_an_output_of_the_same_processor() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn each_member_keeps_the_output_and_its_entity() {
+fn each_member_knows_its_processor_and_its_entity() {
     let output = Output::per_entity(by_agent(), present());
-    let processor = Processor::new().with("presence", output.clone());
-    let mut system = two_agents();
-    processor.apply(&mut system).expect("applied");
+    let system = update::run(&two_agents(), &[Processor::new("presence", output.clone())])
+        .expect("a result");
 
-    assert_eq!(system.lineage("presence/7"), Some(&output));
-    assert_eq!(system.lineage_entity("presence/9"), Some(&Value::from(9)));
-    assert_eq!(system.lineage_entity("gate"), None);
-
-    // Recording into a member forgets both.
-    system.insert("keep", TimeIntervalSequence::new("keep"));
-    assert_eq!(system.lineage("keep"), None);
+    assert_eq!(
+        system.producer("presence/7").map(Processor::formula),
+        Some(&output)
+    );
+    assert_eq!(system.entity("presence/9"), Some(&Value::from(9)));
+    assert_eq!(system.entity("gate"), None);
+    assert!(system.is_derived("presence/7") && !system.is_derived("gate"));
 }
 
 #[test]
-fn a_member_is_derived_again_from_the_current_records() {
-    let mut system = two_agents();
-    Processor::new()
-        .with("presence", Output::per_entity(by_agent(), present()))
-        .with("anyone", Output::any_entity(by_agent(), present()))
-        .apply(&mut system)
-        .expect("applied");
+fn an_update_derives_the_members_again_from_the_current_records() {
+    let mut system = update::run(
+        &two_agents(),
+        &[
+            Processor::new("presence", Output::per_entity(by_agent(), present())),
+            Processor::new("anyone", Output::any_entity(by_agent(), present())),
+        ],
+    )
+    .expect("a result");
     assert_eq!(spans_of(&system, "presence/7"), [(10, 20)]);
 
-    system
-        .record_point(
-            "gate",
-            TimePointEvent::new(40, crossing(Value::from(7), "in")),
-        )
-        .expect("recorded");
-    system.rederive("presence/7").expect("derived again");
-    system.rederive("anyone").expect("derived again");
+    let mut update = Update::new();
+    update.points(
+        "gate",
+        [TimePointEvent::new(40, crossing(Value::from(7), "in"))],
+    );
+    let report = system.update(update).expect("recorded");
 
     assert_eq!(spans_of(&system, "presence/7")[0], (10, 20));
     assert_eq!(spans_of(&system, "presence/7").len(), 2);
-    // The other member is untouched, and still a member of the output.
+    // The other member did not change, and is still a member of the output.
+    assert!(report.changed().contains("presence/7") && !report.changed().contains("presence/9"));
     assert_eq!(spans_of(&system, "presence/9"), [(12, 30)]);
-    assert_eq!(system.lineage_entity("presence/7"), Some(&Value::from(7)));
+    assert_eq!(system.entity("presence/7"), Some(&Value::from(7)));
 }
 
 #[test]
-fn applying_inserts_every_member_or_none() {
-    let mut system = two_agents();
+fn a_processor_that_cannot_be_evaluated_changes_nothing() {
+    let mut system = update::run(
+        &two_agents(),
+        &[Processor::new(
+            "presence",
+            Output::per_entity(by_agent(), present()),
+        )],
+    )
+    .expect("a result");
     let before = system.clone();
-    let processor = Processor::new()
-        .with("presence", Output::per_entity(by_agent(), present()))
-        .with("broken", Formula::state("nothing"));
 
-    assert!(processor.apply(&mut system).is_err());
+    assert!(system
+        .add_processor(Processor::new("broken", Formula::state("nothing")))
+        .is_err());
     assert_eq!(system, before);
 }
 

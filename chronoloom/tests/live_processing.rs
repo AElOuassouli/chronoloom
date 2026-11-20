@@ -6,17 +6,19 @@
 mod common;
 #[path = "common/streams.rs"]
 mod streams;
+#[path = "common/update.rs"]
+mod update;
 
 use std::collections::BTreeMap;
 
 use chronoloom::{
     AnyValue, Condition, Edge, Emission, Emitted, Events, Formula, Key, LiveProcessor, OpenEnd,
-    Output, Pattern, ProcessError, Processor, SequenceSystem, TimeIntervalEvent,
+    Output, Pattern, ProcessError, Processor, SequenceSystem, StreamSystem, TimeIntervalEvent,
     TimeIntervalSequence, TimePointEvent, TimePointSequence, Value,
 };
 
 use common::{bounds, for_each_seed, span};
-use streams::{processor, stream, Op, Stream, POINT_INPUTS, RECORD_INPUTS, STATE_INPUTS};
+use streams::{processors, stream, Op, Stream, POINT_INPUTS, RECORD_INPUTS, STATE_INPUTS};
 
 const CASES: u64 = 500;
 
@@ -42,11 +44,11 @@ fn headless(formula: &Formula) -> Formula {
     }
 }
 
-fn reference_processor(processor: &Processor) -> Processor {
+fn reference_processor(processor: &[Processor]) -> Vec<Processor> {
     processor
-        .outputs()
         .iter()
-        .fold(Processor::new(), |reference, (key, output)| {
+        .map(|processor| {
+            let (key, output) = (processor.output(), processor.formula());
             let output: Output = match output {
                 Output::State(formula) => headless(formula).into(),
                 Output::Events(Events::Edges(formula)) => Events::Edges(headless(formula)).into(),
@@ -63,8 +65,9 @@ fn reference_processor(processor: &Processor) -> Processor {
                     Output::count_entities(by.clone(), headless(formula))
                 }
             };
-            reference.with(key.clone(), output)
+            Processor::new(key.clone(), output)
         })
+        .collect()
 }
 
 /// The lag rule, written again from its statement, for a formula.
@@ -159,8 +162,8 @@ type Observer<'a> = dyn FnMut(&LiveProcessor, &BTreeMap<String, i64>, &[Emission
 /// Feed the stream, then finish, calling `observe` after each call that returns
 /// emissions with the live processor, the watermarks, and what the call
 /// returned.
-fn replay(processor: &Processor, stream: &Stream, observe: &mut Observer) -> Vec<Emission> {
-    let mut live = processor.live(stream.from).expect("a valid processor");
+fn replay(processor: &[Processor], stream: &Stream, observe: &mut Observer) -> Vec<Emission> {
+    let mut live = LiveProcessor::new(processor, stream.from).expect("a valid processor");
     let mut marks: BTreeMap<String, i64> = POINT_INPUTS
         .iter()
         .chain(&STATE_INPUTS)
@@ -213,7 +216,7 @@ fn replay(processor: &Processor, stream: &Stream, observe: &mut Observer) -> Vec
 /// What one output is in the batch result: its edges or its matching values,
 /// as `(instant, tag)` with the tag `0` for a start, `1` for an end, and the
 /// value for a matching point.
-fn expected(reference: &SequenceSystem, key: &str, output: &Output) -> Vec<(i64, i64)> {
+fn expected(reference: &StreamSystem, key: &str, output: &Output) -> Vec<(i64, i64)> {
     match output {
         Output::PerEntity { .. } => unreachable!("a group has a member per entity"),
         Output::State(_) | Output::AnyEntity { .. } => reference
@@ -234,7 +237,7 @@ fn expected(reference: &SequenceSystem, key: &str, output: &Output) -> Vec<(i64,
 }
 
 /// The members of the per-entity output `key` in the batch result.
-fn members_of(reference: &SequenceSystem, key: &Key) -> Vec<Key> {
+fn members_of(reference: &StreamSystem, key: &Key) -> Vec<Key> {
     let prefix = format!("{key}/");
     reference
         .keys()
@@ -257,7 +260,7 @@ fn tag_value(value: &Value) -> i64 {
 }
 
 /// The points of a point output of the batch result, as `(instant, tag)`.
-fn point_tags(reference: &SequenceSystem, key: &str) -> Vec<(i64, i64)> {
+fn point_tags(reference: &StreamSystem, key: &str) -> Vec<(i64, i64)> {
     if let Some(points) = reference.points::<i64>(key) {
         points
             .iter()
@@ -318,10 +321,9 @@ fn emitted_for(emissions: &[Emission], key: &str) -> Vec<(i64, i64)> {
 #[test]
 fn online_equals_batch_below_every_frontier_and_in_the_end() {
     for_each_seed(CASES, |random, _| {
-        let processor = processor(random);
+        let processor = processors(random);
         let stream = stream(random);
-        let reference = reference_processor(&processor)
-            .run(&batch_inputs(&stream))
+        let reference = update::run(&batch_inputs(&stream), &reference_processor(&processor))
             .expect("the batch result");
 
         let fed = stream
@@ -343,7 +345,7 @@ fn online_equals_batch_below_every_frontier_and_in_the_end() {
             assert!(live.retained() <= 2 * fed, "never more than was fed");
 
             let mut outputs: BTreeMap<String, i64> = BTreeMap::new();
-            for (key, output) in processor.outputs() {
+            for (key, output) in processor.iter().map(|p| (p.output(), p.formula())) {
                 let frontier = live.frontier(key.as_str()).expect("an output");
                 if let Some(&before) = frontiers.get(key.as_str()) {
                     assert!(frontier >= before, "{key}: the frontier went back");
@@ -440,9 +442,8 @@ fn online_equals_batch_below_every_frontier_and_in_the_end() {
                     wanted,
                     "{key} below {frontier} {:?} {:?}",
                     processor
-                        .outputs()
                         .iter()
-                        .map(|(k, o)| format!("{k}={o}"))
+                        .map(ToString::to_string)
                         .collect::<Vec<_>>(),
                     stream.ops
                 );
@@ -452,7 +453,7 @@ fn online_equals_batch_below_every_frontier_and_in_the_end() {
         // Running again gives the same emissions, instant by instant per output.
         assert_eq!(all, replay(&processor, &stream, &mut |_, _, _| {}));
 
-        for (key, output) in processor.outputs() {
+        for (key, output) in processor.iter().map(|p| (p.output(), p.formula())) {
             if let Output::PerEntity { formula, .. } = output {
                 let members = members_of(&reference, key);
                 let prefix = format!("{key}/");
@@ -507,7 +508,7 @@ fn online_equals_batch_below_every_frontier_and_in_the_end() {
                 assert_eq!(bounds(&timeline), bounds(batch), "{key} rebuilt");
             }
         }
-        for key in processor.outputs().keys() {
+        for key in processor.iter().map(Processor::output) {
             assert_eq!(
                 processor_frontier_after_finish(&processor, &stream, key.as_str()),
                 Some(i64::MAX)
@@ -517,11 +518,11 @@ fn online_equals_batch_below_every_frontier_and_in_the_end() {
 }
 
 fn processor_frontier_after_finish(
-    processor: &Processor,
+    processor: &[Processor],
     stream: &Stream,
     key: &str,
 ) -> Option<i64> {
-    let mut live = processor.live(stream.from).expect("valid");
+    let mut live = LiveProcessor::new(processor, stream.from).expect("valid");
     live.finish(stream.horizon).expect("finishing");
     live.frontier(key)
 }
@@ -530,11 +531,11 @@ fn processor_frontier_after_finish(
 // Examples and edge cases
 // ---------------------------------------------------------------------------
 
-fn busy() -> Processor {
-    Processor::new().with(
+fn busy() -> Vec<Processor> {
+    vec![Processor::new(
         "busy",
         Formula::while_matching(Pattern::new("count", Condition::Greater(5_i64))),
-    )
+    )]
 }
 
 fn edges(emitted: &[Emission]) -> Vec<(i64, Edge)> {
@@ -549,7 +550,7 @@ fn edges(emitted: &[Emission]) -> Vec<(i64, Edge)> {
 
 #[test]
 fn a_start_is_emitted_before_its_span_closes_and_finish_closes_it() {
-    let mut live = busy().live(0).expect("valid");
+    let mut live = LiveProcessor::new(&busy(), 0).expect("valid");
     live.on_point("count", TimePointEvent::new(7, 9_i64))
         .expect("on time");
 
@@ -566,7 +567,7 @@ fn a_start_is_emitted_before_its_span_closes_and_finish_closes_it() {
 
 #[test]
 fn nothing_is_emitted_for_what_is_unknown() {
-    let mut live = busy().live(0).expect("valid");
+    let mut live = LiveProcessor::new(&busy(), 0).expect("valid");
     live.on_point("count", TimePointEvent::new(4, 1_i64))
         .expect("on time");
 
@@ -578,10 +579,11 @@ fn nothing_is_emitted_for_what_is_unknown() {
 #[test]
 fn a_shift_lags_its_input_by_its_smaller_bound() {
     let shifted = Formula::occurs(Pattern::new("door", Condition::Any::<i64>));
-    let processor = Processor::new()
-        .with("early", shifted.clone().shift(-2, 2))
-        .with("late", shifted.shift(3, 5));
-    let mut live = processor.live(0).expect("valid");
+    let processor = vec![
+        Processor::new("early", shifted.clone().shift(-2, 2)),
+        Processor::new("late", shifted.shift(3, 5)),
+    ];
+    let mut live = LiveProcessor::new(&processor, 0).expect("valid");
 
     live.advance("door", 10).expect("known");
     assert_eq!(live.frontier("early"), Some(8));
@@ -590,13 +592,14 @@ fn a_shift_lags_its_input_by_its_smaller_bound() {
 
 #[test]
 fn chained_outputs_chain_their_lags() {
-    let processor = Processor::new()
-        .with(
+    let processor = vec![
+        Processor::new(
             "first",
             Formula::occurs(Pattern::new("door", Condition::Any::<i64>)).shift(-1, -1),
-        )
-        .with("second", Formula::state("first").shift(-2, -2));
-    let mut live = processor.live(0).expect("valid");
+        ),
+        Processor::new("second", Formula::state("first").shift(-2, -2)),
+    ];
+    let mut live = LiveProcessor::new(&processor, 0).expect("valid");
 
     live.on_point("door", TimePointEvent::new(5, 1_i64))
         .expect("on time");
@@ -615,11 +618,11 @@ fn chained_outputs_chain_their_lags() {
 
 #[test]
 fn matching_emits_the_values_of_the_member() {
-    let processor = Processor::new().with(
+    let processor = vec![Processor::new(
         "high",
         Events::Matching(Pattern::new("reading", Condition::Greater(1.5_f64))),
-    );
-    let mut live = processor.live(0).expect("valid");
+    )];
+    let mut live = LiveProcessor::new(&processor, 0).expect("valid");
     for (at, value) in [(1, 1.0), (2, 2.0), (3, 3.0)] {
         live.on_point("reading", TimePointEvent::new(at, value))
             .expect("on time");
@@ -639,15 +642,15 @@ fn matching_emits_the_values_of_the_member() {
 
 #[test]
 fn head_is_the_frontier_online() {
-    let processor = Processor::new().with(
+    let processor = vec![Processor::new(
         "open",
         Formula::between_with(
             Pattern::new("motion", Condition::Equals(1_i64)),
             Pattern::new("motion", Condition::Equals(0_i64)),
             OpenEnd::Head,
         ),
-    );
-    let mut live = processor.live(0).expect("valid");
+    )];
+    let mut live = LiveProcessor::new(&processor, 0).expect("valid");
     live.on_point("motion", TimePointEvent::new(5, 1_i64))
         .expect("on time");
 
@@ -660,7 +663,7 @@ fn head_is_the_frontier_online() {
 
 #[test]
 fn late_unknown_and_mistyped_events_are_refused_and_change_nothing() {
-    let mut live = busy().live(10).expect("valid");
+    let mut live = LiveProcessor::new(&busy(), 10).expect("valid");
 
     assert_eq!(
         live.on_point("count", TimePointEvent::new(3, 1_i64)),
@@ -697,8 +700,8 @@ fn late_unknown_and_mistyped_events_are_refused_and_change_nothing() {
 
 #[test]
 fn a_timeline_input_takes_spans() {
-    let processor = Processor::new().with("away", !Formula::state("home"));
-    let mut live = processor.live(0).expect("valid");
+    let processor = vec![Processor::new("away", !Formula::state("home"))];
+    let mut live = LiveProcessor::new(&processor, 0).expect("valid");
 
     assert!(matches!(
         live.on_point("home", TimePointEvent::new(1, 1_i64)),
@@ -714,45 +717,53 @@ fn a_timeline_input_takes_spans() {
 
 #[test]
 fn a_processor_that_cannot_run_is_refused_when_built() {
-    let cycle = Processor::new()
-        .with("a", Formula::state("b"))
-        .with("b", Formula::state("a"));
-    assert!(matches!(cycle.live(0), Err(ProcessError::Cycle { .. })));
+    let cycle = vec![
+        Processor::new("a", Formula::state("b")),
+        Processor::new("b", Formula::state("a")),
+    ];
+    assert!(matches!(
+        LiveProcessor::new(&cycle, 0),
+        Err(ProcessError::Cycle { .. })
+    ));
 
-    let clash = Processor::new().with(
+    let clash = vec![Processor::new(
         "x",
         Formula::state("m").and(Formula::occurs(Pattern::new("m", Condition::Any::<i64>))),
-    );
-    assert!(matches!(clash.live(0), Err(ProcessError::NotPoints { .. })));
+    )];
+    assert!(matches!(
+        LiveProcessor::new(&clash, 0),
+        Err(ProcessError::NotPoints { .. })
+    ));
 
-    let types = Processor::new().with(
+    let types = vec![Processor::new(
         "x",
         Formula::occurs(Pattern::new("m", Condition::Any::<i64>))
             .and(Formula::occurs(Pattern::new("m", Condition::Any::<f64>))),
-    );
+    )];
     assert!(matches!(
-        types.live(0),
+        LiveProcessor::new(&types, 0),
         Err(ProcessError::ValueTypeMismatch { .. })
     ));
 
-    let fields = Processor::new().with(
+    let fields = vec![Processor::new(
         "x",
         Formula::occurs(Pattern::field("m", "n", Condition::Any))
             .and(Formula::occurs(Pattern::new("m", Condition::Any::<i64>))),
-    );
+    )];
     assert!(matches!(
-        fields.live(0),
+        LiveProcessor::new(&fields, 0),
         Err(ProcessError::ValueTypeMismatch { .. })
     ));
 
-    let chained = Processor::new()
-        .with("edges", Events::Edges(Formula::state("up")))
-        .with(
+    let chained = vec![
+        Processor::new("edges", Events::Edges(Formula::state("up"))),
+        Processor::new(
             "x",
             Formula::occurs(Pattern::new("edges", Condition::Any::<i64>)),
-        );
+        ),
+    ];
     assert!(matches!(
-        chained.live(0),
+        LiveProcessor::new(&chained, 0),
         Err(ProcessError::ValueTypeMismatch { .. })
     ));
 }
@@ -764,21 +775,22 @@ fn a_processor_that_cannot_run_is_refused_when_built() {
 #[test]
 fn the_retained_window_stays_small_on_a_long_stream() {
     let count = |at: i64| Pattern::new("count", Condition::Greater(at));
-    let processor = Processor::new()
-        .with("busy", Formula::while_matching(count(5_i64)))
-        .with(
+    let processor = vec![
+        Processor::new("busy", Formula::while_matching(count(5_i64))),
+        Processor::new(
             "spike",
             Events::Edges(Formula::occurs(count(8_i64)).shift(-2, 5)),
-        )
-        .with(
+        ),
+        Processor::new(
             "episode",
             Formula::between(
                 Pattern::new("count", Condition::Greater(8_i64)),
                 Pattern::new("count", Condition::Less(3_i64)),
             ),
-        )
-        .with("calm", !Formula::state("busy"));
-    let mut live = processor.live(0).expect("valid");
+        ),
+        Processor::new("calm", !Formula::state("busy")),
+    ];
+    let mut live = LiveProcessor::new(&processor, 0).expect("valid");
 
     let mut worst = 0;
     for tick in 0..3_000_i64 {
@@ -796,11 +808,11 @@ fn the_retained_window_stays_small_on_a_long_stream() {
 
 #[test]
 fn a_long_open_span_keeps_what_it_needs_and_no_more() {
-    let processor = Processor::new().with(
+    let processor = vec![Processor::new(
         "held",
         Formula::while_matching(Pattern::new("mode", Condition::Equals(1_i64))),
-    );
-    let mut live = processor.live(0).expect("valid");
+    )];
+    let mut live = LiveProcessor::new(&processor, 0).expect("valid");
     live.on_point("mode", TimePointEvent::new(1, 1_i64))
         .expect("on time");
     let mut emitted = Vec::new();
@@ -819,14 +831,14 @@ fn a_long_open_span_keeps_what_it_needs_and_no_more() {
 
 #[test]
 fn point_events_and_the_bound_agree_with_the_batch_on_a_long_stream() {
-    let processor = Processor::new().with(
+    let processor = vec![Processor::new(
         "run",
         Formula::between(
             Pattern::new("signal", Condition::Equals(1_i64)),
             Pattern::new("signal", Condition::Equals(0_i64)),
         ),
-    );
-    let mut live = processor.live(0).expect("valid");
+    )];
+    let mut live = LiveProcessor::new(&processor, 0).expect("valid");
     let mut batch = TimePointSequence::<i64>::new("signal");
     let mut all = Vec::new();
     for tick in 0..1_000_i64 {
@@ -846,7 +858,7 @@ fn point_events_and_the_bound_agree_with_the_batch_on_a_long_stream() {
             TimeIntervalEvent::span(i64::MIN, 1_000).expect("ordered"),
         ])),
     );
-    let expected = processor.run(&system).expect("batch");
+    let expected = update::run(&system, &processor).expect("batch");
     let spans: Vec<(i64, i64)> = bounds(expected.intervals("run").expect("timeline"));
     let rebuilt: Vec<(i64, Edge)> = edges(&all);
     let from_batch: Vec<(i64, Edge)> = spans
@@ -858,11 +870,11 @@ fn point_events_and_the_bound_agree_with_the_batch_on_a_long_stream() {
 
 #[test]
 fn a_sample_stops_holding_at_its_timeout_online() {
-    let silent = Processor::new().with(
+    let silent = vec![Processor::new(
         "busy",
         Formula::while_within(Pattern::new("count", Condition::Greater(5_i64)), 10),
-    );
-    let mut live = silent.live(0).expect("valid");
+    )];
+    let mut live = LiveProcessor::new(&silent, 0).expect("valid");
     live.on_point("count", TimePointEvent::new(7, 9_i64))
         .expect("on time");
 
@@ -882,13 +894,14 @@ fn a_sample_stops_holding_at_its_timeout_online() {
 
 #[test]
 fn a_stream_of_any_length_with_a_timeout_is_held_in_constant_space() {
-    let silent = Processor::new()
-        .with(
+    let silent = vec![
+        Processor::new(
             "busy",
             Formula::while_within(Pattern::new("count", Condition::Greater(5_i64)), 3),
-        )
-        .with("steps", Events::changes("count"));
-    let mut live = silent.live(0).expect("valid");
+        ),
+        Processor::new("steps", Events::changes("count")),
+    ];
+    let mut live = LiveProcessor::new(&silent, 0).expect("valid");
 
     let mut most = 0;
     for step in 0..400_i64 {
@@ -902,8 +915,8 @@ fn a_stream_of_any_length_with_a_timeout_is_held_in_constant_space() {
 
 #[test]
 fn changes_emit_each_point_once_its_predecessor_is_known() {
-    let steps = Processor::new().with("steps", Events::changes("count"));
-    let mut live = steps.live(0).expect("valid");
+    let steps = vec![Processor::new("steps", Events::changes("count"))];
+    let mut live = LiveProcessor::new(&steps, 0).expect("valid");
     let values = |emitted: &[Emission]| -> Vec<(i64, i64)> {
         emitted
             .iter()
@@ -943,8 +956,8 @@ fn changes_emit_each_point_once_its_predecessor_is_known() {
 
 #[test]
 fn a_refused_first_event_does_not_give_an_input_its_type() {
-    let steps = Processor::new().with("steps", Events::changes("count"));
-    let mut live = steps.live(10).expect("valid");
+    let steps = vec![Processor::new("steps", Events::changes("count"))];
+    let mut live = LiveProcessor::new(&steps, 10).expect("valid");
 
     // Late for the frontier, so nothing is recorded and the type stays open.
     assert!(matches!(
@@ -958,13 +971,14 @@ fn a_refused_first_event_does_not_give_an_input_its_type() {
 
 #[test]
 fn a_read_of_a_changes_output_types_its_input() {
-    let processor = Processor::new()
-        .with("steps", Events::changes("count"))
-        .with(
+    let processor = vec![
+        Processor::new("steps", Events::changes("count")),
+        Processor::new(
             "busy",
             Formula::while_matching(Pattern::new("steps", Condition::Greater(5_i64))),
-        );
-    let mut live = processor.live(0).expect("valid");
+        ),
+    ];
+    let mut live = LiveProcessor::new(&processor, 0).expect("valid");
 
     assert!(matches!(
         live.on_point("count", TimePointEvent::new(1, "word")),

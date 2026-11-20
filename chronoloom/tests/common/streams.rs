@@ -164,15 +164,16 @@ fn formula(random: &mut Random, pools: &Pools, depth: u32) -> Formula {
     }
 }
 
-/// A processor of up to four outputs, each of which may read the ones before.
-pub fn processor(random: &mut Random) -> Processor {
+/// Up to four processors, each of which may read the outputs of the ones
+/// before it.
+pub fn processors(random: &mut Random) -> Vec<Processor> {
     let mut pools = Pools {
         states: STATE_INPUTS.map(String::from).to_vec(),
         numbers: POINT_INPUTS.map(String::from).to_vec(),
         edges: Vec::new(),
         records: RECORD_INPUTS.map(String::from).to_vec(),
     };
-    let mut processor = Processor::new();
+    let mut processors: Vec<Processor> = Vec::new();
 
     for index in 0..random.between(1, 5) {
         let key = format!("x{index}");
@@ -184,20 +185,23 @@ pub fn processor(random: &mut Random) -> Processor {
                 let body = formula(random, &pools, 2);
                 match random.below(3) {
                     0 => {
-                        processor.insert(key.as_str(), Output::per_entity(by, body));
+                        processors.push(Processor::new(key.as_str(), Output::per_entity(by, body)));
                     }
                     1 => {
-                        processor.insert(key.as_str(), Output::any_entity(by, body));
+                        processors.push(Processor::new(key.as_str(), Output::any_entity(by, body)));
                         pools.states.push(key);
                     }
                     _ => {
-                        processor.insert(key.as_str(), Output::count_entities(by, body));
+                        processors.push(Processor::new(
+                            key.as_str(),
+                            Output::count_entities(by, body),
+                        ));
                         pools.numbers.push(key);
                     }
                 }
             }
             0 => {
-                processor.insert(key.as_str(), formula(random, &pools, 3));
+                processors.push(Processor::new(key.as_str(), formula(random, &pools, 3)));
                 pools.states.push(key);
             }
             5 => {
@@ -209,7 +213,7 @@ pub fn processor(random: &mut Random) -> Processor {
                     &pools.records
                 };
                 let from = pick(random, pool);
-                processor.insert(key.as_str(), Events::changes(from));
+                processors.push(Processor::new(key.as_str(), Events::changes(from)));
                 if numbers {
                     pools.numbers.push(key);
                 } else {
@@ -218,13 +222,13 @@ pub fn processor(random: &mut Random) -> Processor {
             }
             3 => {
                 let read = Pattern::new(pick(random, &pools.records), record_condition(random));
-                processor.insert(key.as_str(), Events::Matching(read));
+                processors.push(Processor::new(key.as_str(), Events::Matching(read)));
                 pools.records.push(key);
             }
             4 => {
                 let from = pick(random, &pools.records);
                 let (projected, into) = projection(random, &from);
-                processor.insert(key.as_str(), projected);
+                processors.push(Processor::new(key.as_str(), projected));
                 match into {
                     Kind::Integer => pools.numbers.push(key),
                     Kind::Value => pools.records.push(key),
@@ -232,18 +236,21 @@ pub fn processor(random: &mut Random) -> Processor {
                 }
             }
             1 => {
-                processor.insert(key.as_str(), Events::Edges(formula(random, &pools, 3)));
+                processors.push(Processor::new(
+                    key.as_str(),
+                    Events::Edges(formula(random, &pools, 3)),
+                ));
                 pools.edges.push(key);
             }
             _ => {
                 let read = Pattern::new(pick(random, &pools.numbers), number_condition(random));
-                processor.insert(key.as_str(), Events::Matching(read));
+                processors.push(Processor::new(key.as_str(), Events::Matching(read)));
                 pools.numbers.push(key);
             }
         }
     }
 
-    processor
+    processors
 }
 
 // Random streams

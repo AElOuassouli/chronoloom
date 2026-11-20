@@ -28,7 +28,7 @@ impl SequenceSystem {
     /// The output that produced the member under `key`, if a processor wrote
     /// it and nothing has been recorded into it since.
     #[must_use]
-    pub fn lineage(&self, key: &str) -> Option<&Output> {
+    pub(crate) fn lineage(&self, key: &str) -> Option<&Output> {
         self.members
             .get(key)
             .and_then(|member| member.lineage.as_ref())
@@ -38,7 +38,7 @@ impl SequenceSystem {
     /// by a [`PerEntity`](Output::PerEntity) output and nothing has been recorded
     /// into it since.
     #[must_use]
-    pub fn lineage_entity(&self, key: &str) -> Option<&Value> {
+    pub(crate) fn lineage_entity(&self, key: &str) -> Option<&Value> {
         self.members
             .get(key)
             .and_then(|member| member.entity.as_ref())

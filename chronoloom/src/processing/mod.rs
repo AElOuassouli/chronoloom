@@ -6,8 +6,9 @@
 //! It is a tree whose leaves read a [`SequenceSystem`] through [`Pattern`]s
 //! (a key and a [`Condition`] on the points' values) and whose inner nodes are
 //! the set algebra of [`TimeIntervalSequence`]. [`Events`] are the formulas
-//! whose result is points, such as the [`Edge`]s of a state. A [`Processor`]
-//! is a set of them, each filed under the key of the member it produces.
+//! whose result is points, such as the [`Edge`]s of a state. A
+//! [`Processor`](crate::processor::Processor) is one recipe built on one, and a
+//! [`LiveProcessor`] runs a list of them online.
 //!
 //! [`SequenceSystem`]: crate::sequence_system::SequenceSystem
 //! [`TimeIntervalSequence`]: crate::sequences::TimeIntervalSequence
@@ -34,6 +35,7 @@ pub use emission::{Emission, Emitted};
 pub use errors::ProcessError;
 pub use events::Events;
 pub use formula::{Formula, OpenEnd};
+#[cfg(feature = "serde")]
 pub(crate) use group::render as entity_name;
 pub use group::Group;
 pub use input::Input;
@@ -41,4 +43,5 @@ pub use kind::Kind;
 pub use live::LiveProcessor;
 #[cfg(feature = "serde")]
 pub(crate) use live::{Checkpoint, Untyped};
-pub use processor::{Output, Processor};
+pub use processor::Output;
+pub(crate) use processor::ProcessorSet;

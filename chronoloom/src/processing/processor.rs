@@ -86,7 +86,7 @@ impl Output {
     ///
     /// As [`Formula::evaluate`] and [`Events::evaluate`];
     /// [`ProcessError::SeveralMembers`] for `PerEntity`, which has no single
-    /// sequence (run a [`Processor`]); for the grouped outputs, the errors of
+    /// sequence (add its processor to a stream system); for the grouped outputs, the errors of
     /// reading the records of the group like a projection does, and those of
     /// the formula.
     pub fn evaluate(&self, system: &SequenceSystem) -> Result<Sequence, ProcessError> {
@@ -120,7 +120,7 @@ impl Output {
     }
 
     /// Every key the output reads, with repeats.
-    pub(super) fn read_keys<'a>(&'a self, keys: &mut Vec<&'a Key>) {
+    pub(crate) fn read_keys<'a>(&'a self, keys: &mut Vec<&'a Key>) {
         match self {
             Self::State(formula) => formula.read_keys(keys),
             Self::Events(events) => events.read_keys(keys),
@@ -158,108 +158,53 @@ impl fmt::Display for Output {
     }
 }
 
-/// A set of formulas that turns the members of a system into new ones.
+/// Several processors as one set of outputs, each under its key, with the
+/// inputs they declare: the form the evaluation and the live processor take.
+/// Internal: the public recipe is [`Processor`](crate::processor::Processor),
+/// one output each.
 ///
-/// Each output is filed under a [`Key`] and says what that member is, as a
-/// [`Formula`] (a timeline) or [`Events`] (points). Turning point sequences
-/// into a timeline, a timeline into edges, or several states into one all go
-/// through a processor, so the sequence types hold only data, extent and the
-/// set algebra. A processor is data too: it can be compared, cloned and
-/// extended, and it is the same value whatever system it is run against.
-///
-/// ```
-/// use chronoloom::{Condition, Formula, Pattern, Processor, SequenceSystem};
-/// use chronoloom::{TimePointEvent, TimePointSequence};
-///
-/// let mut room = SequenceSystem::new();
-/// room.insert("count", TimePointSequence::from_events("count", vec![
-///     TimePointEvent::new(0, 3_i64),
-///     TimePointEvent::new(10, 8),
-///     TimePointEvent::new(20, 4),
-/// ]));
-///
-/// let crowded = Formula::while_matching(Pattern::new("count", Condition::Greater(5_i64)));
-/// let processor = Processor::new().with("crowded", crowded);
-///
-/// // `run` makes a system of the outputs alone, `apply` adds them to the input.
-/// let derived = processor.run(&room)?;
-/// assert_eq!(derived.intervals("crowded").map(|s| s.len()), Some(1));
-///
-/// processor.apply(&mut room)?;
-/// assert!(room.contains("count") && room.contains("crowded"));
-/// # Ok::<(), chronoloom::ProcessError>(())
-/// ```
-///
-/// # Chained outputs
-///
-/// A formula may name the key of another output of the same processor, and
-/// then reads that output, not a member of the system: an output wins over a
-/// member under the same key, inside the processor. Outputs are evaluated in
-/// dependency order, so "present while motion or door" can read the output
-/// "motion" without a second processor, and the order they were added in does
-/// not matter. A formula that reads its own key, or a loop of outputs, is a
-/// [`ProcessError::Cycle`], reported by [`run`], [`apply`] and [`check`] before
-/// anything is evaluated.
-///
-/// # Applying
-///
-/// [`apply`] evaluates all outputs before it inserts any, so a failure leaves
-/// the system as it was. An output replaces the member under its key, metadata
-/// included, as [`SequenceSystem::insert`] does, and the output is kept as the
-/// member's lineage; see [`SequenceSystem::lineage`].
-///
-/// # Declared inputs and validation
-///
-/// A processor can say what it expects of the members it reads, with
-/// [`with_input`](Processor::with_input): an [`Input`] per key, a timeline or
-/// points of one value type, and for records the [`Schema`] of their values.
-/// Declarations are optional, and a processor without any behaves as it
-/// always did. They serve three purposes.
-///
-/// - [`validate`] checks the processor against its own declarations without a
-///   system, and lists every problem rather than the first. It reports, in this
-///   order: the cycle, if any, as [`check`] does; each declared input that is
-///   also an output ([`ProcessError::InputIsOutput`]), in key order; then, for
-///   each output in key order, its problems in the order its formula reads
-///   them (the group of a per-entity output first, then the tree from left to
-///   right), each wrapped in [`ProcessError::InOutput`] naming the output. A
-///   read of a key that is neither an output nor a declared input is
-///   [`ProcessError::UnknownKey`] once any input is declared. A read that
-///   contradicts the declaration is [`ProcessError::NotATimeline`],
-///   [`ProcessError::NotPoints`] or [`ProcessError::ValueTypeMismatch`], and
-///   for a declared schema, a field pattern, projection or group whose path the
-///   schema lacks is [`ProcessError::MissingField`], a projection of a field of
-///   another kind is [`ProcessError::ProjectionMismatch`], and a field
-///   pattern comparing with a constant the field never has is
-///   [`ProcessError::FieldMismatch`]. Reads of outputs are not checked, and
-///   members of a per-entity output are known only when their entities are, so
-///   no duplicate member key is known statically.
-/// - [`check`] stays the cheap test, cycles only: when it fails, the first
-///   error of `validate` is the same error.
-/// - [`run`] and [`apply`] check the system against the declarations before
-///   anything is evaluated: a declared input the system lacks is
-///   [`ProcessError::UnknownKey`], one of another shape or value type is as
-///   above, and records not of the declared schema are
-///   [`ProcessError::SchemaMismatch`]. [`Processor::live`] makes the inputs it
-///   creates as declared, so a read that contradicts a declaration is the same
-///   error, an input only declared is created too, and a record not of the
-///   declared schema is refused when it is fed.
-///
-/// With the `serde` feature the declarations are part of the processor
-/// document, in an `inputs` array that is left out when empty.
-///
-/// [`Schema`]: crate::Schema
-/// [`apply`]: Processor::apply
-/// [`check`]: Processor::check
-/// [`run`]: Processor::run
-/// [`validate`]: Processor::validate
+/// Outputs are evaluated in dependency order, an output reading another by its
+/// key; one reading its own key, or a loop, is [`ProcessError::Cycle`].
 #[derive(Debug, Clone, Default, PartialEq)]
-pub struct Processor {
+pub(crate) struct ProcessorSet {
     outputs: BTreeMap<Key, Output>,
     inputs: BTreeMap<Key, Input>,
 }
 
-impl Processor {
+impl ProcessorSet {
+    /// The processors of a list as one set: their outputs, and the inputs
+    /// they declare.
+    ///
+    /// # Errors
+    ///
+    /// [`ProcessError::DuplicateMember`] if two processors produce one key, or
+    /// declare one input as two different things.
+    pub(crate) fn from_processors(
+        processors: &[crate::processor::Processor],
+    ) -> Result<Self, ProcessError> {
+        let mut set = Self::new();
+        for processor in processors {
+            if set.outputs.contains_key(processor.output()) {
+                return Err(ProcessError::DuplicateMember {
+                    key: processor.output().clone(),
+                });
+            }
+            set.outputs
+                .insert(processor.output().clone(), processor.formula().clone());
+            for (key, input) in processor.declared_inputs() {
+                match set.inputs.get(key) {
+                    Some(declared) if declared != input => {
+                        return Err(ProcessError::DuplicateMember { key: key.clone() });
+                    }
+                    _ => {
+                        set.inputs.insert(key.clone(), input.clone());
+                    }
+                }
+            }
+        }
+        Ok(set)
+    }
+
     /// A processor with no outputs.
     #[must_use]
     pub const fn new() -> Self {
@@ -324,7 +269,7 @@ impl Processor {
     /// # Errors
     ///
     /// The first declared input the system does not satisfy, in key order (see
-    /// [`Processor`]); [`ProcessError::Cycle`] if the outputs read each other
+    /// the set); [`ProcessError::Cycle`] if the outputs read each other
     /// in a circle, otherwise the first [`ProcessError`] any output meets, in
     /// evaluation order (key order where no output reads another).
     pub fn run(&self, system: &SequenceSystem) -> Result<SequenceSystem, ProcessError> {
@@ -336,22 +281,6 @@ impl Processor {
         }
 
         Ok(produced)
-    }
-
-    /// Add the outputs to `system`, replacing any member under the same key,
-    /// and record each output as the lineage of the member it wrote.
-    ///
-    /// # Errors
-    ///
-    /// As [`run`](Processor::run). Nothing is inserted in that case.
-    pub fn apply(&self, system: &mut SequenceSystem) -> Result<(), ProcessError> {
-        for (output, derived) in self.evaluate(system)? {
-            for member in derived {
-                system.insert_derived(member.key, member.sequence, output.clone(), member.entity);
-            }
-        }
-
-        Ok(())
     }
 
     /// The members of `system` are what the declared inputs say.

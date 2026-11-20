@@ -52,13 +52,6 @@ pub enum ProcessError {
         keys: Vec<Key>,
     },
 
-    /// The member under `key` was not written by a processor, or was recorded
-    /// into since, so it has no formula to derive it again from.
-    NoLineage {
-        /// The member that has no lineage.
-        key: Key,
-    },
-
     /// A projection met a value that is not of the kind it projects into.
     ProjectionMismatch {
         /// The member the projection reads.
@@ -142,7 +135,7 @@ pub enum ProcessError {
     /// `error` was found in the output filed under `output`; what
     /// [`Processor::validate`] returns, so that every error names its output.
     ///
-    /// [`Processor::validate`]: super::Processor::validate
+    /// [`Processor::validate`]: crate::processor::Processor::validate
     InOutput {
         /// The key of the output.
         output: Key,
@@ -211,7 +204,6 @@ impl fmt::Display for ProcessError {
                     keys.join(", ")
                 )
             }
-            Self::NoLineage { key } => write!(f, "the member `{key}` has no lineage"),
             Self::Late {
                 key,
                 timestamp,

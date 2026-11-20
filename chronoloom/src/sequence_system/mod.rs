@@ -10,7 +10,8 @@
 //! ```
 //! use chronoloom::primitives::{TimeIntervalEvent, TimePointEvent};
 //! use chronoloom::sequences::{TimeIntervalSequence, TimePointSequence};
-//! use chronoloom::sequence_system::{Batch, SequenceSystem};
+//! use chronoloom::sequence_system::SequenceSystem;
+//! use chronoloom::stream_system::Update;
 //!
 //! // Declare each sensor once, under the key that identifies it.
 //! let mut machine = SequenceSystem::new();
@@ -23,11 +24,11 @@
 //! machine.record_span("up", TimeIntervalEvent::span(0, 10)?)?;
 //!
 //! // ... or a tick's worth at a time.
-//! let mut tick = Batch::new();
+//! let mut tick = Update::new();
 //! tick.points("temperature", [TimePointEvent::new(11, 21.7_f64)])
 //!     .points("log", [TimePointEvent::new(11, String::from("fan on"))])
 //!     .spans("up", [TimeIntervalEvent::span(10, 20)?]);
-//! machine.record_batch(tick)?;
+//! machine.record_update(tick)?;
 //!
 //! assert_eq!(machine.points::<f64>("temperature").map(|s| s.len()), Some(2));
 //! assert_eq!(machine.intervals("up").map(|s| s.active_duration()), Some(20));
@@ -41,7 +42,6 @@ use crate::processing::Output;
 use crate::values::{Schema, Value};
 
 mod accessors;
-mod batch;
 mod drain;
 mod erased;
 mod errors;
@@ -54,7 +54,7 @@ mod sequence;
 mod slice;
 mod traits;
 
-pub use batch::Batch;
+pub(crate) use erased::ErasedPoints;
 pub use erased::{AnyPointSequence, AnyValue, PointValue};
 pub use errors::RecordError;
 pub use key::Key;
@@ -109,7 +109,7 @@ impl PartialEq for Member {
 /// hands it back, as `HashMap::insert` does.
 ///
 /// Mutable access to a member is not offered. Events go in through
-/// [`record_point`], [`record_span`] and [`record_batch`], and anything else
+/// [`record_point`], [`record_span`] and [`record_update`], and anything else
 /// is a [`remove`] followed by an [`insert`].
 ///
 /// # Order and equality
@@ -133,19 +133,8 @@ impl PartialEq for Member {
 ///
 /// [`insert`] starts a member with empty metadata, and replacing a member drops
 /// the metadata of the old one, as does [`remove`]. [`relabel`] and
-/// [`record_batch`] keep it. Metadata is part of equality, and [`clone`] and
+/// [`record_update`] keep it. Metadata is part of equality, and [`clone`] and
 /// [`slice`] carry it along; iterating by value yields the sequences only.
-///
-/// # Lineage
-///
-/// A member written by a [`Processor`](crate::processing::Processor) remembers
-/// the [`Output`] that produced it, its lineage, so a host can tell derived
-/// members from raw ones and derive them again with [`rederive`]. Read it with
-/// [`lineage`]. [`insert`] leaves a member without lineage; [`relabel`],
-/// [`slice`], [`observe`] and [`clone`] keep it, and it is part of equality.
-/// Recording into a member through [`record_point`], [`record_span`] or
-/// [`record_batch`] clears it, since the data no longer follows from the
-/// formula.
 ///
 /// # Schema
 ///
@@ -154,19 +143,17 @@ impl PartialEq for Member {
 /// metadata and the lineage, and not to the sequence, which stays a plain
 /// value. [`set_schema`] files it, checking the events already recorded and
 /// refusing the schema if one does not have the shape, and [`schema`] reads
-/// it. From then on [`record_point`] and [`record_batch`] check every `Value`
+/// it. From then on [`record_point`] and [`record_update`] check every `Value`
 /// event before recording it, and refuse one that does not have the shape with
-/// [`RecordError::SchemaMismatch`], naming the path of the offending field; a
-/// batch is checked in its first pass with the rest, so it stays all or
+/// [`RecordError::SchemaMismatch`], naming the path of the offending field; an
+/// update is checked in its first pass with the rest, so it stays all or
 /// nothing. A live member is checked like any other, and the check comes after
 /// the one for lateness.
 ///
 /// [`insert`] and [`insert_live`] start a member with no schema, and replacing
 /// a member drops the old one's, as does [`remove`]. [`relabel`], [`slice`],
 /// [`observe`], [`clone`] and [`drain_finalised`] keep it, and it is part of
-/// equality. A processor writes its outputs with no schema, and [`rederive`]
-/// keeps the schema of the member and refuses a result that does not have the
-/// shape. Only a member of `Value` points can have one: asking for another is
+/// equality. Only a member of `Value` points can have one: asking for another is
 /// the same error as recording the wrong shape or value type.
 ///
 /// # Slicing
@@ -188,7 +175,7 @@ impl PartialEq for Member {
 /// [`frontier_of`] and [`frontier`] (the earliest one) read it.
 ///
 /// A live member refuses late events: a point before the frontier, or a span
-/// starting before it, is [`RecordError::Late`], and a batch holding one
+/// starting before it, is [`RecordError::Late`], and an update holding one
 /// records nothing. A point at the frontier is on time, and a span may reach
 /// past it. The extent of a live member is what was observed, and only
 /// [`advance`] observes: it moves the frontier forward and adds what it passed
@@ -226,10 +213,7 @@ impl PartialEq for Member {
 /// what no part says. An empty, unobserved part says nothing, and is as good as
 /// absent. The drained members are batch members, since a stream that has
 /// ended has no frontier. Batch members are not drained: they stay in the
-/// system and are absent from the result, and that includes derived members,
-/// which a processor wrote as batch members. [`rederive`] on one of them after
-/// a drain evaluates its lineage against what is left of its inputs, so its
-/// result covers the remainder only.
+/// system and are absent from the result.
 ///
 /// [`drain_finalised`]: SequenceSystem::drain_finalised
 /// [`schema`]: SequenceSystem::schema
@@ -243,9 +227,7 @@ impl PartialEq for Member {
 /// [`advance_all`]: SequenceSystem::advance_all
 /// [`RecordError::Late`]: RecordError::Late
 /// [`clone`]: Clone::clone
-/// [`lineage`]: SequenceSystem::lineage
 /// [`observe`]: SequenceSystem::observe
-/// [`rederive`]: SequenceSystem::rederive
 /// [`metadata`]: SequenceSystem::metadata
 /// [`metadata_mut`]: SequenceSystem::metadata_mut
 /// [`member_metadata`]: SequenceSystem::member_metadata
@@ -255,7 +237,7 @@ impl PartialEq for Member {
 /// [`relabel`]: SequenceSystem::relabel
 /// [`attribute`]: Sequence::attribute
 /// [`insert`]: SequenceSystem::insert
-/// [`record_batch`]: SequenceSystem::record_batch
+/// [`record_update`]: SequenceSystem::record_update
 /// [`record_point`]: SequenceSystem::record_point
 /// [`record_span`]: SequenceSystem::record_span
 /// [`remove`]: SequenceSystem::remove

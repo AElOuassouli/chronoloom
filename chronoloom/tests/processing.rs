@@ -4,6 +4,8 @@
 
 #[path = "common/random.rs"]
 mod common;
+#[path = "common/update.rs"]
+mod update;
 
 use chronoloom::{
     Condition, Edge, Events, Extent, Formula, Key, Kind, OpenEnd, Output, Pattern, ProcessError,
@@ -666,10 +668,11 @@ fn edges_read_back_by_between_rebuild_the_state() {
         let mut system = SequenceSystem::new();
         system.insert("up", up.clone());
 
-        Processor::new()
-            .with("edges", Events::Edges(Formula::state("up")))
-            .apply(&mut system)
-            .unwrap();
+        apply(
+            &mut system,
+            &[Processor::new("edges", Events::Edges(Formula::state("up")))],
+        )
+        .unwrap();
         let rebuilt = Formula::between(
             Pattern::new("edges", Condition::Equals(Edge::Start)),
             Pattern::new("edges", Condition::Equals(Edge::End)),
@@ -763,10 +766,11 @@ fn changes_are_idempotent_and_leave_while_unchanged() {
         let mut system = SequenceSystem::new();
         system.insert("p", points);
 
-        let processor = Processor::new()
-            .with("changes", Events::changes("p"))
-            .with("again", Events::changes("changes"));
-        let derived = processor.run(&system).unwrap();
+        let processor = vec![
+            Processor::new("changes", Events::changes("p")),
+            Processor::new("again", Events::changes("changes")),
+        ];
+        let derived = update::run(&system, &processor).unwrap();
         let once = derived.points::<i64>("changes").unwrap();
         let twice = derived.points::<i64>("again").unwrap();
         assert!(once.iter().eq(twice.iter()), "applying it twice");
@@ -797,54 +801,47 @@ fn changes_are_idempotent_and_leave_while_unchanged() {
 
 // Processors
 
+/// The outputs of `processors` filed into `system`, all or nothing.
+fn apply(system: &mut SequenceSystem, processors: &[Processor]) -> Result<(), ProcessError> {
+    let derived = update::run(system, processors)?;
+    for key in derived.derived() {
+        let sequence = derived.get(key.as_str()).expect("listed").clone();
+        system.insert(key.clone(), sequence);
+    }
+    Ok(())
+}
+
 #[test]
-fn a_processor_files_each_output_under_its_key() {
+fn each_processor_files_its_output_under_its_key() {
     let mut system = system_with(words("motion", &[(10, "start"), (25, "end")]));
     system.insert("up", timeline("up", &[(0, 5)]));
-    system
-        .metadata_mut()
-        .insert("unit".into(), "seconds".into());
 
-    let mut processor = Processor::new()
-        .with("active", motion_between())
-        .with("changes", Events::Edges(Formula::state("up")));
-    assert_eq!(processor.outputs().len(), 2);
-    assert_eq!(
-        processor.outputs().get("active"),
-        Some(&Output::State(motion_between()))
-    );
-    assert_eq!(
-        processor.insert("active", Formula::state("up")),
-        Some(Output::State(motion_between()))
-    );
-    processor.insert("active", motion_between());
+    let processor = vec![
+        Processor::new("active", motion_between()),
+        Processor::new("changes", Events::Edges(Formula::state("up"))),
+    ];
+    assert_eq!(processor[0].output().as_str(), "active");
+    assert_eq!(processor[0].formula(), &Output::State(motion_between()));
 
-    // `run` holds the outputs alone.
-    let derived = processor.run(&system).unwrap();
+    let derived = update::run(&system, &processor).unwrap();
     assert!(derived
-        .keys()
+        .derived()
         .map(|key| key.as_str())
         .eq(["active", "changes"]));
     assert_eq!(bounds(derived.intervals("active").unwrap()), [(10, 25)]);
     assert!(derived.points::<Edge>("changes").is_some());
-    assert!(derived.metadata().is_empty());
-
-    // `apply` adds them to the input.
-    processor.apply(&mut system).unwrap();
-    assert_eq!(system.len(), 4);
-    assert_eq!(system.get("active"), derived.get("active"));
-    assert_eq!(system.metadata().len(), 1);
 }
 
 #[test]
 fn outputs_that_read_no_other_output_see_the_system_as_it_was() {
     let system = system_with(words("motion", &[(10, "start"), (25, "end")]));
-    let processor = Processor::new()
-        .with("a", motion_between())
-        .with("b", Formula::state("missing"));
+    let processor = vec![
+        Processor::new("a", motion_between()),
+        Processor::new("b", Formula::state("missing")),
+    ];
 
     assert_eq!(
-        processor.run(&system).map(drop),
+        update::run(&system, &processor).map(drop),
         Err(ProcessError::UnknownKey {
             key: "missing".into()
         })
@@ -856,12 +853,13 @@ fn a_failing_output_leaves_the_system_untouched() {
     let mut system = system_with(words("motion", &[(10, "start"), (25, "end")]));
     let before = system.clone();
 
-    let processor = Processor::new()
-        .with("good", motion_between())
-        .with("zzz-bad", Formula::state("missing"));
+    let processor = vec![
+        Processor::new("good", motion_between()),
+        Processor::new("zzz-bad", Formula::state("missing")),
+    ];
 
     assert_eq!(
-        processor.apply(&mut system),
+        apply(&mut system, &processor),
         Err(ProcessError::UnknownKey {
             key: "missing".into()
         })
@@ -1232,59 +1230,8 @@ fn between_matches_its_definition_at_every_instant() {
 
 // Chained outputs
 
-fn random_motion(random: &mut Random) -> TimePointSequence<&'static str> {
-    let count = random.below(9);
-    let events: Vec<(i64, &'static str)> = (0..count)
-        .map(|_| {
-            let word = if random.chance(1, 2) { "start" } else { "end" };
-            (random.between(DOMAIN_START, DOMAIN_END), word)
-        })
-        .collect();
-
-    words("motion", &events)
-}
-
-fn bounds_of(system: &SequenceSystem, key: &str) -> Vec<(i64, i64)> {
-    bounds(system.intervals(key).unwrap())
-}
-
 fn keys(names: &[&str]) -> Vec<Key> {
     names.iter().map(|&name| Key::from(name)).collect()
-}
-
-#[test]
-fn an_output_reading_another_equals_two_processors_applied_in_turn() {
-    for_each_seed(CASES, |random, _| {
-        let mut system = system_with(random_motion(random));
-        system.insert(
-            "door",
-            TimeIntervalSequence::from_spans("door", spans(random, 6)),
-        );
-
-        // "either" sorts before "present": key order is not dependency order.
-        let either = Formula::state("present").or(Formula::state("door"));
-        let chained = Processor::new()
-            .with("either", either.clone())
-            .with("present", motion_between());
-        let derived = chained.run(&system).unwrap();
-
-        let mut in_turn = system.clone();
-        Processor::new()
-            .with("present", motion_between())
-            .apply(&mut in_turn)
-            .unwrap();
-        Processor::new()
-            .with("either", either)
-            .apply(&mut in_turn)
-            .unwrap();
-
-        assert_eq!(derived.get("either"), in_turn.get("either"));
-        assert_eq!(derived.get("present"), in_turn.get("present"));
-
-        let mut applied = system.clone();
-        chained.apply(&mut applied).unwrap();
-        assert_eq!(applied, in_turn);
-    });
 }
 
 #[test]
@@ -1292,73 +1239,39 @@ fn point_outputs_can_read_point_outputs() {
     let mut system = SequenceSystem::new();
     system.insert("up", timeline("up", &[(0, 5), (8, 9)]));
 
-    let processor = Processor::new()
-        .with("edges", Events::Edges(Formula::state("up")))
-        .with(
+    let processor = vec![
+        Processor::new("edges", Events::Edges(Formula::state("up"))),
+        Processor::new(
             "starts",
             Events::Matching(Pattern::new("edges", Condition::Equals(Edge::Start))),
-        );
-    let derived = processor.run(&system).unwrap();
+        ),
+    ];
+    let derived = update::run(&system, &processor).unwrap();
 
     assert_eq!(derived.points::<Edge>("starts").unwrap().len(), 2);
     assert_eq!(derived.points::<Edge>("edges").unwrap().len(), 4);
 }
 
 #[test]
-fn an_output_wins_over_a_member_under_its_key_inside_the_processor() {
-    let mut system = SequenceSystem::new();
-    system.insert("up", timeline("up", &[(0, 5)]));
-    system.insert("shadow", timeline("shadow", &[(40, 50)]));
+fn a_formula_that_reads_its_own_output_is_a_cycle() {
+    let processor = Processor::new("a", !Formula::state("a"));
+    let error = ProcessError::Cycle { keys: keys(&["a"]) };
 
-    let processor = Processor::new()
-        .with("shadow", Formula::state("up"))
-        .with("copy", Formula::state("shadow"));
-    let derived = processor.run(&system).unwrap();
-
-    assert_eq!(bounds_of(&derived, "copy"), vec![(0, 5)]);
-
-    processor.apply(&mut system).unwrap();
-    assert_eq!(bounds_of(&system, "shadow"), vec![(0, 5)]);
-    assert_eq!(bounds_of(&system, "copy"), vec![(0, 5)]);
+    assert_eq!(processor.check(), Err(error.clone()));
+    assert_eq!(
+        update::run(&SequenceSystem::new(), &[processor]).map(drop),
+        Err(error)
+    );
 }
 
 #[test]
-fn cycles_of_one_two_and_three_are_reported_with_their_keys() {
-    let one = Processor::new().with("a", !Formula::state("a"));
-    let two = Processor::new()
-        .with("b", Formula::state("a"))
-        .with("a", Formula::state("b"));
-    let three = Processor::new()
-        .with("c", Formula::state("b"))
-        .with("a", Formula::state("c"))
-        .with("b", Formula::state("a"))
-        .with("tail", Formula::state("a"));
-
-    for (processor, expected) in [
-        (one, keys(&["a"])),
-        (two, keys(&["a", "b"])),
-        (three, keys(&["a", "b", "c"])),
+fn check_accepts_a_processor_that_reads_another_output_or_a_member() {
+    for processor in [
+        Processor::new("b", Formula::state("a")),
+        Processor::new("c", Formula::state("b").and(Formula::state("outside"))),
     ] {
-        let error = ProcessError::Cycle { keys: expected };
-        let mut system = SequenceSystem::new();
-        system.insert("a", timeline("a", &[(0, 5)]));
-        let untouched = system.clone();
-
-        assert_eq!(processor.check(), Err(error.clone()));
-        assert_eq!(processor.run(&system).map(drop), Err(error.clone()));
-        assert_eq!(processor.apply(&mut system), Err(error));
-        assert_eq!(system, untouched);
+        assert_eq!(processor.check(), Ok(()), "{processor}");
     }
-}
-
-#[test]
-fn check_accepts_chains_and_outputs_that_read_members() {
-    let processor = Processor::new()
-        .with("b", Formula::state("a"))
-        .with("c", Formula::state("b").and(Formula::state("outside")));
-
-    assert_eq!(processor.check(), Ok(()));
-    assert_eq!(Processor::new().check(), Ok(()));
 }
 
 #[test]
@@ -1367,65 +1280,21 @@ fn a_failure_in_a_chain_leaves_the_system_as_it_was() {
     system.insert("up", timeline("up", &[(0, 5)]));
     let untouched = system.clone();
 
-    let processor = Processor::new().with("first", Formula::state("up")).with(
-        "second",
-        Formula::state("first").and(Formula::state("missing")),
-    );
+    let processor = vec![
+        Processor::new("first", Formula::state("up")),
+        Processor::new(
+            "second",
+            Formula::state("first").and(Formula::state("missing")),
+        ),
+    ];
 
     assert_eq!(
-        processor.apply(&mut system),
+        apply(&mut system, &processor),
         Err(ProcessError::UnknownKey {
             key: "missing".into()
         })
     );
     assert_eq!(system, untouched);
-}
-
-#[test]
-fn slicing_then_rederiving_equals_rederiving_then_slicing() {
-    for_each_seed(CASES, |random, _| {
-        let mut system = SequenceSystem::new();
-        for key in ["a", "b"] {
-            let timeline = TimeIntervalSequence::from_spans(key, spans(random, 6))
-                .with_observed(extent(random));
-            system.insert(key, timeline);
-        }
-        Processor::new()
-            .with("both", Formula::state("a").and(Formula::state("b")))
-            .with("not_a", !Formula::state("a"))
-            .with("either", Formula::state("a").or(Formula::state("not_a")))
-            .apply(&mut system)
-            .unwrap();
-
-        let start = random.between(DOMAIN_START - 5, DOMAIN_END);
-        let end = start + random.between(1, DOMAIN_END);
-
-        let mut sliced_first = system.slice(start..end);
-        let mut derived_first = system.clone();
-        for key in ["both", "not_a", "either"] {
-            sliced_first.rederive(key).unwrap();
-            derived_first.rederive(key).unwrap();
-        }
-
-        assert_eq!(sliced_first, derived_first.slice(start..end));
-    });
-}
-
-#[test]
-fn run_and_apply_agree_on_lineage() {
-    let mut system = system_with(words("motion", &[(10, "start"), (25, "end")]));
-    let processor = Processor::new()
-        .with("present", motion_between())
-        .with("changes", Events::Edges(Formula::state("present")));
-
-    let derived = processor.run(&system).unwrap();
-    processor.apply(&mut system).unwrap();
-
-    for (key, output) in processor.outputs() {
-        assert_eq!(derived.lineage(key.as_str()), Some(output));
-        assert_eq!(system.lineage(key.as_str()), Some(output));
-    }
-    assert_eq!(system.lineage("motion"), None);
 }
 
 // ---------------------------------------------------------------------------
@@ -1636,48 +1505,44 @@ fn a_projection_reads_a_member_of_values_and_nothing_else() {
 #[test]
 fn a_projection_is_an_output_and_chains_into_formulas() {
     let system = sightings();
-    let processor = Processor::new()
-        .with(
+    let processor = vec![
+        Processor::new(
             "agent",
             Events::project("sensor", "agent.id", Kind::Integer),
-        )
-        .with(
+        ),
+        Processor::new(
             "known",
             Formula::while_matching(Pattern::new("agent", Condition::Greater(8_i64))),
-        );
+        ),
+    ];
 
-    let result = processor.run(&system).unwrap();
+    let result = update::run(&system, &processor).unwrap();
 
     assert_eq!(
         result.points::<i64>("agent").map(instants),
         Some(vec![10, 30])
     );
-    assert_eq!(bounds_of(&result, "known"), vec![(30, 40)]);
+    assert_eq!(bounds(result.intervals("known").unwrap()), vec![(30, 40)]);
     assert_eq!(
-        result.lineage("agent"),
+        result.producer("agent").map(Processor::formula),
         Some(&Output::Events(Events::project(
             "sensor",
             "agent.id",
             Kind::Integer
         )))
     );
-    assert_eq!(processor.run(&system).unwrap(), {
-        let mut again = system.clone();
-        processor.apply(&mut again).unwrap();
-        again.remove("sensor");
-        again
-    });
 }
 
 #[test]
 fn a_projection_mismatch_names_the_field_and_changes_nothing_when_applied() {
     let mut system = sightings();
     let before = system.clone();
-    let processor = Processor::new()
-        .with("zone", Events::project("sensor", "zone", Kind::Text))
-        .with("wrong", Events::project("sensor", "zone", Kind::Integer));
+    let processor = vec![
+        Processor::new("zone", Events::project("sensor", "zone", Kind::Text)),
+        Processor::new("wrong", Events::project("sensor", "zone", Kind::Integer)),
+    ];
 
-    let error = processor.apply(&mut system).unwrap_err();
+    let error = apply(&mut system, &processor).unwrap_err();
 
     assert_eq!(
         error,
@@ -1914,17 +1779,18 @@ fn a_field_and_a_projection_differ_only_for_an_event_without_the_field() {
         (20, Value::record([("zone", Value::from("a"))])),
         (30, count_record(Value::from(9))),
     ]);
-    let processor = Processor::new()
-        .with("count", Events::project("motion", "count", Kind::Value))
-        .with(
+    let processor = vec![
+        Processor::new("count", Events::project("motion", "count", Kind::Value)),
+        Processor::new(
             "by_field",
             Formula::while_matching(field("count", Condition::Greater(Value::from(5)))),
-        )
-        .with(
+        ),
+        Processor::new(
             "by_projection",
             Formula::while_matching(Pattern::new("count", Condition::Greater(Value::from(5)))),
-        );
-    let result = processor.run(&system).unwrap();
+        ),
+    ];
+    let result = update::run(&system, &processor).unwrap();
 
     // The field pattern reads the record without a count as a sample that does
     // not match, which ends the span; the projection drops it.
@@ -1991,7 +1857,7 @@ fn random_field_condition(random: &mut Random) -> Condition<Value> {
 
 /// The same formulas over a field and over the field projected with
 /// `Kind::Value`, as a processor with the outputs `field` and `projected`.
-fn field_and_projection(random: &mut Random, path: &str, between: bool) -> Processor {
+fn field_and_projection(random: &mut Random, path: &str, between: bool) -> Vec<Processor> {
     let condition = random_field_condition(random);
     let end = random_field_condition(random);
     let (by_field, by_projection) = if between {
@@ -2012,10 +1878,11 @@ fn field_and_projection(random: &mut Random, path: &str, between: bool) -> Proce
         )
     };
 
-    Processor::new()
-        .with("projected", Events::project("motion", path, Kind::Value))
-        .with("field", by_field)
-        .with("projection", by_projection)
+    vec![
+        Processor::new("projected", Events::project("motion", path, Kind::Value)),
+        Processor::new("field", by_field),
+        Processor::new("projection", by_projection),
+    ]
 }
 
 #[test]
@@ -2024,9 +1891,7 @@ fn between_and_while_over_a_field_equal_them_over_its_projection() {
         let system = field_stream(random, false);
         let path = if random.chance(1, 2) { "n" } else { "a.n" };
         let between = random.chance(1, 2);
-        let result = field_and_projection(random, path, between)
-            .run(&system)
-            .unwrap();
+        let result = update::run(&system, &field_and_projection(random, path, between)).unwrap();
 
         let by_field = result.intervals("field").unwrap();
         let by_projection = result.intervals("projection").unwrap();
@@ -2040,13 +1905,14 @@ fn matching_a_field_equals_matching_its_projection_even_with_gaps() {
     for_each_seed(CASES, |random, _| {
         let system = field_stream(random, true);
         let condition = random_field_condition(random);
-        let processor = Processor::new()
-            .with("projected", Events::project("motion", "n", Kind::Value))
-            .with(
+        let processor = vec![
+            Processor::new("projected", Events::project("motion", "n", Kind::Value)),
+            Processor::new(
                 "projection",
                 Events::Matching(Pattern::new("projected", condition.clone())),
-            );
-        let result = processor.run(&system).unwrap();
+            ),
+        ];
+        let result = update::run(&system, &processor).unwrap();
         let by_projection = instants(result.points::<Value>("projection").unwrap());
 
         assert_eq!(

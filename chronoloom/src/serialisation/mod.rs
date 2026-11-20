@@ -23,19 +23,15 @@
 //! ]));
 //! system.metadata_mut().insert("unit".to_owned(), "seconds".to_owned());
 //!
-//! // A derived member is saved with the output that produced it.
-//! let processor = Processor::new().with(
-//!     "busy",
-//!     Formula::occurs(Pattern::new("count", Condition::Greater(5_i64))),
-//! );
-//! processor.apply(&mut system).unwrap();
-//!
 //! let saved = serde_json::to_string(&system).unwrap();
 //! let loaded: SequenceSystem = serde_json::from_str(&saved).unwrap();
 //! assert_eq!(loaded, system);
-//! assert!(loaded.lineage("busy").is_some());
 //!
-//! // The processor is a document of its own, and a loaded one has been checked.
+//! // A processor is a document of its own, and a loaded one has been checked.
+//! let processor = Processor::new(
+//!     "busy",
+//!     Formula::occurs(Pattern::new("count", Condition::Greater(5_i64))),
+//! );
 //! let rules = serde_json::to_string(&processor).unwrap();
 //! let rules: Processor = serde_json::from_str(&rules).unwrap();
 //! assert_eq!(rules, processor);
@@ -54,14 +50,14 @@
 //! };
 //!
 //! let busy = Formula::while_matching(Pattern::new("count", Condition::Greater(5_i64)));
-//! let mut live = Processor::new().with("busy", busy).live(0).unwrap();
+//! let mut live = LiveProcessor::new(&[Processor::new("busy", busy)], 0).unwrap();
 //! live.on_point("count", TimePointEvent::new(7, 9_i64)).unwrap();
 //! live.advance("count", 10).unwrap();
 //!
 //! // The host saves it with its own offsets, and a new process loads it.
 //! let saved = serde_json::to_string(&live).unwrap();
 //! let mut restored: LiveProcessor = serde_json::from_str(&saved).unwrap();
-//! assert_eq!(restored.processor(), live.processor());
+//! assert_eq!(restored.processors(), live.processors());
 //! assert_eq!(restored.frontier("busy"), Some(10));
 //! assert_eq!(restored.finish(30).unwrap(), live.finish(30).unwrap());
 //! ```
@@ -103,10 +99,10 @@
 //!   all have the shape of the schema, and a member's lineage and entity must
 //!   agree with each other, with its key and with its frontier.
 //! - A processor passes [`Processor::check`], and no key appears twice in a
-//!   system or a processor. A `While` timeout is positive.
+//!   system or among the inputs a processor declares. A `While` timeout is positive.
 //!
 //! - A live processor passes the checks listed on [`LiveProcessor`]: its
-//!   processor is valid, its inputs are the ones it reads, and its entities,
+//!   processors are valid, its inputs are the ones they read, and its entities,
 //!   views, cursors and frontiers agree with each other.
 //!
 //! A refusal is the error of the format in use, and its message says what was
@@ -167,12 +163,11 @@
 //! use chronoloom::serialisation::processor_json_schema;
 //! use chronoloom::{Formula, Input, Kind, Processor};
 //!
-//! let processor = Processor::new()
+//! let processor = Processor::new("open", Formula::state("door").or(Formula::state("shut")))
 //!     .with_input("door", Input::Timeline)
-//!     .with_input("temperature", Input::Points(Kind::Float))
-//!     .with("open", Formula::state("door").or(Formula::state("shut")));
+//!     .with_input("temperature", Input::Points(Kind::Float));
 //!
-//! // `shut` is neither an output nor a declared input.
+//! // Once inputs are declared, `shut` must be one of them.
 //! assert_eq!(processor.validate().unwrap_err().len(), 1);
 //!
 //! // The schema describes the document that is saved, `inputs` included.
@@ -196,11 +191,11 @@
 //!
 //! | format | change |
 //! |---|---|
-//! | 1 | the first version; a processor also lists its declared `inputs`, left out when there are none |
+//! | 1 | the first version; a processor is one recipe (`output`, `formula`) and lists its declared `inputs`, left out when there are none |
 //!
 //! The live processor document was added under format 1 without changing it,
 //! since no document of an earlier version of the crate can be affected. It
-//! holds `processor` (a processor document), `inputs` (a system document of
+//! holds `processors` (a list of processor documents), `inputs` (a system document of
 //! the live inputs and the views of the entities), `untyped` (the inputs that
 //! have no value type yet, each with its key, frontier and events), `outputs`
 //! (per output, `through`, `trusted` and the `cuts` of its `Between` leaves),

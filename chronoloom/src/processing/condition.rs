@@ -375,7 +375,7 @@ impl ErasedCondition for FieldCondition {
 ///
 /// ```
 /// use chronoloom::{
-///     Condition, Formula, Pattern, Processor, SequenceSystem, TimePointEvent,
+///     Condition, Formula, Pattern, SequenceSystem, TimePointEvent,
 ///     TimePointSequence, Value,
 /// };
 ///
@@ -391,11 +391,8 @@ impl ErasedCondition for FieldCondition {
 /// assert_eq!(busy.to_string(), "motion.count > 5");
 ///
 /// // The reading without a count does not match, so it ends the span.
-/// let processor = Processor::new().with("busy", Formula::while_matching(busy));
-/// let result = processor.run(&system)?;
-/// let spans: Vec<(i64, i64)> = result
-///     .intervals("busy")
-///     .unwrap()
+/// let busy = Formula::while_matching(busy).evaluate(&system)?;
+/// let spans: Vec<(i64, i64)> = busy
 ///     .iter()
 ///     .map(|span| (span.start(), span.end()))
 ///     .collect();

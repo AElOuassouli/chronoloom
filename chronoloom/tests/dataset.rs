@@ -6,8 +6,9 @@
 //! The clock is in seconds from the start of the recording, which spans
 //! `[0, 600)`.
 
+use chronoloom::stream_system::UpdateError;
 use chronoloom::{
-    Condition, Edge, Events, Extent, Formula, Metadata, Pattern, Processor, SequenceSystem,
+    Condition, Edge, Events, Extent, Formula, Metadata, Pattern, Processor, StreamSystem,
     TimeIntervalEvent, TimeIntervalSequence, TimePointEvent, TimePointSequence,
 };
 
@@ -103,31 +104,38 @@ fn agent_timeline(label: &str, start: i64, end: i64) -> TimeIntervalSequence {
 }
 
 /// The members derived from the others: motion, crowding and presence.
-fn derivations() -> Processor {
-    Processor::new()
-        .with(MOTION_ACTIVE, motion_formula())
-        .with(CROWDED, crowded_formula())
-        .with(
+fn derivations() -> Vec<Processor> {
+    vec![
+        Processor::new(MOTION_ACTIVE, motion_formula()),
+        Processor::new(CROWDED, crowded_formula()),
+        Processor::new(
             ANY_AGENT,
             Formula::state(FIRST_AGENT).or(Formula::state(SECOND_AGENT)),
-        )
+        ),
+    ]
 }
 
 /// One building, every mapping of a sensor dataset at once.
-fn building() -> SequenceSystem {
-    let mut system = SequenceSystem::new();
-    system.insert(MOTION, motion_points());
-    system.insert(OCCUPANCY, occupancy_points());
-    system.insert(CROSSINGS, crossing_points());
-    system.insert(FIRST_AGENT, agent_timeline("agent 1 present", 0, 300));
-    system.insert(SECOND_AGENT, agent_timeline("agent 2 present", 200, 500));
+fn building() -> StreamSystem {
+    let mut system = StreamSystem::new();
+    system.insert_stream(MOTION, motion_points()).unwrap();
+    system.insert_stream(OCCUPANCY, occupancy_points()).unwrap();
+    system.insert_stream(CROSSINGS, crossing_points()).unwrap();
+    system
+        .insert_stream(FIRST_AGENT, agent_timeline("agent 1 present", 0, 300))
+        .unwrap();
+    system
+        .insert_stream(SECOND_AGENT, agent_timeline("agent 2 present", 200, 500))
+        .unwrap();
 
-    derivations().apply(&mut system).unwrap();
+    for processor in derivations() {
+        system.add_processor(processor).unwrap();
+    }
 
     system
 }
 
-fn describe(system: &mut SequenceSystem) {
+fn describe(system: &mut StreamSystem) {
     system
         .metadata_mut()
         .insert("time_unit".into(), "seconds".into());
@@ -151,7 +159,7 @@ fn describe(system: &mut SequenceSystem) {
     }
 }
 
-fn unit_of(system: &SequenceSystem, key: &str) -> Option<String> {
+fn unit_of(system: &StreamSystem, key: &str) -> Option<String> {
     system
         .member_metadata(key)
         .and_then(|metadata| metadata.get("unit"))
@@ -160,7 +168,13 @@ fn unit_of(system: &SequenceSystem, key: &str) -> Option<String> {
 
 #[test]
 fn motion_edges_become_a_timeline_observed_like_the_events() {
-    let system = building();
+    let mut system = building();
+    system
+        .add_processor(Processor::new(
+            "edges",
+            Events::Edges(Formula::state(MOTION_ACTIVE)),
+        ))
+        .unwrap();
     let active = system.intervals(MOTION_ACTIVE).unwrap();
 
     assert_eq!(bounds(active), [(100, 250), (400, 460)]);
@@ -176,11 +190,8 @@ fn motion_edges_become_a_timeline_observed_like_the_events() {
         format!("between({MOTION} = \"motion_start\", {MOTION} = \"motion_end\")")
     );
     // And the edges of the state hand the events back.
-    let edges = Events::Edges(Formula::state(MOTION_ACTIVE))
-        .evaluate(&system)
-        .unwrap();
     assert_eq!(
-        timestamps(edges.as_time_point::<Edge>().unwrap()),
+        timestamps(system.points::<Edge>("edges").unwrap()),
         [100, 250, 400, 460]
     );
 }
@@ -234,11 +245,13 @@ fn presence_is_one_member_per_agent_and_their_union() {
 fn a_dataset_stopped_early_is_not_observed_after_the_stop() {
     let mut system = building();
     let stopped_at = 450;
-    system.observe(&Extent::from_spans(vec![span(i64::MIN, stopped_at)]));
+    system
+        .observe(&Extent::from_spans(vec![span(i64::MIN, stopped_at)]))
+        .unwrap();
 
     // Every member ends at the stop, whatever it observed before.
-    for (key, member) in system.iter() {
-        let observed = member.observed();
+    for key in system.keys() {
+        let observed = system.get(key.as_str()).unwrap().observed();
         assert!(observed.contains(stopped_at - 1), "{key} stops too early");
         assert!(!observed.contains(stopped_at), "{key} outlives the stop");
         assert_eq!(
@@ -283,17 +296,24 @@ fn metadata_describes_the_system_and_each_member_and_survives_a_relabel() {
     assert_eq!(unit_of(&system, OCCUPANCY).as_deref(), Some("people"));
     assert_eq!(unit_of(&system, MOTION_ACTIVE).as_deref(), Some("state"));
 
-    let before: Metadata = system.member_metadata(CROWDED).unwrap().clone();
-    let data = bounds(system.intervals(CROWDED).unwrap());
-    system.relabel(CROWDED, "busy room").unwrap();
+    let before: Metadata = system.member_metadata(CROSSINGS).unwrap().clone();
+    let data = timestamps(system.points::<String>(CROSSINGS).unwrap());
     system.relabel(CROSSINGS, "entrance traffic").unwrap();
 
     // Key, data and metadata stay; only the description changes.
-    assert_eq!(system.get(CROWDED).unwrap().label(), "busy room");
     assert_eq!(system.get(CROSSINGS).unwrap().label(), "entrance traffic");
-    assert_eq!(bounds(system.intervals(CROWDED).unwrap()), data);
-    assert_eq!(system.member_metadata(CROWDED), Some(&before));
-    assert_eq!(unit_of(&system, CROSSINGS).as_deref(), Some("event"));
+    assert_eq!(
+        timestamps(system.points::<String>(CROSSINGS).unwrap()),
+        data
+    );
+    assert_eq!(system.member_metadata(CROSSINGS), Some(&before));
+    // A derived stream is described by its formula, and is not relabelled.
+    assert_eq!(
+        system.relabel(CROWDED, "busy room"),
+        Err(UpdateError::Derived {
+            key: CROWDED.into()
+        })
+    );
     assert_eq!(system.metadata().len(), 2);
 
     // A clone carries it all, and equality sees it.
@@ -310,11 +330,10 @@ fn metadata_describes_the_system_and_each_member_and_survives_a_relabel() {
 fn a_playback_window_slices_every_member_and_keeps_what_describes_them() {
     let mut system = building();
     describe(&mut system);
-    system.relabel(MOTION_ACTIVE, "movement").unwrap();
+    system.relabel(MOTION, "movement events").unwrap();
 
     let window = system.slice(100..400);
 
-    assert_eq!(window.len(), system.len());
     assert!(window.keys().eq(system.keys()));
     assert_eq!(window.metadata(), system.metadata());
     for key in system.keys() {

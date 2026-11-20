@@ -9,7 +9,8 @@ use std::borrow::Cow;
 
 use schemars::{json_schema, JsonSchema, Schema, SchemaGenerator};
 
-use crate::processing::{Condition, Edge, Input, Output, Pattern, Processor};
+use crate::processing::{Condition, Edge, Input, Output, Pattern};
+use crate::processor::Processor;
 use crate::sequence_system::Key;
 use crate::values::Value;
 
@@ -87,11 +88,13 @@ impl JsonSchema for Processor {
         let input = generator.subschema_for::<Input>();
 
         json_schema!({
-            "description": "A processor: the formulas that produce members, and optionally \
-                            what it expects of the members it reads",
+            "description": "A processor: one recipe, the key of the output it produces, \
+                            the formula that produces it, and optionally what it \
+                            expects of the inputs it reads",
             "type": "object",
             "properties": {
                 "format": {"const": 1},
+                "output": key,
                 "inputs": {
                     "type": "array",
                     "items": {
@@ -100,16 +103,9 @@ impl JsonSchema for Processor {
                         "required": ["key", "input"]
                     }
                 },
-                "outputs": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {"key": key, "output": output},
-                        "required": ["key", "output"]
-                    }
-                }
+                "formula": output
             },
-            "required": ["format", "outputs"]
+            "required": ["format", "output", "formula"]
         })
     }
 }

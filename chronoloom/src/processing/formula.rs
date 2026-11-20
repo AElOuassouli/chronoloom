@@ -48,7 +48,7 @@ pub enum OpenEnd {
 /// denote with the set algebra of [`TimeIntervalSequence`], so a formula is
 /// data about a timeline rather than a procedure that builds one. It can be
 /// compared, cloned, printed, normalized and evaluated against any system, and
-/// a [`Processor`](super::Processor) is a set of them.
+/// a [`Processor`](crate::processor::Processor) is one recipe built on one.
 ///
 /// | Variant | Active | Written |
 /// |---|---|---|
@@ -123,7 +123,7 @@ pub enum OpenEnd {
 /// timeout, so `While` has no lag with or without one.
 ///
 /// ```
-/// use chronoloom::{Condition, Formula, Pattern, Processor, SequenceSystem};
+/// use chronoloom::{Condition, Formula, Pattern, SequenceSystem};
 /// use chronoloom::{TimePointEvent, TimePointSequence};
 ///
 /// let mut room = SequenceSystem::new();
@@ -135,9 +135,8 @@ pub enum OpenEnd {
 ///
 /// // Busy while the last count is above five, for at most 30 ticks after it.
 /// let busy = Formula::while_within(Pattern::new("count", Condition::Greater(5_i64)), 30);
-/// let derived = Processor::new().with("busy", busy).run(&room)?;
+/// let busy = busy.evaluate(&room)?;
 ///
-/// let busy = derived.intervals("busy").unwrap();
 /// assert_eq!(busy[0].bounds(), (10, 40));
 /// // Past the timeout the sensor was silent: unknown, not inactive.
 /// assert!(!busy.contains(50) && !busy.is_observed(50));

@@ -248,12 +248,12 @@ extent; `covers_same` does not.
 A `SequenceSystem` holds the sequences describing one subject side by side, the
 way a sensor system holds its sensors: point sequences of any value type next to
 timelines, one sequence per key. Events are recorded into it as they
-arrive — one at a time, or a `Batch` at a time, all or nothing. A member can
+arrive — one at a time, or an `Update` at a time, all or nothing. A member can
 also be a stream (next section), and the Datasets section adds metadata and
 `slice`.
 
 ```rust
-use chronoloom::{Batch, SequenceSystem, TimeIntervalEvent, TimeIntervalSequence};
+use chronoloom::{SequenceSystem, TimeIntervalEvent, TimeIntervalSequence, Update};
 use chronoloom::{TimePointEvent, TimePointSequence};
 
 // Declare each sensor once, under the key that identifies it.
@@ -264,11 +264,11 @@ machine.insert("up", TimeIntervalSequence::new("up"));
 
 machine.record_point("temperature", TimePointEvent::new(10, 21.5_f64)).unwrap();
 
-let mut tick = Batch::new();
+let mut tick = Update::new();
 tick.points("temperature", [TimePointEvent::new(11, 21.7_f64)])
     .points("log", [TimePointEvent::new(11, String::from("fan on"))])
     .spans("up", [TimeIntervalEvent::span(0, 20).unwrap()]);
-machine.record_batch(tick).unwrap();
+machine.record_update(tick).unwrap();
 
 assert_eq!(machine.points::<f64>("temperature").map(|s| s.len()), Some(2));
 
@@ -886,6 +886,55 @@ learns them as records arrive. Each entity is kept for good, with the retained
 window one formula would hold, so the state grows with the entities seen and an
 advance costs in proportion.
 
+## Stream systems
+
+A `StreamSystem` puts the pieces above together: it holds the streams of a
+subject and a list of processors, and keeps what the processors derive up to
+date as data arrives. A `processor::Processor` is one recipe: the inputs it
+reads, a formula over them, and the one output it produces. The inputs are the
+keys its formula reads; `with_input` declares what one must be.
+
+Derived streams are read-only and always current. An `Update`, a set of points
+and spans by stream key recorded all or nothing, evaluates again the processors
+that read what it changed, directly or through another processor's output, and
+no others; the `Report` it returns names the derived streams that changed. A
+processor reads only what the system already holds, and what a processor reads
+cannot be removed, so the list is always in an order the system can evaluate.
+
+```rust
+use chronoloom::processor::Processor;
+use chronoloom::stream_system::{StreamSystem, Update};
+use chronoloom::{Condition, Formula, Pattern, TimeIntervalEvent, TimeIntervalSequence};
+use chronoloom::{TimePointEvent, TimePointSequence};
+
+let mut room = StreamSystem::new();
+room.insert_stream("motion", TimePointSequence::<&str>::new("motion")).unwrap();
+room.insert_stream("door", TimeIntervalSequence::from_spans("door", vec![
+    TimeIntervalEvent::span(40, 50).unwrap(),
+])).unwrap();
+
+room.add_processor(Processor::new("presence", Formula::between(
+    Pattern::new("motion", Condition::Equals("start")),
+    Pattern::new("motion", Condition::Equals("end")),
+))).unwrap();
+room.add_processor(Processor::new(
+    "occupied",
+    Formula::state("presence").or(Formula::state("door")),
+)).unwrap();
+
+let mut update = Update::new();
+update.points("motion", [TimePointEvent::new(10, "start"), TimePointEvent::new(25, "end")]);
+let report = room.update(update).unwrap();
+
+assert_eq!(report.changed().len(), 2);
+assert_eq!(room.intervals("occupied").unwrap().len(), 2);
+assert!(room.is_derived("presence"));
+```
+
+The mode of a stream system is a type parameter, so what every mode shares is
+written once. Batch mode, a dataset held whole, is here; a live mode, where an
+update also moves frontiers and the processors run incrementally, is to come.
+
 ## Saving and loading
 
 Behind the `serde` feature, which is off by default and adds the `serde`
@@ -1008,6 +1057,8 @@ assert!(schema["properties"]["inputs"].is_object());
 
 What is open:
 
+- A `StreamSystem` has a batch mode only: its live mode, and saving and loading
+  it, are to come.
 - Record values have no lists, and a projection copies the values rather than
   viewing them in place.
 - A live processor keeps every entity of a per-entity output it has seen. A way

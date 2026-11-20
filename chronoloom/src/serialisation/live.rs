@@ -72,9 +72,9 @@ impl<'de> Deserialize<'de> for LiveProcessor {
     ///
     /// # Errors
     ///
-    /// Refuses a checkpoint whose inputs are not the ones its processor reads,
+    /// Refuses a checkpoint whose inputs are not the ones its processors read,
     /// whose entities, cursors or views contradict each other or the
-    /// frontiers, or whose processor does not pass [`Processor::check`] or
+    /// frontiers, or whose processors do not pass [`Processor::check`] or
     /// cannot run online.
     ///
     /// [`Processor::check`]: crate::Processor::check

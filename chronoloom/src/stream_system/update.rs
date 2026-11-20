@@ -1,4 +1,4 @@
-//! Events for many sequences, gathered to be recorded in one call.
+//! The data an update brings to a stream system.
 
 use core::any::{self, Any};
 use core::fmt;
@@ -7,47 +7,46 @@ use crate::primitives::{TimeIntervalEvent, TimePointEvent, Timestamp};
 use crate::sequences::TimePointSequence;
 use crate::values::{Schema, SchemaError, Value};
 
-use super::erased::{ErasedPoints, PointValue};
-use super::key::Key;
+use crate::sequence_system::{ErasedPoints, Key, PointValue};
 
-/// Events for many sequences of a [`SequenceSystem`], recorded together by
-/// [`record_batch`].
+/// Points and spans to record into the streams of a [`StreamSystem`], by key,
+/// all or nothing.
 ///
-/// A batch maps keys to the events that arrived for them — one tick of
-/// a sensor system. Each push gives its key and carries events of one
-/// value type, so `f64` readings and `String` log lines can travel in the same batch.
+/// An update maps keys to the events that arrived for them, such as one tick
+/// of a sensor system. Each push gives its key and carries events of one value
+/// type, so `f64` readings and `String` log lines can travel in the same
+/// update.
 ///
 /// ```
-/// use chronoloom::primitives::{TimeIntervalEvent, TimePointEvent};
-/// use chronoloom::sequence_system::Batch;
+/// use chronoloom::{TimeIntervalEvent, TimePointEvent};
+/// use chronoloom::stream_system::Update;
 ///
-/// let mut batch = Batch::new();
-/// batch
+/// let mut update = Update::new();
+/// update
 ///     .points("temperature", [TimePointEvent::new(10, 21.5_f64), TimePointEvent::new(11, 21.7)])
 ///     .points("log", [TimePointEvent::new(10, String::from("boot"))])
 ///     .spans("up", [TimeIntervalEvent::span(0, 10)?]);
 ///
-/// assert_eq!(batch.len(), 4);
-/// # Ok::<(), chronoloom::primitives::IntervalError>(())
+/// assert_eq!(update.len(), 4);
+/// # Ok::<(), chronoloom::IntervalError>(())
 /// ```
 ///
-/// Pushing is never checked against a system — a batch does not know which
-/// system it is for. Every check happens when it is recorded, and the batch is
-/// recorded whole or not at all. Pushing to one key twice is fine: both sets
-/// of events are recorded.
+/// Pushing is never checked against a system, because an update does not know
+/// which system it is for. Every check happens when it is recorded, and the
+/// update is recorded whole or not at all. Pushing to one key twice is fine:
+/// both sets of events are recorded.
 ///
-/// [`record_batch`]: super::SequenceSystem::record_batch
-/// [`SequenceSystem`]: super::SequenceSystem
+/// [`StreamSystem`]: super::StreamSystem
 #[derive(Debug, Default)]
-pub struct Batch {
+pub struct Update {
     /// In push order. Kept as pushed rather than grouped by key, so a second
     /// push to one key never has to reconcile its value type with the first —
     /// the system checks each against the sequence it is for.
     pub(crate) chunks: Vec<(Key, Pending)>,
 }
 
-impl Batch {
-    /// Create an empty batch.
+impl Update {
+    /// Create an empty update.
     #[must_use]
     pub const fn new() -> Self {
         Self { chunks: Vec::new() }
@@ -80,13 +79,13 @@ impl Batch {
         self
     }
 
-    /// How many events and spans the batch carries, across every key.
+    /// How many events and spans the update carries, across every key.
     #[must_use]
     pub fn len(&self) -> usize {
         self.chunks.iter().map(|(_, pending)| pending.len()).sum()
     }
 
-    /// Whether the batch carries no events or spans at all.
+    /// Whether the update carries no events or spans at all.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len() == 0

@@ -1,7 +1,7 @@
 //! Assembling a system from its parts, for reading one back from a document.
 
 use crate::primitives::Timestamp;
-use crate::processing::Output;
+use crate::processing::Recipe;
 use crate::values::{Schema, Value};
 
 use super::{Key, Member, Metadata, Sequence, SequenceSystem};
@@ -12,7 +12,7 @@ pub(crate) struct MemberParts {
     pub(crate) sequence: Sequence,
     pub(crate) metadata: Metadata,
     pub(crate) frontier: Option<Timestamp>,
-    pub(crate) lineage: Option<Output>,
+    pub(crate) lineage: Option<Recipe>,
     pub(crate) entity: Option<Value>,
     pub(crate) schema: Option<Schema>,
 }

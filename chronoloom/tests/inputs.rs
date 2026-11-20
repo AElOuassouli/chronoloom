@@ -6,9 +6,9 @@
 mod update;
 
 use chronoloom::{
-    Condition, Events, Formula, Group, Input, Kind, LiveProcessor, Output, Pattern, ProcessError,
-    Processor, Schema, SequenceSystem, TimeIntervalEvent, TimeIntervalSequence, TimePointEvent,
-    TimePointSequence, Value,
+    Condition, Events, Formula, Group, Input, Kind, LiveProcessor, Pattern, ProcessError,
+    Processor, Recipe, Schema, SequenceSystem, TimeIntervalEvent, TimeIntervalSequence,
+    TimePointEvent, TimePointSequence, Value,
 };
 
 fn schema() -> Schema {
@@ -27,7 +27,7 @@ fn in_output(output: &str, error: ProcessError) -> ProcessError {
 }
 
 /// A processor of `output` that declares the three inputs of the world.
-fn declared(output: &str, formula: impl Into<Output>) -> Processor {
+fn declared(output: &str, formula: impl Into<Recipe>) -> Processor {
     Processor::new(output, formula)
         .with_input("temperature", Input::Points(Kind::Float))
         .with_input("door", Input::Timeline)
@@ -55,7 +55,7 @@ fn a_valid_processor_validates_with_and_without_declarations() {
         declared("counts", Events::project("records", "count", Kind::Float)),
         declared(
             "each",
-            Output::per_entity(Group::new("records", "agent"), Formula::state("door")),
+            Recipe::per_entity(Group::new("records", "agent"), Formula::state("door")),
         ),
     ];
     for processor in &processors {
@@ -121,7 +121,7 @@ fn validate_lists_every_problem_of_a_processor_in_formula_order() {
         (
             declared(
                 "c",
-                Output::per_entity(
+                Recipe::per_entity(
                     Group::new("records", "nobody"),
                     Formula::while_matching(Pattern::field(
                         "records",
@@ -191,6 +191,19 @@ fn validate_agrees_with_check_on_a_formula_that_reads_its_own_output() {
     assert_eq!(Err(problems[0].clone()), processor.check());
     assert!(matches!(problems[0], ProcessError::Cycle { .. }));
     assert_eq!(problems.len(), 2, "{problems:?}");
+}
+
+#[test]
+fn check_reports_the_first_problem_validate_lists() {
+    let processors = [
+        declared("a", Formula::state("a").or(Formula::state("nowhere"))),
+        declared("door", Formula::state("nowhere")),
+    ];
+    for processor in processors {
+        let problems = processor.validate().unwrap_err();
+        assert!(problems.len() > 1, "{problems:?}");
+        assert_eq!(Err(problems[0].clone()), processor.check(), "{problems:?}");
+    }
 }
 
 #[test]

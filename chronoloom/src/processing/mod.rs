@@ -43,5 +43,5 @@ pub use kind::Kind;
 pub use live::LiveProcessor;
 #[cfg(feature = "serde")]
 pub(crate) use live::{Checkpoint, Untyped};
-pub use processor::Output;
 pub(crate) use processor::ProcessorSet;
+pub use processor::Recipe;

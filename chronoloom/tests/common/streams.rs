@@ -5,7 +5,7 @@
 use std::collections::BTreeMap;
 
 use chronoloom::{
-    Condition, Edge, Events, Formula, Group, Kind, OpenEnd, Output, Pattern, Processor,
+    Condition, Edge, Events, Formula, Group, Kind, OpenEnd, Pattern, Processor, Recipe,
     TimeIntervalEvent, Value,
 };
 
@@ -185,16 +185,16 @@ pub fn processors(random: &mut Random) -> Vec<Processor> {
                 let body = formula(random, &pools, 2);
                 match random.below(3) {
                     0 => {
-                        processors.push(Processor::new(key.as_str(), Output::per_entity(by, body)));
+                        processors.push(Processor::new(key.as_str(), Recipe::per_entity(by, body)));
                     }
                     1 => {
-                        processors.push(Processor::new(key.as_str(), Output::any_entity(by, body)));
+                        processors.push(Processor::new(key.as_str(), Recipe::any_entity(by, body)));
                         pools.states.push(key);
                     }
                     _ => {
                         processors.push(Processor::new(
                             key.as_str(),
-                            Output::count_entities(by, body),
+                            Recipe::count_entities(by, body),
                         ));
                         pools.numbers.push(key);
                     }

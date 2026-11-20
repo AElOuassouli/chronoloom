@@ -38,7 +38,7 @@
 use std::collections::BTreeMap;
 
 use crate::primitives::Timestamp;
-use crate::processing::Output;
+use crate::processing::Recipe;
 use crate::values::{Schema, Value};
 
 mod accessors;
@@ -74,7 +74,7 @@ struct Member {
     sequence: Sequence,
     metadata: Metadata,
     frontier: Option<Timestamp>,
-    lineage: Option<Output>,
+    lineage: Option<Recipe>,
     /// For a member of a per-entity output, the entity it is the timeline of.
     entity: Option<Value>,
     schema: Option<Schema>,

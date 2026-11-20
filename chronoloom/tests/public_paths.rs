@@ -10,7 +10,7 @@ use chronoloom::primitives::interval::{IntervalError, TimeIntervalEvent};
 use chronoloom::primitives::time_point::TimePointEvent;
 use chronoloom::primitives::Timestamp;
 use chronoloom::processing::{
-    Condition, Edge, Events, Formula, OpenEnd, Output, Pattern, ProcessError,
+    Condition, Edge, Events, Formula, OpenEnd, Pattern, ProcessError, Recipe,
 };
 use chronoloom::sequence_system::{
     AnyPointSequence, Key, PointValue, RecordError, Sequence, SequenceSystem,
@@ -29,8 +29,8 @@ use chronoloom::{
 };
 use chronoloom::{
     Batch as RootBatch, Condition as RootCondition, Edge as RootEdge, Events as RootEvents,
-    Formula as RootFormula, Mode as RootMode, OpenEnd as RootOpenEnd, Output as RootOutput,
-    Pattern as RootPattern, ProcessError as RootProcessError, Processor as RootProcessor,
+    Formula as RootFormula, Mode as RootMode, OpenEnd as RootOpenEnd, Pattern as RootPattern,
+    ProcessError as RootProcessError, Processor as RootProcessor, Recipe as RootRecipe,
     Report as RootReport, StreamSystem as RootStreamSystem, Update as RootUpdate,
     UpdateError as RootUpdateError,
 };

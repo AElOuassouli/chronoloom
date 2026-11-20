@@ -24,8 +24,10 @@ lint: ## Lint with and without optional features, and assert the dependency tree
 		exit 1; \
 	fi
 
-test: ## Run unit and doc tests, with default features and with all of them
-	cargo test
+test: ## Run unit and integration tests with default features, then everything with all features
+	@# Doc tests run once, with all features: each one is its own executable,
+	@# and running them twice doubles the slowest part of the suite.
+	cargo test --lib --tests
 	cargo test --all-features
 
 check-publish: ## Validate crates.io packaging without burning a version

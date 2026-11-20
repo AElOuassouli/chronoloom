@@ -78,7 +78,7 @@ pub enum ProcessError {
     /// entities of a [`PerEntity`] output whose names read the same (the text
     /// `5` and the integer `5`), or an entity and another output.
     ///
-    /// [`PerEntity`]: super::Output::PerEntity
+    /// [`PerEntity`]: super::Recipe::PerEntity
     DuplicateMember {
         /// The key two members would share.
         key: Key,
@@ -87,7 +87,7 @@ pub enum ProcessError {
     /// An output of the kind [`PerEntity`] has one member per entity, so it has
     /// no single sequence to evaluate.
     ///
-    /// [`PerEntity`]: super::Output::PerEntity
+    /// [`PerEntity`]: super::Recipe::PerEntity
     SeveralMembers,
 
     /// A [`LiveProcessor`] cannot run an output that reads `key`: a member of a
@@ -95,7 +95,7 @@ pub enum ProcessError {
     /// an output that a group is made of.
     ///
     /// [`LiveProcessor`]: super::LiveProcessor
-    /// [`PerEntity`]: super::Output::PerEntity
+    /// [`PerEntity`]: super::Recipe::PerEntity
     GroupedRead {
         /// The key that is read.
         key: Key,

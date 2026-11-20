@@ -14,7 +14,7 @@ use serde_json::{json, Value as Json};
 use chronoloom::serialisation::FORMAT_VERSION;
 use chronoloom::stream_system::StreamSystem;
 use chronoloom::{
-    Condition, Edge, Extent, Formula, Group, Input, Kind, OpenEnd, Output, Pattern, Processor,
+    Condition, Edge, Extent, Formula, Group, Input, Kind, OpenEnd, Pattern, Processor, Recipe,
     Schema, Sequence, SequenceSystem, TimeIntervalEvent, TimeIntervalSequence, TimePointEvent,
     TimePointSequence, Value,
 };
@@ -818,9 +818,9 @@ fn every_kind(patterns: &[Pattern]) -> Vec<Processor> {
             "projected",
             chronoloom::Events::project("r", "a", Kind::Float),
         ),
-        Processor::new("each", Output::per_entity(by.clone(), Formula::state("up"))),
-        Processor::new("any", Output::any_entity(by.clone(), Formula::state("up"))),
-        Processor::new("number", Output::count_entities(by, Formula::state("up"))),
+        Processor::new("each", Recipe::per_entity(by.clone(), Formula::state("up"))),
+        Processor::new("any", Recipe::any_entity(by.clone(), Formula::state("up"))),
+        Processor::new("number", Recipe::count_entities(by, Formula::state("up"))),
     ]);
 
     processors

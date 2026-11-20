@@ -1318,7 +1318,7 @@
         }
       ]
     },
-    "Output": {
+    "Recipe": {
       "oneOf": [
         {
           "additionalProperties": false,
@@ -1606,7 +1606,7 @@
       "const": 1
     },
     "formula": {
-      "$ref": "#/$defs/Output"
+      "$ref": "#/$defs/Recipe"
     },
     "inputs": {
       "items": {

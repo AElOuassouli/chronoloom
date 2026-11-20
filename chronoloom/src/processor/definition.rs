@@ -3,15 +3,15 @@
 use core::fmt;
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::processing::{self, Input, Output, ProcessError};
+use crate::processing::{self, Input, ProcessError, Recipe};
 use crate::sequence_system::Key;
 
 /// One recipe of a [`StreamSystem`]: the inputs it reads, a formula over them,
 /// and the key of the one output it produces.
 ///
-/// The formula is an [`Output`]: a state [`Formula`] gives a timeline, an
+/// The recipe is a [`Recipe`]: a state [`Formula`] gives a timeline, an
 /// [`Events`] formula gives points, and a per-entity output gives the family
-/// of members `<output>/<entity>`, one per entity (see [`Output`]).
+/// of members `<output>/<entity>`, one per entity (see [`Recipe`]).
 ///
 /// The inputs are the keys the formula reads, found from the formula itself:
 /// [`Processor::new`] needs nothing else. [`with_input`](Processor::with_input)
@@ -51,7 +51,7 @@ use crate::sequence_system::Key;
 ///
 /// With the `serde` feature a processor is a document of its own: its
 /// `output`, its declared `inputs` (left out when there are none) and its
-/// `formula`.
+/// `formula` (the wire name of the recipe).
 ///
 /// [`StreamSystem`]: crate::stream_system::StreamSystem
 /// [`LiveProcessor`]: crate::LiveProcessor
@@ -60,16 +60,16 @@ use crate::sequence_system::Key;
 #[derive(Debug, Clone, PartialEq)]
 pub struct Processor {
     output: Key,
-    formula: Output,
+    recipe: Recipe,
     declared: BTreeMap<Key, Input>,
 }
 
 impl Processor {
-    /// A processor producing `output` from `formula`.
-    pub fn new(output: impl Into<Key>, formula: impl Into<Output>) -> Self {
+    /// A processor producing `output` from `recipe`.
+    pub fn new(output: impl Into<Key>, recipe: impl Into<Recipe>) -> Self {
         Self {
             output: output.into(),
-            formula: formula.into(),
+            recipe: recipe.into(),
             declared: BTreeMap::new(),
         }
     }
@@ -87,10 +87,10 @@ impl Processor {
         &self.output
     }
 
-    /// The formula, the recipe of the output.
+    /// The recipe of the output.
     #[must_use]
-    pub const fn formula(&self) -> &Output {
-        &self.formula
+    pub const fn recipe(&self) -> &Recipe {
+        &self.recipe
     }
 
     /// Every key the processor reads: the keys of its formula and the declared
@@ -98,7 +98,7 @@ impl Processor {
     #[must_use]
     pub fn inputs(&self) -> BTreeSet<&Key> {
         let mut read = Vec::new();
-        self.formula.read_keys(&mut read);
+        self.recipe.read_keys(&mut read);
         read.into_iter().chain(self.declared.keys()).collect()
     }
 
@@ -117,7 +117,7 @@ impl Processor {
     ///
     /// Every problem found, never an empty list.
     pub fn validate(&self) -> Result<(), Vec<ProcessError>> {
-        self.as_set().validate()
+        self.as_set().problems(false)
     }
 
     /// The first problem [`validate`](Processor::validate) would report, if
@@ -127,7 +127,8 @@ impl Processor {
     ///
     /// That problem.
     pub fn check(&self) -> Result<(), ProcessError> {
-        self.validate()
+        self.as_set()
+            .problems(true)
             .map_err(|mut problems| problems.swap_remove(0))
     }
 
@@ -140,7 +141,7 @@ impl Processor {
     /// takes.
     pub(crate) fn as_set(&self) -> processing::ProcessorSet {
         self.declared.iter().fold(
-            processing::ProcessorSet::new().with(self.output.clone(), self.formula.clone()),
+            processing::ProcessorSet::new().with(self.output.clone(), self.recipe.clone()),
             |set, (key, input)| set.with_input(key.clone(), input.clone()),
         )
     }
@@ -148,6 +149,6 @@ impl Processor {
 
 impl fmt::Display for Processor {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} = {}", self.output, self.formula)
+        write!(f, "{} = {}", self.output, self.recipe)
     }
 }

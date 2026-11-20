@@ -6,7 +6,7 @@ use std::collections::BTreeSet;
 use serde::{de, ser, Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::primitives::Timestamp;
-use crate::processing::{Edge, Output};
+use crate::processing::{Edge, Recipe};
 use crate::sequence_system::{Key, MemberParts, Metadata, Sequence, SequenceSystem};
 use crate::sequences::TimePointSequence;
 use crate::values::{Schema, Value};
@@ -90,7 +90,7 @@ struct MemberRef<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     frontier: Option<Timestamp>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    lineage: Option<&'a Output>,
+    lineage: Option<&'a Recipe>,
     #[serde(skip_serializing_if = "Option::is_none")]
     entity: Option<&'a Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -174,7 +174,7 @@ struct MemberBody {
     #[serde(default)]
     frontier: Option<Timestamp>,
     #[serde(default)]
-    lineage: Option<Output>,
+    lineage: Option<Recipe>,
     #[serde(default)]
     entity: Option<Value>,
     #[serde(default)]
@@ -252,11 +252,11 @@ fn check_schema(points: &TimePointSequence<Value>, schema: &Schema) -> Result<()
 
 /// An entity belongs to a member of a per-entity output, filed under the key
 /// `<output>/<entity>`.
-fn check_entity(key: &Key, lineage: Option<&Output>, entity: Option<&Value>) -> Result<(), String> {
+fn check_entity(key: &Key, lineage: Option<&Recipe>, entity: Option<&Value>) -> Result<(), String> {
     let Some(entity) = entity else {
         return Ok(());
     };
-    if !matches!(lineage, Some(Output::PerEntity { .. })) {
+    if !matches!(lineage, Some(Recipe::PerEntity { .. })) {
         return Err(member_error(key, "has an entity but no per-entity lineage"));
     }
     if matches!(entity, Value::Null | Value::Record(_))

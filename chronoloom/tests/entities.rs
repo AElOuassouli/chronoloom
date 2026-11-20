@@ -7,7 +7,7 @@ mod update;
 
 use chronoloom::stream_system::Update;
 use chronoloom::{
-    Condition, Extent, Formula, Group, Key, Output, Pattern, ProcessError, Processor,
+    Condition, Extent, Formula, Group, Key, Pattern, ProcessError, Processor, Recipe,
     SequenceSystem, StreamSystem, TimeIntervalSequence, TimePointEvent, TimePointSequence, Value,
 };
 
@@ -64,9 +64,9 @@ fn changes_of(system: &StreamSystem, key: &str) -> Vec<(i64, i64)> {
 /// The three outputs on one formula.
 fn processor(formula: &Formula) -> Vec<Processor> {
     vec![
-        Processor::new("presence", Output::per_entity(by_agent(), formula.clone())),
-        Processor::new("anyone", Output::any_entity(by_agent(), formula.clone())),
-        Processor::new("crowd", Output::count_entities(by_agent(), formula.clone())),
+        Processor::new("presence", Recipe::per_entity(by_agent(), formula.clone())),
+        Processor::new("anyone", Recipe::any_entity(by_agent(), formula.clone())),
+        Processor::new("crowd", Recipe::count_entities(by_agent(), formula.clone())),
     ]
 }
 
@@ -265,7 +265,7 @@ fn members_are_filed_under_the_output_and_the_entity() {
         &system,
         &[Processor::new(
             "presence",
-            Output::per_entity(by_agent(), present()),
+            Recipe::per_entity(by_agent(), present()),
         )],
     )
     .expect("a result");
@@ -291,7 +291,7 @@ fn a_slash_in_the_text_of_an_entity_is_kept() {
         &system,
         &[Processor::new(
             "presence",
-            Output::per_entity(by_agent(), present()),
+            Recipe::per_entity(by_agent(), present()),
         )],
     )
     .expect("a result");
@@ -317,7 +317,7 @@ fn only_a_boolean_a_number_or_text_names_an_entity() {
         &gate(records),
         &[Processor::new(
             "presence",
-            Output::per_entity(by_agent(), present()),
+            Recipe::per_entity(by_agent(), present()),
         )],
     )
     .expect("a result");
@@ -340,7 +340,7 @@ fn records_of_other_entities_and_of_none_are_not_part_of_an_entity() {
         &system,
         &[Processor::new(
             "presence",
-            Output::per_entity(by_agent(), present()),
+            Recipe::per_entity(by_agent(), present()),
         )],
     )
     .expect("a result");
@@ -361,7 +361,7 @@ fn equal_numbers_are_one_entity_named_after_the_first() {
         &system,
         &[Processor::new(
             "presence",
-            Output::per_entity(by_agent(), present()),
+            Recipe::per_entity(by_agent(), present()),
         )],
     )
     .expect("a result");
@@ -378,7 +378,7 @@ fn two_entities_with_one_name_are_refused() {
         (10, crossing(Value::from("5"), "in")),
         (11, crossing(Value::from(5), "in")),
     ]);
-    let output = Output::per_entity(by_agent(), present());
+    let output = Recipe::per_entity(by_agent(), present());
 
     assert_eq!(
         update::run(&system, &[Processor::new("presence", output)]),
@@ -392,7 +392,7 @@ fn two_entities_with_one_name_are_refused() {
 fn an_entity_cannot_take_the_key_of_another_output() {
     let system = gate(visits(Value::from(7), &[(10, "in")]));
     let processor = vec![
-        Processor::new("presence", Output::per_entity(by_agent(), present())),
+        Processor::new("presence", Recipe::per_entity(by_agent(), present())),
         Processor::new("presence/7", Formula::state("nothing")),
     ];
 
@@ -402,8 +402,8 @@ fn an_entity_cannot_take_the_key_of_another_output() {
     ));
 
     let processor = vec![
-        Processor::new("presence", Output::per_entity(by_agent(), present())),
-        Processor::new("presence/7", Output::any_entity(by_agent(), present())),
+        Processor::new("presence", Recipe::per_entity(by_agent(), present())),
+        Processor::new("presence/7", Recipe::any_entity(by_agent(), present())),
     ];
     assert_eq!(
         update::run(&system, &processor),
@@ -492,7 +492,7 @@ fn the_count_is_known_where_every_entity_is() {
         &system,
         &[Processor::new(
             "crowd",
-            Output::count_entities(by_agent(), present().and(Formula::state("door"))),
+            Recipe::count_entities(by_agent(), present().and(Formula::state("door"))),
         )],
     )
     .expect("a result");
@@ -531,7 +531,7 @@ fn another_formula_may_read_a_member_of_a_per_entity_output() {
     // Added before the output it reads: the order does not matter.
     let processor = vec![
         Processor::new("seven_again", Formula::state("presence/7").shift(0, 5)),
-        Processor::new("presence", Output::per_entity(by_agent(), present())),
+        Processor::new("presence", Recipe::per_entity(by_agent(), present())),
     ];
     let result = update::run(&two_agents(), &processor).expect("a result");
 
@@ -542,7 +542,7 @@ fn another_formula_may_read_a_member_of_a_per_entity_output() {
 #[test]
 fn a_member_of_an_entity_that_does_not_exist_is_unknown() {
     let processor = vec![
-        Processor::new("presence", Output::per_entity(by_agent(), present())),
+        Processor::new("presence", Recipe::per_entity(by_agent(), present())),
         Processor::new("ghost", Formula::state("presence/12")),
     ];
 
@@ -558,7 +558,7 @@ fn a_member_of_an_entity_that_does_not_exist_is_unknown() {
 fn a_per_entity_formula_that_reads_its_own_members_is_a_cycle() {
     let processor = [Processor::new(
         "presence",
-        Output::per_entity(by_agent(), present().or(Formula::state("presence/7"))),
+        Recipe::per_entity(by_agent(), present().or(Formula::state("presence/7"))),
     )];
 
     assert_eq!(
@@ -577,8 +577,8 @@ fn any_and_count_are_read_by_their_own_key_like_any_output() {
             Formula::while_matching(Pattern::new("crowd", Condition::Equals(1_i64)))
                 .and(Formula::state("anyone")),
         ),
-        Processor::new("anyone", Output::any_entity(by_agent(), present())),
-        Processor::new("crowd", Output::count_entities(by_agent(), present())),
+        Processor::new("anyone", Recipe::any_entity(by_agent(), present())),
+        Processor::new("crowd", Recipe::count_entities(by_agent(), present())),
     ];
     let result = update::run(&two_agents(), &processor).expect("a result");
 
@@ -600,7 +600,7 @@ fn the_group_reads_an_output_of_the_same_processor() {
         ),
         Processor::new(
             "arrivals",
-            Output::per_entity(
+            Recipe::per_entity(
                 Group::new("entered", "agent"),
                 Formula::occurs(Pattern::field("entered", "direction", Condition::Any)),
             ),
@@ -618,12 +618,12 @@ fn the_group_reads_an_output_of_the_same_processor() {
 
 #[test]
 fn each_member_knows_its_processor_and_its_entity() {
-    let output = Output::per_entity(by_agent(), present());
+    let output = Recipe::per_entity(by_agent(), present());
     let system = update::run(&two_agents(), &[Processor::new("presence", output.clone())])
         .expect("a result");
 
     assert_eq!(
-        system.producer("presence/7").map(Processor::formula),
+        system.producer("presence/7").map(Processor::recipe),
         Some(&output)
     );
     assert_eq!(system.entity("presence/9"), Some(&Value::from(9)));
@@ -636,8 +636,8 @@ fn an_update_derives_the_members_again_from_the_current_records() {
     let mut system = update::run(
         &two_agents(),
         &[
-            Processor::new("presence", Output::per_entity(by_agent(), present())),
-            Processor::new("anyone", Output::any_entity(by_agent(), present())),
+            Processor::new("presence", Recipe::per_entity(by_agent(), present())),
+            Processor::new("anyone", Recipe::any_entity(by_agent(), present())),
         ],
     )
     .expect("a result");
@@ -664,7 +664,7 @@ fn a_processor_that_cannot_be_evaluated_changes_nothing() {
         &two_agents(),
         &[Processor::new(
             "presence",
-            Output::per_entity(by_agent(), present()),
+            Recipe::per_entity(by_agent(), present()),
         )],
     )
     .expect("a result");
@@ -678,7 +678,7 @@ fn a_processor_that_cannot_be_evaluated_changes_nothing() {
 
 #[test]
 fn a_per_entity_output_has_no_single_sequence() {
-    let output = Output::per_entity(by_agent(), present());
+    let output = Recipe::per_entity(by_agent(), present());
     assert_eq!(
         output.evaluate(&two_agents()),
         Err(ProcessError::SeveralMembers)
@@ -689,14 +689,14 @@ fn a_per_entity_output_has_no_single_sequence() {
     );
 
     // The others do have one.
-    let any = Output::any_entity(by_agent(), present());
+    let any = Recipe::any_entity(by_agent(), present());
     let sequence = any.evaluate(&two_agents()).expect("a timeline");
     assert_eq!(
         sequence.as_time_interval().map(TimeIntervalSequence::len),
         Some(1)
     );
     assert!(any.to_string().starts_with("any("));
-    assert!(Output::count_entities(by_agent(), present())
+    assert!(Recipe::count_entities(by_agent(), present())
         .to_string()
         .starts_with("count("));
 }
@@ -706,7 +706,7 @@ fn the_records_of_a_group_must_be_values() {
     let mut system = SequenceSystem::new();
     system.insert("numbers", TimePointSequence::<i64>::new("numbers"));
     system.insert("timeline", TimeIntervalSequence::new("timeline"));
-    let output = |key: &str| Output::count_entities(Group::new(key, "agent"), present());
+    let output = |key: &str| Recipe::count_entities(Group::new(key, "agent"), present());
 
     assert!(matches!(
         output("numbers").evaluate(&system),

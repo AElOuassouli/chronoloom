@@ -13,9 +13,9 @@ mod update;
 use serde_json::{json, Value as Json};
 
 use chronoloom::{
-    Condition, Edge, Emission, Emitted, Events, Formula, Group, Input, Kind, LiveProcessor, Output,
-    Pattern, ProcessError, Processor, Schema, SequenceSystem, TimePointEvent, TimePointSequence,
-    Value,
+    Condition, Edge, Emission, Emitted, Events, Formula, Group, Input, Kind, LiveProcessor,
+    Pattern, ProcessError, Processor, Recipe, Schema, SequenceSystem, TimePointEvent,
+    TimePointSequence, Value,
 };
 
 use common::{bounds, for_each_seed, span, Random};
@@ -287,8 +287,8 @@ fn entities() -> Vec<Processor> {
     let present = Formula::between(direction("in"), direction("out"));
     let by = Group::new("gate", "agent");
     vec![
-        Processor::new("presence", Output::per_entity(by.clone(), present.clone())),
-        Processor::new("crowd", Output::count_entities(by, present)),
+        Processor::new("presence", Recipe::per_entity(by.clone(), present.clone())),
+        Processor::new("crowd", Recipe::count_entities(by, present)),
     ]
 }
 

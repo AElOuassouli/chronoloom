@@ -20,14 +20,14 @@ use super::formula::Formula;
 /// "agent")` groups the records of `gate` by their `agent` field.
 ///
 /// A [`Group`] is what the per-entity outputs of a [`Processor`] are grouped
-/// by: [`Output::PerEntity`], [`Output::AnyEntity`] and
-/// [`Output::CountEntities`]. Presence is the model: an agent enters, an agent
+/// by: [`Recipe::PerEntity`], [`Recipe::AnyEntity`] and
+/// [`Recipe::CountEntities`]. Presence is the model: an agent enters, an agent
 /// exits, and what is wanted is one timeline per agent, whether any agent is
 /// present, and how many are. The same shape covers sessions per user and
 /// uptime per host.
 ///
 /// ```
-/// use chronoloom::{Condition, Formula, Group, Output, Pattern, Processor, Value};
+/// use chronoloom::{Condition, Formula, Group, Recipe, Pattern, Processor, Value};
 /// use chronoloom::{StreamSystem, TimePointEvent, TimePointSequence};
 ///
 /// let crossing = |agent: i64, direction: &str| {
@@ -46,9 +46,9 @@ use super::formula::Formula;
 /// let present = Formula::between(direction("in"), direction("out"));
 /// let by_agent = Group::new("gate", "agent");
 ///
-/// result.add_processor(Processor::new("presence", Output::per_entity(by_agent.clone(), present.clone())))?;
-/// result.add_processor(Processor::new("anyone", Output::any_entity(by_agent.clone(), present.clone())))?;
-/// result.add_processor(Processor::new("crowd", Output::count_entities(by_agent, present)))?;
+/// result.add_processor(Processor::new("presence", Recipe::per_entity(by_agent.clone(), present.clone())))?;
+/// result.add_processor(Processor::new("anyone", Recipe::any_entity(by_agent.clone(), present.clone())))?;
+/// result.add_processor(Processor::new("crowd", Recipe::count_entities(by_agent, present)))?;
 ///
 /// // One timeline per agent, keyed `<output>/<agent>`.
 /// let seven = result.intervals("presence/7").unwrap();
@@ -89,7 +89,7 @@ use super::formula::Formula;
 ///
 /// An entity exists from its first record on. Its timeline is observed from
 /// that instant, so nothing is said about the entity before it, and
-/// [`Output::AnyEntity`] and [`Output::CountEntities`] count it from that
+/// [`Recipe::AnyEntity`] and [`Recipe::CountEntities`] count it from that
 /// instant too: an entity that has not appeared yet is inactive and adds no
 /// uncertainty. This is what lets a [`LiveProcessor`] learn entities as they
 /// arrive and still give what the batch evaluation gives. It changes nothing
@@ -115,15 +115,15 @@ use super::formula::Formula;
 /// read of the whole per-entity output, which therefore comes first, and a
 /// formula of the output that reads such a key is a [`ProcessError::Cycle`].
 /// A key of an entity that does not exist is [`ProcessError::UnknownKey`].
-/// The outputs [`Output::AnyEntity`] and [`Output::CountEntities`] are read by
+/// The outputs [`Recipe::AnyEntity`] and [`Recipe::CountEntities`] are read by
 /// their own key, like any output. A [`LiveProcessor`] cannot read the members
 /// of a per-entity output, since it only learns the entities as events arrive:
 /// that is [`ProcessError::GroupedRead`].
 ///
 /// [`LiveProcessor`]: super::LiveProcessor
-/// [`Output::AnyEntity`]: super::Output::AnyEntity
-/// [`Output::CountEntities`]: super::Output::CountEntities
-/// [`Output::PerEntity`]: super::Output::PerEntity
+/// [`Recipe::AnyEntity`]: super::Recipe::AnyEntity
+/// [`Recipe::CountEntities`]: super::Recipe::CountEntities
+/// [`Recipe::PerEntity`]: super::Recipe::PerEntity
 /// [`Processor`]: crate::processor::Processor
 /// [`Value::get`]: crate::Value::get
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

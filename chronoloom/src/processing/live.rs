@@ -19,7 +19,7 @@ use super::formula::Formula;
 use super::group::{self, EntityId, Group};
 use super::input::Input;
 use super::kind::Kind;
-use super::processor::{Output, ProcessorSet};
+use super::processor::{ProcessorSet, Recipe};
 use crate::processor::Processor;
 
 #[cfg(feature = "serde")]
@@ -244,10 +244,10 @@ pub(crate) use checkpoint::{Checkpoint, Untyped};
 /// input of a value type outside the closed set of the format cannot be saved,
 /// and the error names its key.
 ///
-/// [`AnyEntity`]: super::Output::AnyEntity
-/// [`CountEntities`]: super::Output::CountEntities
+/// [`AnyEntity`]: super::Recipe::AnyEntity
+/// [`CountEntities`]: super::Recipe::CountEntities
 /// [`Group`]: super::Group
-/// [`PerEntity`]: super::Output::PerEntity
+/// [`PerEntity`]: super::Recipe::PerEntity
 /// [`advance`]: LiveProcessor::advance
 /// [`finish`]: LiveProcessor::finish
 /// [`frontier`]: LiveProcessor::frontier
@@ -261,7 +261,7 @@ pub struct LiveProcessor {
     /// The processors this was built from, as they were given.
     processors: Vec<Processor>,
     /// The outputs in dependency order, with every `Head` read as the extent.
-    outputs: Vec<(Key, Output)>,
+    outputs: Vec<(Key, Recipe)>,
     /// The live members every output reads: the retained window.
     inputs: SequenceSystem,
     /// Per output, the instant before which everything has been emitted.
@@ -297,7 +297,7 @@ type Evaluated = (
 /// An output of the user, or a group that expands to several.
 #[derive(Debug, Clone)]
 enum Slot {
-    Plain(Key, Output),
+    Plain(Key, Recipe),
     Group(usize),
 }
 
@@ -321,7 +321,7 @@ struct GroupState {
     formula: Formula,
     /// The prototype output, and the view of the records it reads.
     template: Key,
-    template_output: Output,
+    template_output: Recipe,
     template_betweens: Vec<Key>,
     template_view: Key,
     entities: BTreeMap<EntityId, Born>,
@@ -341,7 +341,7 @@ struct Born {
     view: Key,
     /// The earliest instant of one of its records fed so far.
     first: Timestamp,
-    output: Output,
+    output: Recipe,
 }
 
 /// What an output that belongs to a group is.
@@ -424,7 +424,7 @@ impl ProcessorSet {
         let per_entity: Vec<&Key> = self
             .outputs()
             .iter()
-            .filter(|(_, output)| matches!(output, Output::PerEntity { .. }))
+            .filter(|(_, output)| matches!(output, Recipe::PerEntity { .. }))
             .map(|(key, _)| key)
             .collect();
         for key in &order {
@@ -439,9 +439,9 @@ impl ProcessorSet {
                     key: member.clone(),
                 });
             }
-            if let Output::PerEntity { by, .. }
-            | Output::AnyEntity { by, .. }
-            | Output::CountEntities { by, .. } = output
+            if let Recipe::PerEntity { by, .. }
+            | Recipe::AnyEntity { by, .. }
+            | Recipe::CountEntities { by, .. } = output
             {
                 if self.outputs().contains_key(&by.key) {
                     return Err(ProcessError::GroupedRead {
@@ -453,15 +453,15 @@ impl ProcessorSet {
 
         // The outputs as they are read, a group standing for its prototype.
         let mut groups: Vec<GroupState> = Vec::new();
-        let mut unviewed: Vec<(Key, Output)> = Vec::new();
+        let mut unviewed: Vec<(Key, Recipe)> = Vec::new();
         let mut layout: Vec<(Option<usize>, usize)> = Vec::new();
-        let mut aggregates: Vec<(Key, Output)> = Vec::new();
+        let mut aggregates: Vec<(Key, Recipe)> = Vec::new();
         for key in order {
             let output = &self.outputs()[key];
             let (by, formula, aggregation) = match output {
-                Output::PerEntity { by, formula } => (by, formula, Aggregation::PerEntity),
-                Output::AnyEntity { by, formula } => (by, formula, Aggregation::Any),
-                Output::CountEntities { by, formula } => (by, formula, Aggregation::Count),
+                Recipe::PerEntity { by, formula } => (by, formula, Aggregation::PerEntity),
+                Recipe::AnyEntity { by, formula } => (by, formula, Aggregation::Any),
+                Recipe::CountEntities { by, formula } => (by, formula, Aggregation::Count),
                 plain => {
                     layout.push((None, unviewed.len()));
                     unviewed.push((key.clone(), until_extent(plain)));
@@ -475,10 +475,10 @@ impl ProcessorSet {
             layout.push((Some(groups.len()), unviewed.len()));
             unviewed.push((
                 template.clone(),
-                Output::State(group::retarget(&formula, &by.key, &template_view)),
+                Recipe::Timeline(group::retarget(&formula, &by.key, &template_view)),
             ));
             if aggregation != Aggregation::PerEntity {
-                aggregates.push((key.clone(), Output::State(Formula::Or(Vec::new()))));
+                aggregates.push((key.clone(), Recipe::Timeline(Formula::Or(Vec::new()))));
             }
             groups.push(GroupState {
                 key: key.clone(),
@@ -486,13 +486,13 @@ impl ProcessorSet {
                 by: by.clone(),
                 formula,
                 template,
-                template_output: Output::State(Formula::Or(Vec::new())),
+                template_output: Recipe::Timeline(Formula::Or(Vec::new())),
                 template_betweens: Vec::new(),
                 template_view,
                 entities: BTreeMap::new(),
             });
         }
-        let known: Vec<(Key, Output)> = unviewed.iter().cloned().chain(aggregates).collect();
+        let known: Vec<(Key, Recipe)> = unviewed.iter().cloned().chain(aggregates).collect();
 
         // The reads of every leaf, each by the input it reaches: a read of the
         // output of an `Events::Changes` is a read of what it reads, and of an
@@ -553,7 +553,7 @@ impl ProcessorSet {
         }
 
         let mut betweens = BTreeMap::new();
-        let mut viewed: Vec<(Key, Output, Vec<Key>)> = Vec::new();
+        let mut viewed: Vec<(Key, Recipe, Vec<Key>)> = Vec::new();
         for (key, output) in &unviewed {
             let mut created = Vec::new();
             let output = with_views(output, &mut betweens, &mut created);
@@ -915,7 +915,7 @@ impl LiveProcessor {
 
         let formula = group::retarget(&state.formula, &state.by.key, &view);
         let mut created = Vec::new();
-        let output = with_views(&Output::State(formula), &mut self.betweens, &mut created);
+        let output = with_views(&Recipe::Timeline(formula), &mut self.betweens, &mut created);
 
         self.roles.insert(
             member.clone(),
@@ -975,7 +975,7 @@ impl LiveProcessor {
                 Aggregation::Any => {
                     outputs.push((
                         group.key.clone(),
-                        Output::AnyEntity {
+                        Recipe::AnyEntity {
                             by,
                             formula: states,
                         },
@@ -984,7 +984,7 @@ impl LiveProcessor {
                 Aggregation::Count => {
                     outputs.push((
                         group.key.clone(),
-                        Output::CountEntities {
+                        Recipe::CountEntities {
                             by,
                             formula: states,
                         },
@@ -1028,7 +1028,7 @@ impl LiveProcessor {
         &self,
         group: usize,
         key: &Key,
-        output: &Output,
+        output: &Recipe,
         working: &SequenceSystem,
     ) -> (Sequence, Option<Vec<TimePointEvent<i64>>>) {
         let state = &self.groups[group];
@@ -1203,17 +1203,17 @@ impl LiveProcessor {
         }
     }
 
-    fn output_frontier(&self, output: &Output, outputs: &BTreeMap<Key, Timestamp>) -> Timestamp {
+    fn output_frontier(&self, output: &Recipe, outputs: &BTreeMap<Key, Timestamp>) -> Timestamp {
         match output {
-            Output::State(formula)
-            | Output::Events(Events::Edges(formula))
-            | Output::PerEntity { formula, .. }
-            | Output::AnyEntity { formula, .. }
-            | Output::CountEntities { formula, .. } => self.formula_frontier(formula, outputs),
-            Output::Events(Events::Matching(pattern)) => {
+            Recipe::Timeline(formula)
+            | Recipe::Points(Events::Edges(formula))
+            | Recipe::PerEntity { formula, .. }
+            | Recipe::AnyEntity { formula, .. }
+            | Recipe::CountEntities { formula, .. } => self.formula_frontier(formula, outputs),
+            Recipe::Points(Events::Matching(pattern)) => {
                 self.series_frontier(pattern.key.as_str(), outputs)
             }
-            Output::Events(Events::Project { key, .. } | Events::Changes { key }) => {
+            Recipe::Points(Events::Project { key, .. } | Events::Changes { key }) => {
                 self.series_frontier(key.as_str(), outputs)
             }
         }
@@ -1285,10 +1285,10 @@ impl LiveProcessor {
             // are needed from their first emission.
             let through = self.through[key];
             let lower = match output {
-                Output::State(_)
-                | Output::PerEntity { .. }
-                | Output::AnyEntity { .. }
-                | Output::CountEntities { .. }
+                Recipe::Timeline(_)
+                | Recipe::PerEntity { .. }
+                | Recipe::AnyEntity { .. }
+                | Recipe::CountEntities { .. }
                     if through != Timestamp::MIN =>
                 {
                     through - 1
@@ -1302,7 +1302,7 @@ impl LiveProcessor {
         for (key, output) in self.outputs.iter().rev() {
             // The edges of a formula at an instant read its state just before.
             let lower = match output {
-                Output::Events(Events::Edges(_)) => required[key].saturating_sub(1),
+                Recipe::Points(Events::Edges(_)) => required[key].saturating_sub(1),
                 _ => required[key],
             };
             for (leaf, reach) in leaves(output) {
@@ -1392,24 +1392,24 @@ impl<'a> Leaf<'a> {
 
 /// The output with every `Between` that stops at the head stopping at the end
 /// of the extent, which online ends at the frontier, the head.
-fn until_extent(output: &Output) -> Output {
+fn until_extent(output: &Recipe) -> Recipe {
     match output {
-        Output::State(formula) => Output::State(formula.open_until_extent()),
-        Output::Events(Events::Edges(formula)) => {
-            Output::Events(Events::Edges(formula.open_until_extent()))
+        Recipe::Timeline(formula) => Recipe::Timeline(formula.open_until_extent()),
+        Recipe::Points(Events::Edges(formula)) => {
+            Recipe::Points(Events::Edges(formula.open_until_extent()))
         }
-        Output::Events(
+        Recipe::Points(
             events @ (Events::Matching(_) | Events::Project { .. } | Events::Changes { .. }),
-        ) => Output::Events(events.clone()),
-        Output::PerEntity { by, formula } => Output::PerEntity {
+        ) => Recipe::Points(events.clone()),
+        Recipe::PerEntity { by, formula } => Recipe::PerEntity {
             by: by.clone(),
             formula: formula.open_until_extent(),
         },
-        Output::AnyEntity { by, formula } => Output::AnyEntity {
+        Recipe::AnyEntity { by, formula } => Recipe::AnyEntity {
             by: by.clone(),
             formula: formula.open_until_extent(),
         },
-        Output::CountEntities { by, formula } => Output::CountEntities {
+        Recipe::CountEntities { by, formula } => Recipe::CountEntities {
             by: by.clone(),
             formula: formula.open_until_extent(),
         },
@@ -1420,10 +1420,10 @@ fn until_extent(output: &Output) -> Output {
 /// processor cuts at the instant the machine of that leaf starts at, filed in
 /// `betweens` by the view of its `start`.
 fn with_views(
-    output: &Output,
+    output: &Recipe,
     betweens: &mut BTreeMap<Key, Between>,
     created: &mut Vec<Key>,
-) -> Output {
+) -> Recipe {
     fn view(pattern: &Pattern, key: Key) -> Pattern {
         Pattern {
             key,
@@ -1487,23 +1487,23 @@ fn with_views(
     }
 
     match output {
-        Output::State(formula) => Output::State(walk(formula, betweens, created)),
-        Output::Events(Events::Edges(formula)) => {
-            Output::Events(Events::Edges(walk(formula, betweens, created)))
+        Recipe::Timeline(formula) => Recipe::Timeline(walk(formula, betweens, created)),
+        Recipe::Points(Events::Edges(formula)) => {
+            Recipe::Points(Events::Edges(walk(formula, betweens, created)))
         }
-        Output::PerEntity { by, formula } => Output::PerEntity {
+        Recipe::PerEntity { by, formula } => Recipe::PerEntity {
             by: by.clone(),
             formula: walk(formula, betweens, created),
         },
-        Output::AnyEntity { by, formula } => Output::AnyEntity {
+        Recipe::AnyEntity { by, formula } => Recipe::AnyEntity {
             by: by.clone(),
             formula: walk(formula, betweens, created),
         },
-        Output::CountEntities { by, formula } => Output::CountEntities {
+        Recipe::CountEntities { by, formula } => Recipe::CountEntities {
             by: by.clone(),
             formula: walk(formula, betweens, created),
         },
-        points @ Output::Events(
+        points @ Recipe::Points(
             Events::Matching(_) | Events::Project { .. } | Events::Changes { .. },
         ) => points.clone(),
     }
@@ -1511,7 +1511,7 @@ fn with_views(
 
 /// The leaves of an output with the reach of each: the sum, along the path from
 /// the root, of the larger bound of every shift, never below zero.
-fn leaves(output: &Output) -> Vec<(Leaf<'_>, Timestamp)> {
+fn leaves(output: &Recipe) -> Vec<(Leaf<'_>, Timestamp)> {
     fn walk<'a>(formula: &'a Formula, reach: Timestamp, found: &mut Vec<(Leaf<'a>, Timestamp)>) {
         match formula {
             Formula::State(key) => found.push((Leaf::State(key), reach)),
@@ -1551,14 +1551,14 @@ fn leaves(output: &Output) -> Vec<(Leaf<'_>, Timestamp)> {
 
     let mut found = Vec::new();
     match output {
-        Output::State(formula)
-        | Output::Events(Events::Edges(formula))
-        | Output::PerEntity { formula, .. }
-        | Output::AnyEntity { formula, .. }
-        | Output::CountEntities { formula, .. } => walk(formula, 0, &mut found),
-        Output::Events(Events::Matching(pattern)) => found.push((Leaf::Occurs(pattern), 0)),
-        Output::Events(Events::Project { key, .. }) => found.push((Leaf::Records(key), 0)),
-        Output::Events(Events::Changes { key }) => found.push((Leaf::Changes(key), 0)),
+        Recipe::Timeline(formula)
+        | Recipe::Points(Events::Edges(formula))
+        | Recipe::PerEntity { formula, .. }
+        | Recipe::AnyEntity { formula, .. }
+        | Recipe::CountEntities { formula, .. } => walk(formula, 0, &mut found),
+        Recipe::Points(Events::Matching(pattern)) => found.push((Leaf::Occurs(pattern), 0)),
+        Recipe::Points(Events::Project { key, .. }) => found.push((Leaf::Records(key), 0)),
+        Recipe::Points(Events::Changes { key }) => found.push((Leaf::Changes(key), 0)),
     }
 
     found
@@ -1567,11 +1567,11 @@ fn leaves(output: &Output) -> Vec<(Leaf<'_>, Timestamp)> {
 /// The input a read of `key` reaches: `key` itself, or what the `Events::Changes`
 /// output under it reads, and so on; `None` when `key` is an output of another
 /// kind, which is not an input.
-fn source<'a>(outputs: &'a [(Key, Output)], mut key: &'a Key) -> Option<&'a Key> {
+fn source<'a>(outputs: &'a [(Key, Recipe)], mut key: &'a Key) -> Option<&'a Key> {
     loop {
         match outputs.iter().find(|(output_key, _)| output_key == key) {
             None => return Some(key),
-            Some((_, Output::Events(Events::Changes { key: inner }))) => key = inner,
+            Some((_, Recipe::Points(Events::Changes { key: inner }))) => key = inner,
             Some(_) => return None,
         }
     }
@@ -1713,7 +1713,7 @@ fn last_point_before(working: &SequenceSystem, key: &Key, instant: Timestamp) ->
 /// `below`, or up to the end of time when there is no bound.
 fn emit(
     key: &Key,
-    output: &Output,
+    output: &Recipe,
     sequence: &Sequence,
     from: Timestamp,
     below: Option<Timestamp>,
@@ -1732,7 +1732,7 @@ fn emit(
 
     match (output, sequence) {
         (
-            Output::State(_) | Output::PerEntity { .. } | Output::AnyEntity { .. },
+            Recipe::Timeline(_) | Recipe::PerEntity { .. } | Recipe::AnyEntity { .. },
             Sequence::TimeInterval(timeline),
         ) => {
             for span in timeline {
@@ -1743,14 +1743,14 @@ fn emit(
                 push(Emitted::Edge(TimePointEvent::new(span.end(), Edge::End)));
             }
         }
-        (Output::Events(Events::Edges(_)), Sequence::TimePoint(points)) => {
+        (Recipe::Points(Events::Edges(_)), Sequence::TimePoint(points)) => {
             for edge in points.downcast_ref::<Edge>().into_iter().flatten() {
                 push(Emitted::Edge(*edge));
             }
         }
         (
-            Output::Events(Events::Matching(_) | Events::Project { .. } | Events::Changes { .. })
-            | Output::CountEntities { .. },
+            Recipe::Points(Events::Matching(_) | Events::Project { .. } | Events::Changes { .. })
+            | Recipe::CountEntities { .. },
             Sequence::TimePoint(points),
         ) => {
             for point in points.events_from(from) {

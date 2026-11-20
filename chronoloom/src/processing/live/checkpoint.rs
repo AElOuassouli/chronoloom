@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 
 use crate::primitives::{TimePointEvent, Timestamp};
-use crate::processing::Output;
+use crate::processing::Recipe;
 use crate::processor::Processor;
 use crate::sequence_system::{Key, MemberParts, Metadata, Sequence, SequenceSystem};
 use crate::sequences::TimePointSequence;
@@ -71,7 +71,7 @@ pub(crate) struct CountRecord {
 }
 
 /// The views of the `Between` leaves of an output, in the order of its formula.
-fn between_views(output: &Output) -> Vec<Key> {
+fn between_views(output: &Recipe) -> Vec<Key> {
     leaves(output)
         .into_iter()
         .filter_map(|(leaf, _)| match leaf {

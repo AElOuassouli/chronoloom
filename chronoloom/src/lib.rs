@@ -128,7 +128,7 @@
 //!
 //! A [`SequenceSystem`] is also a dataset. It files members under a [`Key`],
 //! carries opaque [`Metadata`] on itself and on each member, remembers which
-//! [`Output`] a derived member came from, and [`SequenceSystem::observe`] and
+//! [`Recipe`] a derived member came from, and [`SequenceSystem::observe`] and
 //! [`SequenceSystem::slice`] narrow every member to an extent or a window of
 //! time at once. The README walks through an example.
 //!
@@ -144,8 +144,8 @@
 //! # One timeline per entity
 //!
 //! A [`Group`] names a member of `Value` records and the field that says which
-//! entity each is about, and [`Output::per_entity`], [`Output::any_entity`] and
-//! [`Output::count_entities`] build on it: one timeline per entity under
+//! entity each is about, and [`Recipe::per_entity`], [`Recipe::any_entity`] and
+//! [`Recipe::count_entities`] build on it: one timeline per entity under
 //! `<output key>/<entity>`, their union, and how many are active, as the changes
 //! of a count. A [`LiveProcessor`] makes an entity when its first record is fed.
 //! The README walks through a presence example.
@@ -225,7 +225,7 @@ pub mod values;
 pub use primitives::{IntervalError, TimeIntervalEvent, TimePointEvent, Timestamp};
 pub use processing::{
     Condition, Edge, Emission, Emitted, Events, Formula, Group, Input, Kind, LiveProcessor,
-    OpenEnd, Output, Pattern, ProcessError,
+    OpenEnd, Pattern, ProcessError, Recipe,
 };
 pub use processor::Processor;
 pub use sequence_system::{

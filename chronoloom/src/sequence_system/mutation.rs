@@ -4,7 +4,7 @@
 use core::any::{self, Any};
 
 use crate::primitives::{TimeIntervalEvent, TimePointEvent};
-use crate::processing::Output;
+use crate::processing::Recipe;
 use crate::sequences::{Extent, TimePointSequence};
 use crate::values::{Schema, SchemaError, Value};
 
@@ -58,7 +58,7 @@ impl SequenceSystem {
         &mut self,
         key: Key,
         sequence: Sequence,
-        output: Output,
+        output: Recipe,
         entity: Option<Value>,
     ) {
         let derived = Member {

@@ -1,6 +1,6 @@
 //! Reading a system: which keys it records, and the sequence for each.
 
-use crate::processing::Output;
+use crate::processing::Recipe;
 use crate::sequences::{TimeIntervalSequence, TimePointSequence};
 use crate::values::{Schema, Value};
 
@@ -28,14 +28,14 @@ impl SequenceSystem {
     /// The output that produced the member under `key`, if a processor wrote
     /// it and nothing has been recorded into it since.
     #[must_use]
-    pub(crate) fn lineage(&self, key: &str) -> Option<&Output> {
+    pub(crate) fn lineage(&self, key: &str) -> Option<&Recipe> {
         self.members
             .get(key)
             .and_then(|member| member.lineage.as_ref())
     }
 
     /// The entity the member under `key` is the timeline of, if it was written
-    /// by a [`PerEntity`](Output::PerEntity) output and nothing has been recorded
+    /// by a [`PerEntity`](Recipe::PerEntity) output and nothing has been recorded
     /// into it since.
     #[must_use]
     pub(crate) fn lineage_entity(&self, key: &str) -> Option<&Value> {

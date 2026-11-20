@@ -11,7 +11,7 @@ mod update;
 use chronoloom::processor::Processor;
 use chronoloom::stream_system::{StreamSystem, Update, UpdateError};
 use chronoloom::{
-    Condition, Extent, Formula, Group, Output, Pattern, ProcessError, Schema, SequenceSystem,
+    Condition, Extent, Formula, Group, Pattern, ProcessError, Recipe, Schema, SequenceSystem,
     TimeIntervalSequence, TimePointEvent, TimePointSequence, Value,
 };
 
@@ -271,7 +271,7 @@ fn a_per_entity_processor_produces_a_family_that_follows_its_entities() {
     );
     gate.add_processor(Processor::new(
         "presence",
-        Output::per_entity(Group::new("gate", "agent"), inside),
+        Recipe::per_entity(Group::new("gate", "agent"), inside),
     ))
     .unwrap();
     assert_eq!(gate.derived().count(), 0);

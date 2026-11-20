@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::processing::{Input, Output};
+use crate::processing::{Input, Recipe};
 use crate::processor::Processor;
 use crate::sequence_system::Key;
 
@@ -22,7 +22,7 @@ struct ProcessorBodyRef<'a> {
     output: &'a Key,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     inputs: Vec<InputRef<'a>>,
-    formula: &'a Output,
+    formula: &'a Recipe,
 }
 
 #[derive(Deserialize)]
@@ -36,7 +36,7 @@ struct ProcessorBody {
     output: Key,
     #[serde(default)]
     inputs: Vec<InputBody>,
-    formula: Output,
+    formula: Recipe,
 }
 
 impl Serialize for Processor {
@@ -50,7 +50,7 @@ impl Serialize for Processor {
                     .iter()
                     .map(|(key, input)| InputRef { key, input })
                     .collect(),
-                formula: self.formula(),
+                formula: self.recipe(),
             },
         }
         .serialize(serializer)

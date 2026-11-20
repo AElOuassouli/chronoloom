@@ -13,7 +13,7 @@ use std::collections::BTreeMap;
 
 use chronoloom::{
     AnyValue, Condition, Edge, Emission, Emitted, Events, Formula, Key, LiveProcessor, OpenEnd,
-    Output, Pattern, ProcessError, Processor, SequenceSystem, StreamSystem, TimeIntervalEvent,
+    Pattern, ProcessError, Processor, Recipe, SequenceSystem, StreamSystem, TimeIntervalEvent,
     TimeIntervalSequence, TimePointEvent, TimePointSequence, Value,
 };
 
@@ -48,21 +48,21 @@ fn reference_processor(processor: &[Processor]) -> Vec<Processor> {
     processor
         .iter()
         .map(|processor| {
-            let (key, output) = (processor.output(), processor.formula());
-            let output: Output = match output {
-                Output::State(formula) => headless(formula).into(),
-                Output::Events(Events::Edges(formula)) => Events::Edges(headless(formula)).into(),
-                points @ Output::Events(
+            let (key, output) = (processor.output(), processor.recipe());
+            let output: Recipe = match output {
+                Recipe::Timeline(formula) => headless(formula).into(),
+                Recipe::Points(Events::Edges(formula)) => Events::Edges(headless(formula)).into(),
+                points @ Recipe::Points(
                     Events::Matching(_) | Events::Project { .. } | Events::Changes { .. },
                 ) => points.clone(),
-                Output::PerEntity { by, formula } => {
-                    Output::per_entity(by.clone(), headless(formula))
+                Recipe::PerEntity { by, formula } => {
+                    Recipe::per_entity(by.clone(), headless(formula))
                 }
-                Output::AnyEntity { by, formula } => {
-                    Output::any_entity(by.clone(), headless(formula))
+                Recipe::AnyEntity { by, formula } => {
+                    Recipe::any_entity(by.clone(), headless(formula))
                 }
-                Output::CountEntities { by, formula } => {
-                    Output::count_entities(by.clone(), headless(formula))
+                Recipe::CountEntities { by, formula } => {
+                    Recipe::count_entities(by.clone(), headless(formula))
                 }
             };
             Processor::new(key.clone(), output)
@@ -216,23 +216,23 @@ fn replay(processor: &[Processor], stream: &Stream, observe: &mut Observer) -> V
 /// What one output is in the batch result: its edges or its matching values,
 /// as `(instant, tag)` with the tag `0` for a start, `1` for an end, and the
 /// value for a matching point.
-fn expected(reference: &StreamSystem, key: &str, output: &Output) -> Vec<(i64, i64)> {
+fn expected(reference: &StreamSystem, key: &str, output: &Recipe) -> Vec<(i64, i64)> {
     match output {
-        Output::PerEntity { .. } => unreachable!("a group has a member per entity"),
-        Output::State(_) | Output::AnyEntity { .. } => reference
+        Recipe::PerEntity { .. } => unreachable!("a group has a member per entity"),
+        Recipe::Timeline(_) | Recipe::AnyEntity { .. } => reference
             .intervals(key)
             .expect("a state output is a timeline")
             .iter()
             .flat_map(|span| [(span.start(), 0), (span.end(), 1)])
             .collect(),
-        Output::Events(Events::Edges(_)) => reference
+        Recipe::Points(Events::Edges(_)) => reference
             .points::<Edge>(key)
             .expect("an edges output is edges")
             .iter()
             .map(|event| (event.timestamp(), i64::from(*event.value() == Edge::End)))
             .collect(),
-        Output::Events(Events::Matching(_) | Events::Project { .. } | Events::Changes { .. })
-        | Output::CountEntities { .. } => point_tags(reference, key),
+        Recipe::Points(Events::Matching(_) | Events::Project { .. } | Events::Changes { .. })
+        | Recipe::CountEntities { .. } => point_tags(reference, key),
     }
 }
 
@@ -345,17 +345,20 @@ fn online_equals_batch_below_every_frontier_and_in_the_end() {
             assert!(live.retained() <= 2 * fed, "never more than was fed");
 
             let mut outputs: BTreeMap<String, i64> = BTreeMap::new();
-            for (key, output) in processor.iter().map(|p| (p.output(), p.formula())) {
+            for (key, output) in processor.iter().map(|p| (p.output(), p.recipe())) {
                 let frontier = live.frontier(key.as_str()).expect("an output");
                 if let Some(&before) = frontiers.get(key.as_str()) {
                     assert!(frontier >= before, "{key}: the frontier went back");
                 }
                 frontiers.insert(key.as_str().to_owned(), frontier);
 
-                if let Output::PerEntity { by, formula } = output {
+                if let Recipe::PerEntity { by, formula } = output {
                     for member in members_of(&reference, key) {
-                        let items =
-                            expected(&reference, member.as_str(), &Output::State(formula.clone()));
+                        let items = expected(
+                            &reference,
+                            member.as_str(),
+                            &Recipe::Timeline(formula.clone()),
+                        );
                         match live.frontier(member.as_str()) {
                             Some(member_frontier) => {
                                 let wanted: Vec<(i64, i64)> = items
@@ -386,7 +389,7 @@ fn online_equals_batch_below_every_frontier_and_in_the_end() {
                     outputs.insert(key.as_str().to_owned(), frontier);
                     continue;
                 }
-                if let Output::AnyEntity { by, .. } | Output::CountEntities { by, .. } = output {
+                if let Recipe::AnyEntity { by, .. } | Recipe::CountEntities { by, .. } = output {
                     assert!(
                         frontier <= marks[by.key.as_str()],
                         "{key}: no further than its records"
@@ -405,24 +408,24 @@ fn online_equals_batch_below_every_frontier_and_in_the_end() {
                 }
 
                 let sequence_lag = match output {
-                    Output::PerEntity { .. }
-                    | Output::AnyEntity { .. }
-                    | Output::CountEntities { .. } => {
+                    Recipe::PerEntity { .. }
+                    | Recipe::AnyEntity { .. }
+                    | Recipe::CountEntities { .. } => {
                         unreachable!("handled above")
                     }
-                    Output::State(formula) | Output::Events(Events::Edges(formula)) => {
+                    Recipe::Timeline(formula) | Recipe::Points(Events::Edges(formula)) => {
                         lag(formula, &{
                             let mut all = marks.clone();
                             all.extend(outputs.clone());
                             all
                         })
                     }
-                    Output::Events(Events::Matching(read)) => {
+                    Recipe::Points(Events::Matching(read)) => {
                         let mut all = marks.clone();
                         all.extend(outputs.clone());
                         all[read.key().as_str()]
                     }
-                    Output::Events(
+                    Recipe::Points(
                         Events::Project { key: read, .. } | Events::Changes { key: read },
                     ) => {
                         let mut all = marks.clone();
@@ -453,8 +456,8 @@ fn online_equals_batch_below_every_frontier_and_in_the_end() {
         // Running again gives the same emissions, instant by instant per output.
         assert_eq!(all, replay(&processor, &stream, &mut |_, _, _| {}));
 
-        for (key, output) in processor.iter().map(|p| (p.output(), p.formula())) {
-            if let Output::PerEntity { formula, .. } = output {
+        for (key, output) in processor.iter().map(|p| (p.output(), p.recipe())) {
+            if let Recipe::PerEntity { formula, .. } = output {
                 let members = members_of(&reference, key);
                 let prefix = format!("{key}/");
                 for emission in &all {
@@ -469,7 +472,11 @@ fn online_equals_batch_below_every_frontier_and_in_the_end() {
                 for member in members {
                     assert_eq!(
                         emitted_for(&all, member.as_str()),
-                        expected(&reference, member.as_str(), &Output::State(formula.clone())),
+                        expected(
+                            &reference,
+                            member.as_str(),
+                            &Recipe::Timeline(formula.clone())
+                        ),
                         "{member} in the end"
                     );
                 }
@@ -488,7 +495,7 @@ fn online_equals_batch_below_every_frontier_and_in_the_end() {
             assert!(instants.windows(2).all(|pair| pair[0] <= pair[1]));
 
             // Edges rebuilt into spans are the batch timeline.
-            if let Output::State(_) = output {
+            if let Recipe::Timeline(_) = output {
                 let edges: Vec<TimePointEvent<Edge>> = all
                     .iter()
                     .filter(|emission| emission.key == *key)

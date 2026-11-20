@@ -11,8 +11,9 @@ use super::formula::Formula;
 use super::group::{self, Derived, Group};
 use super::input::Input;
 
-/// What the members of a processor's result are: a state, events, or one
-/// timeline per entity.
+/// What the members of a processor's result are: a timeline, points, or one
+/// timeline per entity. In a serialised document the first two are named
+/// `state` and `events`.
 ///
 /// The last three group the `Value` records of the member [`Group::key`] by the
 /// field [`Group::path`], and evaluate the formula once per entity with the
@@ -33,11 +34,13 @@ use super::input::Input;
 #[cfg_attr(feature = "json-schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
-pub enum Output {
+pub enum Recipe {
     /// A timeline, as the formula describes it.
-    State(Formula),
+    #[cfg_attr(feature = "serde", serde(rename = "state"))]
+    Timeline(Formula),
     /// A point sequence.
-    Events(Events),
+    #[cfg_attr(feature = "serde", serde(rename = "events"))]
+    Points(Events),
     /// One timeline per entity, under `<output key>/<entity>`.
     PerEntity {
         /// The records and the field that holds the entity.
@@ -61,7 +64,7 @@ pub enum Output {
     },
 }
 
-impl Output {
+impl Recipe {
     /// One timeline per entity of `by`, each of `formula`.
     #[must_use]
     pub const fn per_entity(by: Group, formula: Formula) -> Self {
@@ -91,8 +94,8 @@ impl Output {
     /// the formula.
     pub fn evaluate(&self, system: &SequenceSystem) -> Result<Sequence, ProcessError> {
         match self {
-            Self::State(formula) => formula.evaluate(system).map(Sequence::from),
-            Self::Events(events) => events.evaluate(system),
+            Self::Timeline(formula) => formula.evaluate(system).map(Sequence::from),
+            Self::Points(events) => events.evaluate(system),
             Self::PerEntity { .. } => Err(ProcessError::SeveralMembers),
             Self::AnyEntity { by, formula } => {
                 group::any(self.to_string(), by, formula, system).map(Sequence::from)
@@ -122,8 +125,8 @@ impl Output {
     /// Every key the output reads, with repeats.
     pub(crate) fn read_keys<'a>(&'a self, keys: &mut Vec<&'a Key>) {
         match self {
-            Self::State(formula) => formula.read_keys(keys),
-            Self::Events(events) => events.read_keys(keys),
+            Self::Timeline(formula) => formula.read_keys(keys),
+            Self::Points(events) => events.read_keys(keys),
             Self::PerEntity { by, formula }
             | Self::AnyEntity { by, formula }
             | Self::CountEntities { by, formula } => {
@@ -134,23 +137,23 @@ impl Output {
     }
 }
 
-impl From<Formula> for Output {
+impl From<Formula> for Recipe {
     fn from(formula: Formula) -> Self {
-        Self::State(formula)
+        Self::Timeline(formula)
     }
 }
 
-impl From<Events> for Output {
+impl From<Events> for Recipe {
     fn from(events: Events) -> Self {
-        Self::Events(events)
+        Self::Points(events)
     }
 }
 
-impl fmt::Display for Output {
+impl fmt::Display for Recipe {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::State(formula) => fmt::Display::fmt(formula, f),
-            Self::Events(events) => fmt::Display::fmt(events, f),
+            Self::Timeline(formula) => fmt::Display::fmt(formula, f),
+            Self::Points(events) => fmt::Display::fmt(events, f),
             Self::PerEntity { by, formula } => write!(f, "{formula} per {by}"),
             Self::AnyEntity { by, formula } => write!(f, "any({formula}) per {by}"),
             Self::CountEntities { by, formula } => write!(f, "count({formula}) per {by}"),
@@ -167,7 +170,7 @@ impl fmt::Display for Output {
 /// key; one reading its own key, or a loop, is [`ProcessError::Cycle`].
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct ProcessorSet {
-    outputs: BTreeMap<Key, Output>,
+    outputs: BTreeMap<Key, Recipe>,
     inputs: BTreeMap<Key, Input>,
 }
 
@@ -190,7 +193,7 @@ impl ProcessorSet {
                 });
             }
             set.outputs
-                .insert(processor.output().clone(), processor.formula().clone());
+                .insert(processor.output().clone(), processor.recipe().clone());
             for (key, input) in processor.declared_inputs() {
                 match set.inputs.get(key) {
                     Some(declared) if declared != input => {
@@ -217,19 +220,19 @@ impl ProcessorSet {
     /// This processor with `output` filed under `key`, replacing the output
     /// that was there.
     #[must_use]
-    pub fn with(mut self, key: impl Into<Key>, output: impl Into<Output>) -> Self {
+    pub fn with(mut self, key: impl Into<Key>, output: impl Into<Recipe>) -> Self {
         self.insert(key, output);
         self
     }
 
     /// File `output` under `key`, returning the output that was there.
-    pub fn insert(&mut self, key: impl Into<Key>, output: impl Into<Output>) -> Option<Output> {
+    pub fn insert(&mut self, key: impl Into<Key>, output: impl Into<Recipe>) -> Option<Recipe> {
         self.outputs.insert(key.into(), output.into())
     }
 
     /// The outputs, by the key of the member each produces.
     #[must_use]
-    pub const fn outputs(&self) -> &BTreeMap<Key, Output> {
+    pub const fn outputs(&self) -> &BTreeMap<Key, Recipe> {
         &self.outputs
     }
 
@@ -313,7 +316,7 @@ impl ProcessorSet {
                         // the key of any other output reads that output.
                         self.outputs.iter().filter_map(move |(named, other)| {
                             let reads = match other {
-                                Output::PerEntity { .. } => group::is_under(name, named),
+                                Recipe::PerEntity { .. } => group::is_under(name, named),
                                 _ => named == name,
                             };
                             reads.then_some(named)
@@ -383,7 +386,7 @@ impl ProcessorSet {
     fn evaluate(
         &self,
         system: &SequenceSystem,
-    ) -> Result<Vec<(&Output, Vec<Derived>)>, ProcessError> {
+    ) -> Result<Vec<(&Recipe, Vec<Derived>)>, ProcessError> {
         let order = self.order()?;
         self.check_inputs(system)?;
         let chained = self.dependencies().values().any(|read| !read.is_empty());

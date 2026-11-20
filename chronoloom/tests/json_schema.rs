@@ -71,7 +71,7 @@ fn written(processor: &Processor) -> Json {
 fn the_schema_accepts_a_document_with_declared_inputs() {
     let presence = Processor::new(
         "presence",
-        chronoloom::Output::per_entity(Group::new("records", "agent"), Formula::state("timeline")),
+        chronoloom::Recipe::per_entity(Group::new("records", "agent"), Formula::state("timeline")),
     )
     .with_input("timeline", Input::Timeline)
     .with_input("edges", Input::Edges)

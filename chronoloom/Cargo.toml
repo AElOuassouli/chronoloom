@@ -1,8 +1,8 @@
 [package]
 name = "chronoloom"
 version = "0.3.1"
-edition = "2021"
-rust-version = "1.83"
+edition = "2024"
+rust-version = "1.85"
 description = "Set algebra, formulas and online processing over time points and intervals."
 license = "MIT"
 repository = "https://github.com/AElOuassouli/chronoloom"

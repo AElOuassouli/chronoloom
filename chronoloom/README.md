@@ -797,9 +797,9 @@ Presence is one timeline per entity: an agent enters, an agent exits. Sessions
 per user and uptime per host have the same shape. It needs no sequence of its
 own: a `Group` names the member of `Value` records and the field that says which
 entity a record is about (`Group::new("gate", "agent")`), and three outputs of a
-processor are built on it. `Output::per_entity` evaluates a formula once per
-entity, and files each result under `<output key>/<entity>`; `Output::any_entity`
-is the union of those timelines, and `Output::count_entities` is how many are
+processor are built on it. `Recipe::per_entity` evaluates a formula once per
+entity, and files each result under `<output key>/<entity>`; `Recipe::any_entity`
+is the union of those timelines, and `Recipe::count_entities` is how many are
 active, as a `TimePointSequence<i64>` of its changes, to be read with `While` like
 any step value.
 
@@ -810,7 +810,7 @@ agent.
 
 ```rust
 use chronoloom::{Processor, StreamSystem};
-use chronoloom::{Condition, Formula, Group, Output, Pattern};
+use chronoloom::{Condition, Formula, Group, Recipe, Pattern};
 use chronoloom::{TimePointEvent, TimePointSequence, Value};
 
 let crossing = |agent: &str, direction: &str| {
@@ -831,11 +831,11 @@ let direction = |text: &str| {
 let present = Formula::between(direction("in"), direction("out"));
 let by_agent = Group::new("gate", "agent");
 
-gate.add_processor(Processor::new("presence", Output::per_entity(by_agent.clone(), present.clone())))
+gate.add_processor(Processor::new("presence", Recipe::per_entity(by_agent.clone(), present.clone())))
     .unwrap();
-gate.add_processor(Processor::new("anyone", Output::any_entity(by_agent.clone(), present.clone())))
+gate.add_processor(Processor::new("anyone", Recipe::any_entity(by_agent.clone(), present.clone())))
     .unwrap();
-gate.add_processor(Processor::new("crowd", Output::count_entities(by_agent, present)))
+gate.add_processor(Processor::new("crowd", Recipe::count_entities(by_agent, present)))
     .unwrap();
 // A processor reads the others by key, the members of `presence` included.
 gate.add_processor(Processor::new(
@@ -1087,7 +1087,7 @@ it.
 
 ```sh
 make lint   # cargo fmt --check, clippy (also with --all-features), and the dependency assertions
-make test   # unit and doc tests (also with --all-features)
+make test   # unit and integration tests, then all tests with --all-features
 ```
 
 This crate must never depend on pyo3 — that is what makes it usable from any

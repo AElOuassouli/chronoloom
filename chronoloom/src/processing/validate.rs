@@ -12,7 +12,7 @@ use super::formula::Formula;
 use super::group;
 use super::input::Input;
 use super::kind::Kind;
-use super::processor::{Output, ProcessorSet};
+use super::processor::{ProcessorSet, Recipe};
 
 /// How a read uses the fields of the records it reaches.
 enum Usage<'a> {
@@ -94,14 +94,14 @@ fn events_reads<'a>(events: &'a Events, reads: &mut Vec<Read<'a>>) {
     }
 }
 
-fn output_reads(output: &Output) -> Vec<Read<'_>> {
+fn output_reads(output: &Recipe) -> Vec<Read<'_>> {
     let mut reads = Vec::new();
     match output {
-        Output::State(formula) => formula_reads(formula, &mut reads),
-        Output::Events(events) => events_reads(events, &mut reads),
-        Output::PerEntity { by, formula }
-        | Output::AnyEntity { by, formula }
-        | Output::CountEntities { by, formula } => {
+        Recipe::Timeline(formula) => formula_reads(formula, &mut reads),
+        Recipe::Points(events) => events_reads(events, &mut reads),
+        Recipe::PerEntity { by, formula }
+        | Recipe::AnyEntity { by, formula }
+        | Recipe::CountEntities { by, formula } => {
             reads.push(Read::Records {
                 key: &by.key,
                 path: &by.path,
@@ -251,20 +251,27 @@ fn check_read(read: &Read<'_>, input: &Input) -> Option<ProcessError> {
 
 impl ProcessorSet {
     /// Every problem the processor has on its own, without a system, in a
-    /// stable order; see [`Processor`](crate::processor::Processor) for what is
-    /// checked and in what order.
+    /// stable order (see [`Processor`](crate::processor::Processor) for what is
+    /// checked and in what order), or only the first when `stop_at_first` is
+    /// set.
     ///
     /// # Errors
     ///
-    /// Every problem found, never an empty list.
-    pub fn validate(&self) -> Result<(), Vec<ProcessError>> {
+    /// The problems found, never an empty list.
+    pub(crate) fn problems(&self, stop_at_first: bool) -> Result<(), Vec<ProcessError>> {
         let mut problems = Vec::new();
         if let Err(cycle) = self.check() {
             problems.push(cycle);
+            if stop_at_first {
+                return Err(problems);
+            }
         }
         for key in self.inputs().keys() {
             if self.outputs().contains_key(key) {
                 problems.push(ProcessError::InputIsOutput { key: key.clone() });
+                if stop_at_first {
+                    return Err(problems);
+                }
             }
         }
 
@@ -273,7 +280,7 @@ impl ProcessorSet {
                 let key = read.key();
                 let own = self.outputs().iter().any(|(owner, other)| {
                     owner == key
-                        || (matches!(other, Output::PerEntity { .. })
+                        || (matches!(other, Recipe::PerEntity { .. })
                             && group::is_under(key, owner))
                 });
                 if own {
@@ -284,10 +291,14 @@ impl ProcessorSet {
                     None if self.inputs().is_empty() => None,
                     None => Some(ProcessError::UnknownKey { key: key.clone() }),
                 };
+                let found = problem.is_some();
                 problems.extend(problem.map(|error| ProcessError::InOutput {
                     output: output_key.clone(),
                     error: Box::new(error),
                 }));
+                if stop_at_first && found {
+                    return Err(problems);
+                }
             }
         }
 

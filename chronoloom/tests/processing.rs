@@ -8,8 +8,8 @@ mod common;
 mod update;
 
 use chronoloom::{
-    Condition, Edge, Events, Extent, Formula, Key, Kind, OpenEnd, Output, Pattern, ProcessError,
-    Processor, SequenceSystem, TimeIntervalSequence, TimePointEvent, TimePointSequence, Value,
+    Condition, Edge, Events, Extent, Formula, Key, Kind, OpenEnd, Pattern, ProcessError, Processor,
+    Recipe, SequenceSystem, TimeIntervalSequence, TimePointEvent, TimePointSequence, Value,
 };
 
 use common::{bounds, extent, for_each_seed, span, spans, Random, DOMAIN_END, DOMAIN_START};
@@ -821,7 +821,7 @@ fn each_processor_files_its_output_under_its_key() {
         Processor::new("changes", Events::Edges(Formula::state("up"))),
     ];
     assert_eq!(processor[0].output().as_str(), "active");
-    assert_eq!(processor[0].formula(), &Output::State(motion_between()));
+    assert_eq!(processor[0].recipe(), &Recipe::Timeline(motion_between()));
 
     let derived = update::run(&system, &processor).unwrap();
     assert!(derived
@@ -1524,8 +1524,8 @@ fn a_projection_is_an_output_and_chains_into_formulas() {
     );
     assert_eq!(bounds(result.intervals("known").unwrap()), vec![(30, 40)]);
     assert_eq!(
-        result.producer("agent").map(Processor::formula),
-        Some(&Output::Events(Events::project(
+        result.producer("agent").map(Processor::recipe),
+        Some(&Recipe::Points(Events::project(
             "sensor",
             "agent.id",
             Kind::Integer

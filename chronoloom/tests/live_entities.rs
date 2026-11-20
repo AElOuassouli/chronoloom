@@ -5,9 +5,9 @@
 mod update;
 
 use chronoloom::{
-    Condition, Edge, Emission, Emitted, Extent, Formula, Group, LiveProcessor, Output, Pattern,
-    ProcessError, Processor, SequenceSystem, TimeIntervalEvent, TimePointEvent, TimePointSequence,
-    Value,
+    Condition, Edge, Emission, Emitted, Extent, Formula, Group, LiveProcessor, Pattern,
+    ProcessError, Processor, Recipe, SequenceSystem, TimeIntervalEvent, TimePointEvent,
+    TimePointSequence, Value,
 };
 
 fn crossing(agent: Value, direction: &str) -> Value {
@@ -29,9 +29,9 @@ fn by_agent() -> Group {
 /// Presence per agent, whether anyone is present, and how many.
 fn presence() -> Vec<Processor> {
     vec![
-        Processor::new("presence", Output::per_entity(by_agent(), present())),
-        Processor::new("anyone", Output::any_entity(by_agent(), present())),
-        Processor::new("crowd", Output::count_entities(by_agent(), present())),
+        Processor::new("presence", Recipe::per_entity(by_agent(), present())),
+        Processor::new("anyone", Recipe::any_entity(by_agent(), present())),
+        Processor::new("crowd", Recipe::count_entities(by_agent(), present())),
     ]
 }
 
@@ -196,7 +196,7 @@ fn another_output_reads_the_union_and_the_count_online() {
 #[test]
 fn a_live_processor_cannot_read_the_members_of_a_per_entity_output() {
     let processors = [
-        Processor::new("presence", Output::per_entity(by_agent(), present())),
+        Processor::new("presence", Recipe::per_entity(by_agent(), present())),
         Processor::new("seven", Formula::state("presence/7")),
     ];
     assert_eq!(
@@ -211,7 +211,7 @@ fn a_live_processor_cannot_read_the_members_of_a_per_entity_output() {
         Processor::new("changes", chronoloom::Events::changes("gate")),
         Processor::new(
             "presence",
-            Output::per_entity(Group::new("changes", "agent"), present()),
+            Recipe::per_entity(Group::new("changes", "agent"), present()),
         ),
     ];
     assert_eq!(
@@ -256,7 +256,7 @@ fn two_entities_with_one_name_are_refused_and_nothing_is_recorded() {
 #[test]
 fn an_entity_cannot_take_the_key_of_an_output_online() {
     let processors = [
-        Processor::new("presence", Output::per_entity(by_agent(), present())),
+        Processor::new("presence", Recipe::per_entity(by_agent(), present())),
         Processor::new("presence/7", Formula::state("door")),
     ];
     let mut live = LiveProcessor::new(&processors, 0).expect("valid");

@@ -49,8 +49,12 @@
   as an `And` of `Or`s of literals denoting the same timeline. `Events`
   (`Edges`, `Matching`) are the formulas whose result is points, with `Edge`
   (`Start`, `End`).
-- `Processor`, one recipe: `Processor::new(output, formula)` files an `Output`
+- `Processor`, one recipe: `Processor::new(output, recipe)` files a `Recipe`
   under the key of the one output it produces, evaluated by a `StreamSystem`.
+  A `Recipe` is `Timeline`, `Points` or a per-entity kind, read with
+  `Processor::recipe`, and written to documents under `formula` with the
+  variants `state` and `events`; the JSON Schema definition for it is named
+  `Recipe`.
   A formula may name the key of another processor's output, and a formula
   reading its own output is `ProcessError::Cycle { keys }`, reported by
   `Processor::check`.
@@ -62,16 +66,16 @@
   with each repeat dropped, keeping the first sample of each run of the extent.
 - One timeline per entity, as processor outputs rather than a new sequence type.
   `Group::new(key, path)` names the member of `Value` records and the field that
-  holds the entity. `Output::per_entity` files the formula of each entity under
+  holds the entity. `Recipe::per_entity` files the formula of each entity under
   `<output key>/<entity>`, with the patterns over the member of the group
   restricted to the entity's records and the others shared;
-  `Output::any_entity` is the union of those timelines; and
-  `Output::count_entities` is a `TimePointSequence<i64>` of the number of
+  `Recipe::any_entity` is the union of those timelines; and
+  `Recipe::count_entities` is a `TimePointSequence<i64>` of the number of
   entities active, as its changes. An entity exists, and is observed, from its
   first record. `StreamSystem::entity` gives the entity of a member, and
   `ProcessError::DuplicateMember`,
   `SeveralMembers` and `GroupedRead` report two members under one key, an
-  `Output::evaluate` of a per-entity output, and a live processor asked to read
+  `Recipe::evaluate` of a per-entity output, and a live processor asked to read
   a member of one.
 - `LiveProcessor`, from `LiveProcessor::new(&processors, from)`: it runs the
   processors online, driven by its host, with no clock, input or output of its
@@ -176,6 +180,8 @@
   return the named `sequence_system::Iter` and `IntoIter`, and yield `Key`
   instead of `String`.
 - The `attribute` field of every `RecordError` variant, replaced by `key`.
+- Support for Rust older than 1.85: the crate is now on the 2024 edition, and
+  its minimum supported Rust version is 1.85.
 
 # 0.3.1 - 2026-10-22
 

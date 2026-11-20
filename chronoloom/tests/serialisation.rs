@@ -12,6 +12,7 @@ mod validator;
 use serde_json::{json, Value as Json};
 
 use chronoloom::serialisation::FORMAT_VERSION;
+use chronoloom::stream_system::StreamSystem;
 use chronoloom::{
     Condition, Edge, Extent, Formula, Group, Input, Kind, OpenEnd, Output, Pattern, Processor,
     Schema, Sequence, SequenceSystem, TimeIntervalEvent, TimeIntervalSequence, TimePointEvent,
@@ -291,8 +292,8 @@ fn record(random: &mut Random) -> Value {
     Value::record(fields)
 }
 
-/// A system with a member of every shape and value type, metadata, a schema,
-/// derived members with lineage and entities, and live members.
+/// A system with a member of every shape and value type, metadata, a schema
+/// and live members.
 fn full_system(random: &mut Random) -> SequenceSystem {
     let mut system = SequenceSystem::new();
     let at = |random: &mut Random| random.between(DOMAIN_START, DOMAIN_END);
@@ -356,31 +357,7 @@ fn full_system(random: &mut Random) -> SequenceSystem {
         system.set_schema("record", schema).unwrap();
     }
 
-    let by_entity = Output::per_entity(
-        Group::new("record", "n"),
-        Formula::between(
-            Pattern::field("record", "x", Condition::Less(Value::Float(2.0))),
-            Pattern::field("record", "x", Condition::GreaterOrEqual(Value::Float(2.0))),
-        ),
-    );
-    let processor = Processor::new()
-        .with(
-            "quiet",
-            Formula::occurs(Pattern::new("count", Condition::Less(2_i64))),
-        )
-        .with(
-            "busy",
-            Formula::state("quiet")
-                .shift(0, 3)
-                .and(Formula::state("up")),
-        )
-        .with("present", by_entity)
-        .with(
-            "lasting",
-            Output::any_entity(Group::new("record", "n"), Formula::state("up")),
-        )
-        .with("changes", chronoloom::Events::changes("count"));
-    processor.apply(&mut system).unwrap();
+    system = with_derived_members(random, &system);
 
     system.insert_live("live", TimePointSequence::<i64>::new("live"), 10);
     system.insert_live("live up", TimeIntervalSequence::new("live up"), 10);
@@ -407,6 +384,49 @@ fn full_system(random: &mut Random) -> SequenceSystem {
     system
 }
 
+/// `system` with members that carry the output they came from, and the entity
+/// of a per-entity output, which only a document can file beside a member.
+fn with_derived_members(random: &mut Random, system: &SequenceSystem) -> SequenceSystem {
+    let mut derived = SequenceSystem::new();
+    derived.insert(
+        "busy",
+        TimeIntervalSequence::from_spans("busy", spans(random, 4)),
+    );
+    let entities = 1 + random.below(2) as i64;
+    for entity in 0..entities {
+        let key = format!("present/{entity}");
+        let events = (0..random.below(3))
+            .map(|_| TimePointEvent::new(random.between(DOMAIN_START, DOMAIN_END), 1_i64))
+            .collect();
+        derived.insert(
+            key.as_str(),
+            TimePointSequence::from_events(key.as_str(), events),
+        );
+    }
+
+    let mut document = serde_json::to_value(system).unwrap();
+    let mut added = serde_json::to_value(&derived).unwrap();
+    for member in added["members"].as_array_mut().unwrap() {
+        if member["key"] == "busy" {
+            member["lineage"] = json!({"state": {"state": "up"}});
+        } else {
+            member["lineage"] = json!({"per_entity": {
+                "by": {"key": "record", "path": "n"}, "formula": {"state": "up"}
+            }});
+            let entity: i64 = member["key"].as_str().unwrap()["present/".len()..]
+                .parse()
+                .unwrap();
+            member["entity"] = json!(entity);
+        }
+    }
+    document["members"]
+        .as_array_mut()
+        .unwrap()
+        .extend(added["members"].as_array().unwrap().iter().cloned());
+
+    load(&document).expect("the document loads")
+}
+
 #[test]
 fn random_systems_round_trip_losslessly() {
     for_each_seed(CASES, |random, _| {
@@ -417,15 +437,17 @@ fn random_systems_round_trip_losslessly() {
 
         assert_eq!(loaded, system);
         assert_eq!(loaded.metadata(), system.metadata());
+
+        // The derived members keep the output and the entity filed beside them.
+        let saved: Json = serde_json::from_str(&text).unwrap();
+        let members = saved["members"].as_array().unwrap();
+        let find = |key: &str| members.iter().find(|member| member["key"] == key).unwrap();
+        assert_eq!(find("busy")["lineage"], json!({"state": {"state": "up"}}));
+        assert_eq!(find("present/0")["entity"], json!(0));
+        assert!(find("present/0")["lineage"].get("per_entity").is_some());
         for (key, _) in &system {
             let key = key.as_str();
             assert_eq!(loaded.frontier_of(key), system.frontier_of(key), "{key}");
-            assert_eq!(loaded.lineage(key), system.lineage(key), "{key}");
-            assert_eq!(
-                loaded.lineage_entity(key),
-                system.lineage_entity(key),
-                "{key}"
-            );
             assert_eq!(loaded.schema(key), system.schema(key), "{key}");
             assert_eq!(
                 loaded.member_metadata(key),
@@ -447,12 +469,7 @@ fn a_loaded_system_keeps_behaving_like_the_original() {
     let mut system = full_system(&mut random);
     let mut loaded = round_trip(&system);
 
-    // Derived members derive again, a live member refuses late events, a
-    // schema still refuses a wrong value.
-    system.rederive("quiet").unwrap();
-    loaded.rederive("quiet").unwrap();
-    assert_eq!(loaded, system);
-
+    // A live member refuses late events, a schema still refuses a wrong value.
     let late = TimePointEvent::new(0, 1_i64);
     assert_eq!(
         loaded.record_point("live", late).unwrap_err(),
@@ -645,8 +662,11 @@ fn what_is_filed_beside_a_member_must_agree_with_it() {
     let mut filed = member("out/7", points("i64", json!([])));
     filed["lineage"] = per_entity;
     filed["entity"] = json!(7);
+    // What is filed beside a member is saved and loaded back unchanged.
     let system: SequenceSystem = load(&system_of(vec![filed])).unwrap();
-    assert_eq!(system.lineage_entity("out/7"), Some(&Value::Integer(7)));
+    assert_eq!(round_trip(&system), system);
+    let saved = serde_json::to_value(&system).unwrap();
+    assert_eq!(saved["members"][0]["entity"], json!(7));
 }
 
 #[test]
@@ -745,44 +765,65 @@ fn world(random: &mut Random) -> SequenceSystem {
     system
 }
 
+/// What `processor` derives from the members of `world`: the sequence it
+/// produces, or the message of the failure.
+fn derive(processor: &Processor, world: &SequenceSystem) -> Result<Sequence, String> {
+    let mut system = StreamSystem::new();
+    for (key, sequence) in world {
+        system
+            .insert_stream(key.clone(), sequence.clone())
+            .map_err(|error| error.to_string())?;
+    }
+    system
+        .add_processor(processor.clone())
+        .map_err(|error| error.to_string())?;
+    Ok(system
+        .get(processor.output().as_str())
+        .expect("the output is derived")
+        .clone())
+}
+
 #[test]
 fn random_processors_round_trip_and_evaluate_identically() {
     for_each_seed(CASES, |random, _| {
-        let mut processor = Processor::new();
-        for index in 0..=random.below(3) {
-            processor.insert(format!("o{index}"), formula(random, 3));
-        }
+        let processor = Processor::new("o0", formula(random, 3));
         let loaded = round_trip(&processor);
         let world = world(random);
 
         assert_eq!(loaded, processor);
         assert!(loaded.check().is_ok());
-        assert_eq!(loaded.run(&world), processor.run(&world));
+        assert_eq!(derive(&loaded, &world), derive(&processor, &world));
     });
 }
 
-/// A processor with a pattern of every value type and an output of every kind.
-fn every_kind(patterns: &[Pattern]) -> Processor {
-    let mut processor = Processor::new();
+/// A processor for a pattern of every value type and for an output of every
+/// kind.
+fn every_kind(patterns: &[Pattern]) -> Vec<Processor> {
+    let mut processors = Vec::new();
     for (index, pattern) in patterns.iter().enumerate() {
-        processor.insert(format!("occurs {index}"), Formula::occurs(pattern.clone()));
+        processors.push(Processor::new(
+            format!("occurs {index}"),
+            Formula::occurs(pattern.clone()),
+        ));
     }
     let by = Group::new("r", "id");
-    processor.insert("edges", chronoloom::Events::Edges(Formula::state("up")));
-    processor.insert(
-        "matching",
-        chronoloom::Events::Matching(patterns[0].clone()),
-    );
-    processor.insert("changes", chronoloom::Events::changes("i"));
-    processor.insert(
-        "projected",
-        chronoloom::Events::project("r", "a", Kind::Float),
-    );
-    processor.insert("each", Output::per_entity(by.clone(), Formula::state("up")));
-    processor.insert("any", Output::any_entity(by.clone(), Formula::state("up")));
-    processor.insert("number", Output::count_entities(by, Formula::state("up")));
+    processors.extend([
+        Processor::new("edges", chronoloom::Events::Edges(Formula::state("up"))),
+        Processor::new(
+            "matching",
+            chronoloom::Events::Matching(patterns[0].clone()),
+        ),
+        Processor::new("changes", chronoloom::Events::changes("i")),
+        Processor::new(
+            "projected",
+            chronoloom::Events::project("r", "a", Kind::Float),
+        ),
+        Processor::new("each", Output::per_entity(by.clone(), Formula::state("up"))),
+        Processor::new("any", Output::any_entity(by.clone(), Formula::state("up"))),
+        Processor::new("number", Output::count_entities(by, Formula::state("up"))),
+    ]);
 
-    processor
+    processors
 }
 
 fn every_pattern() -> [Pattern; 9] {
@@ -808,18 +849,10 @@ fn every_pattern() -> [Pattern; 9] {
 #[test]
 fn every_pattern_type_and_output_kind_round_trips() {
     let patterns = every_pattern();
-    let processor = every_kind(&patterns);
+    let processors = every_kind(&patterns);
 
-    let loaded = round_trip(&processor);
-
-    assert_eq!(loaded, processor);
-    for (index, pattern) in patterns.iter().enumerate() {
-        let key = format!("occurs {index}");
-        assert_eq!(
-            loaded.outputs()[key.as_str()],
-            processor.outputs()[key.as_str()]
-        );
-        assert_eq!(pattern.to_string(), patterns[index].to_string());
+    for processor in &processors {
+        assert_eq!(&round_trip(processor), processor);
     }
     let key_type: Vec<&str> = patterns.iter().map(Pattern::value_type_name).collect();
     assert!(key_type.contains(&"chronoloom::values::value::Value"));
@@ -827,7 +860,7 @@ fn every_pattern_type_and_output_kind_round_trips() {
 
 #[test]
 fn a_processor_document_has_a_stable_shape() {
-    let processor = Processor::new().with(
+    let processor = Processor::new(
         "motion",
         Formula::between(
             Pattern::new("door", Condition::Equals(String::from("open"))),
@@ -839,24 +872,22 @@ fn a_processor_document_has_a_stable_shape() {
         serde_json::to_value(&processor).unwrap(),
         json!({
             "format": 1,
-            "outputs": [{
-                "key": "motion",
-                "output": {"state": {"between": {
-                    "start": {"key": "door", "type": "text", "condition": {"equals": "open"}},
-                    "end": {
-                        "key": "door", "path": "state", "type": "value",
-                        "condition": {"less": 3}
-                    },
-                    "open": "extent"
-                }}}
-            }]
+            "output": "motion",
+            "formula": {"state": {"between": {
+                "start": {"key": "door", "type": "text", "condition": {"equals": "open"}},
+                "end": {
+                    "key": "door", "path": "state", "type": "value",
+                    "condition": {"less": 3}
+                },
+                "open": "extent"
+            }}}
         })
     );
 }
 
 #[test]
 fn a_pattern_on_another_value_type_cannot_be_saved() {
-    let processor = Processor::new().with(
+    let processor = Processor::new(
         "odd",
         Formula::occurs(Pattern::new("letters", Condition::Equals('a'))),
     );
@@ -868,33 +899,16 @@ fn a_pattern_on_another_value_type_cannot_be_saved() {
     );
 }
 
-fn output(key: &str, output: Json) -> Json {
-    json!({"key": key, "output": output})
-}
-
-fn processor_of(outputs: Vec<Json>) -> Json {
-    json!({"format": 1, "outputs": outputs})
+fn processor_of(output: &str, formula: Json) -> Json {
+    json!({"format": 1, "output": output, "formula": formula})
 }
 
 #[test]
-fn a_processor_with_a_cycle_or_a_repeated_key_is_refused() {
-    let cycle = refusal::<Processor>(&processor_of(vec![
-        output("a", json!({"state": {"state": "b"}})),
-        output("b", json!({"state": {"state": "a"}})),
-    ]));
-    assert!(cycle.contains("read each other"), "{cycle}");
+fn a_processor_that_reads_its_own_output_is_refused() {
+    let cycle = refusal::<Processor>(&processor_of("a", json!({"state": {"state": "a"}})));
+    assert!(cycle.contains("circle"), "{cycle}");
 
-    let twice = refusal::<Processor>(&processor_of(vec![
-        output("a", json!({"state": {"state": "x"}})),
-        output("a", json!({"state": {"state": "y"}})),
-    ]));
-    assert!(twice.contains("`a`") && twice.contains("twice"), "{twice}");
-
-    let chain: Processor = load(&processor_of(vec![
-        output("a", json!({"state": {"state": "b"}})),
-        output("b", json!({"state": {"state": "x"}})),
-    ]))
-    .unwrap();
+    let chain: Processor = load(&processor_of("a", json!({"state": {"state": "b"}}))).unwrap();
     assert!(chain.check().is_ok());
 }
 
@@ -905,7 +919,7 @@ fn a_pattern_of_an_unknown_value_type_or_with_a_stray_path_is_refused() {
         for (name, value) in extra.as_object().unwrap() {
             base[name] = value.clone();
         }
-        processor_of(vec![output("a", json!({"state": {"occurs": base}}))])
+        processor_of("a", json!({"state": {"occurs": base}}))
     };
 
     let unknown = refusal::<Processor>(&pattern(json!({"type": "decimal"})));
@@ -921,13 +935,13 @@ fn a_pattern_of_an_unknown_value_type_or_with_a_stray_path_is_refused() {
 #[test]
 fn a_timeout_that_holds_nothing_is_refused() {
     let document = |timeout: i64| {
-        processor_of(vec![output(
+        processor_of(
             "a",
             json!({"state": {"while": {
                 "pattern": {"key": "k", "type": "i64", "condition": "any"},
                 "timeout": timeout
             }}}),
-        )])
+        )
     };
 
     for timeout in [0, -4] {
@@ -951,7 +965,7 @@ fn with_inputs(processor: Processor) -> Processor {
 
 #[test]
 fn declared_inputs_round_trip_and_are_left_out_when_there_are_none() {
-    let processor = with_inputs(Processor::new().with("a", Formula::state("timeline")));
+    let processor = with_inputs(Processor::new("a", Formula::state("timeline")));
     let document = serde_json::to_value(&processor).unwrap();
 
     assert_eq!(
@@ -966,7 +980,7 @@ fn declared_inputs_round_trip_and_are_left_out_when_there_are_none() {
     assert_eq!(round_trip(&processor), processor);
     assert_eq!(round_trip(&processor).inputs(), processor.inputs());
 
-    let plain = serde_json::to_value(Processor::new().with("a", Formula::state("b"))).unwrap();
+    let plain = serde_json::to_value(Processor::new("a", Formula::state("b"))).unwrap();
     assert!(plain.get("inputs").is_none());
 }
 
@@ -978,7 +992,8 @@ fn an_input_declared_twice_is_refused() {
             {"key": "a", "input": "timeline"},
             {"key": "a", "input": "edges"},
         ],
-        "outputs": [],
+        "output": "o",
+        "formula": {"state": {"state": "x"}},
     }));
     assert!(
         message.contains("`a`") && message.contains("twice"),
@@ -987,13 +1002,9 @@ fn an_input_declared_twice_is_refused() {
 }
 
 #[test]
-fn a_document_written_before_inputs_existed_still_loads() {
-    let loaded: Processor = load(&processor_of(vec![output(
-        "a",
-        json!({"state": {"state": "b"}}),
-    )]))
-    .unwrap();
-    assert!(loaded.inputs().is_empty());
+fn a_document_without_declared_inputs_loads() {
+    let loaded: Processor = load(&processor_of("a", json!({"state": {"state": "b"}}))).unwrap();
+    assert!(loaded.declared("b").is_none());
 }
 
 // ----------------------------------------------------------- JSON Schema
@@ -1011,10 +1022,7 @@ fn assert_matches_schema(processor: &Processor) {
 #[test]
 fn the_schema_accepts_the_documents_of_random_processors() {
     for_each_seed(CASES, |random, _| {
-        let mut processor = Processor::new();
-        for index in 0..=random.below(3) {
-            processor.insert(format!("o{index}"), formula(random, 3));
-        }
+        let mut processor = Processor::new("o0", formula(random, 3));
         if random.chance(1, 2) {
             processor = with_inputs(processor);
         }
@@ -1025,8 +1033,10 @@ fn the_schema_accepts_the_documents_of_random_processors() {
 #[cfg(feature = "json-schema")]
 #[test]
 fn the_schema_accepts_every_pattern_type_and_output_kind() {
-    assert_matches_schema(&with_inputs(every_kind(&every_pattern())));
-    assert_matches_schema(&Processor::new().with(
+    for processor in every_kind(&every_pattern()) {
+        assert_matches_schema(&with_inputs(processor));
+    }
+    assert_matches_schema(&Processor::new(
         "timeout",
         Formula::while_within(Pattern::new("p", Condition::Any::<f64>), 3),
     ));
@@ -1038,15 +1048,13 @@ fn the_schema_accepts_every_pattern_type_and_output_kind() {
 fn a_saved_system_and_processor_reproduce_a_derived_result() {
     let mut random = Random::new(5);
     let world = world(&mut random);
-    let processor = Processor::new()
-        .with("a", Formula::state("s").or(Formula::state("t")))
-        .with("b", Formula::state("a").shift(0, 2));
+    let processor = Processor::new("a", Formula::state("s").or(Formula::state("t")));
 
-    let derived = processor.run(&world).unwrap();
-    let again = round_trip(&processor).run(&round_trip(&world)).unwrap();
+    let derived = derive(&processor, &world).unwrap();
+    let again = derive(&round_trip(&processor), &round_trip(&world)).unwrap();
 
     assert_eq!(again, derived);
-    assert!(matches!(derived.get("b"), Some(Sequence::TimeInterval(_))));
+    assert!(matches!(derived, Sequence::TimeInterval(_)));
 }
 
 // ------------------------------------------------------------- the README

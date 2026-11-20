@@ -142,9 +142,9 @@
 //!   finite is refused when saving, since JSON has no form for it.
 //! - A system lists its members in key order, each with its key, its tagged
 //!   sequence, its metadata, and, when it has them, its frontier, lineage,
-//!   entity and schema. A processor lists its outputs the same way. A live
-//!   processor nests a processor and a system document, each with its own
-//!   format number.
+//!   entity and schema. A processor is its `output` key, its `formula` and, when
+//!   it declares any, its `inputs`. A live processor nests its processors and a
+//!   system document, each with its own format number.
 //!
 //! # JSON Schema
 //!

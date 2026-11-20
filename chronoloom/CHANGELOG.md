@@ -14,8 +14,8 @@
 - `TimeIntervalSequence::complement`, the observed instants that are not
   active, and `Attribute::Complement` for its label `¬A`.
 - `slice(range)` on `TimePointSequence`, `TimeIntervalSequence`, `Sequence` and
-  `SequenceSystem`: the data and extent inside the range, with labels, metadata
-  and lineage kept. A reversed range gives an empty, unobserved result.
+  `SequenceSystem`: the data and extent inside the range, with labels,
+  metadata and the output a derived member came from kept. A reversed range gives an empty, unobserved result.
 - `Key`, the identity of a member of a `SequenceSystem`, kept apart from its
   attribute (its description). Two members may share an attribute under
   different keys, and `SequenceSystem::relabel` replaces a member's attribute
@@ -49,17 +49,11 @@
   as an `And` of `Or`s of literals denoting the same timeline. `Events`
   (`Edges`, `Matching`) are the formulas whose result is points, with `Edge`
   (`Start`, `End`).
-- `Processor`, a set of formulas, each an `Output` filed under a key, run into a
-  new system with `run` or added to a system, all or nothing, with `apply`.
-  A formula may name the key of another output, which wins over a member of the
-  same key, and outputs are evaluated in dependency order; a loop of outputs is
-  `ProcessError::Cycle { keys }`, reported by `run`, `apply` and
-  `Processor::check`. A member written by `run` or `apply` keeps its `Output` as
-  lineage, read with `SequenceSystem::lineage`; `relabel`, `slice`, `observe`
-  and `clone` keep it, recording into the member clears it, and equality
-  includes it. `SequenceSystem::rederive(key)` evaluates the lineage again
-  against the current system, and `ProcessError::NoLineage` reports a member
-  without any.
+- `Processor`, one recipe: `Processor::new(output, formula)` files an `Output`
+  under the key of the one output it produces, evaluated by a `StreamSystem`.
+  A formula may name the key of another processor's output, and a formula
+  reading its own output is `ProcessError::Cycle { keys }`, reported by
+  `Processor::check`.
 - Step values, with no new sequence shape: a step is a point sequence of its
   changes read with sample and hold. `Formula::while_within(pattern, timeout)`
   is a `While` whose sample stops holding `timeout` ticks after it was taken,
@@ -74,15 +68,15 @@
   `Output::any_entity` is the union of those timelines; and
   `Output::count_entities` is a `TimePointSequence<i64>` of the number of
   entities active, as its changes. An entity exists, and is observed, from its
-  first record. `SequenceSystem::lineage_entity` gives the entity of a member,
-  `rederive` works on each, and `ProcessError::DuplicateMember`,
+  first record. `StreamSystem::entity` gives the entity of a member, and
+  `ProcessError::DuplicateMember`,
   `SeveralMembers` and `GroupedRead` report two members under one key, an
   `Output::evaluate` of a per-entity output, and a live processor asked to read
   a member of one.
-- `LiveProcessor`, from `Processor::live(from)`: a processor run online, driven
-  by its host, with no clock, input or output of its own. `on_point` and
-  `on_span` record input events (a late one is `ProcessError::Late`),
-  `advance(key, watermark)` returns the `Emission`s that became final, and
+- `LiveProcessor`, from `LiveProcessor::new(&processors, from)`: it runs the
+  processors online, driven by its host, with no clock, input or output of its
+  own. `on_point` and `on_span` record input events (a late one is
+  `ProcessError::Late`), `advance(key, watermark)` returns the `Emission`s that became final, and
   `finish(horizon)` ends the stream (`ProcessError::Finished` after that). A
   state output emits `Emitted::Edge`s once their instant is below the frontier
   of the output, which follows the lag of each node (a set operation takes the
@@ -90,7 +84,7 @@
   of the output it reads). `Events::Matching`, `Events::Changes` and
   `Events::Project` emit `Emitted::Point`s with the value erased as `AnyValue`,
   and a per-entity output emits under its member keys, counts as points of
-  `i64`. What is emitted equals the batch `run` over the whole stream, below
+  `i64`. What is emitted equals the batch evaluation over the whole stream, below
   each frontier and in the end, whatever order and watermarks the inputs arrive
   with. `OpenEnd::Head` is the frontier of the inputs online, and unknown
   regions emit nothing. Each advance evaluates the outputs again over a
@@ -124,7 +118,7 @@
   `inputs()`; a processor without declarations behaves as before.
   `Processor::validate` lists every problem without a system, in a stable order,
   with `ProcessError::{InOutput, InputIsOutput, MissingField, FieldMismatch}`,
-  and `run`, `apply` and `live` hold the system or the stream to the
+  and a `StreamSystem` and a `LiveProcessor` hold the streams to the
   declarations.
 - The optional `serde` feature (the only dependency, off by default, which
   leaves the default build with none): `Serialize` and `Deserialize` for
@@ -136,8 +130,8 @@
   spans and extents are normalized, a span that ends before it starts is
   refused, events are sorted, data outside the extent is refused (a point at
   `i64::MAX` and the data of a live member excepted), a schema must fit its
-  member's data, lineage, entity and frontier must agree, and a processor must
-  pass `Processor::check`. A `Value` is plain JSON and keeps `5` and `5.0`
+  member's data, lineage (the output a derived member came from), entity and
+  frontier must agree, and a processor must pass `Processor::check`. A `Value` is plain JSON and keeps `5` and `5.0`
   apart. The point members of a system and the patterns of a processor are
   tagged with one of `f64`, `i64`, `bool`, `text`, `value` and `edge`; any other
   type is an error naming the key. The processor document has an `inputs` array,
@@ -153,7 +147,7 @@
   document is validated on load (inputs against the processor, views against
   their entities, cursors against frontiers); an input of a value type outside
   the closed set cannot be saved, and the error names its key.
-  `LiveProcessor::processor` reads the processor a live one was built from.
+  `LiveProcessor::processors` reads the processors a live one was built from.
 - The optional `json-schema` feature (implies `serde`; adds `schemars` and
   `serde_json`): `serialisation::processor_json_schema()` returns the JSON
   Schema of the processor document.

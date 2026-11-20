@@ -319,8 +319,7 @@ data is: the drained part carries what was observed before the earliest instant
 the member keeps, and the member keeps the rest, so the two put back together
 are what a batch system of the same events holds. A member with nothing final is
 still in the result, empty but with its extent; batch members, derived ones
-included, are never drained, and `rederive` on one afterwards reads what is left
-of its inputs.
+included, are never drained.
 
 ```rust
 use chronoloom::{SequenceSystem, TimeIntervalEvent, TimeIntervalSequence};
@@ -344,9 +343,10 @@ assert_eq!(room.frontier_of("occupied"), Some(20));
 Sensors report transitions as point events, or values that cross a threshold.
 Turning them into a timeline does not happen on the sequence types, which hold
 data, extent and the set algebra and nothing else. It goes through a
-`Processor`, a set of formulas, each filed under the key of the member it
-produces. A `Formula` is data: it can be compared, printed, evaluated against
-any system and later stored. It reads points through a `Pattern`, a key and a
+`Processor`, one recipe: a formula filed under the key of the one output it
+produces, evaluated by a `StreamSystem` (see Stream systems). A `Formula` is
+data: it can be compared, printed, evaluated against any system and later
+stored. It reads points through a `Pattern`, a key and a
 `Condition` on the values (`Equals`, `Greater`, `Within`, `In`, `And`, `Not` and
 so on) over the value type of that member.
 
@@ -356,26 +356,25 @@ with orphan ends is no error, and an end at the instant a span opened lasts one
 tick.
 
 ```rust
-use chronoloom::{Condition, Formula, Pattern, Processor, SequenceSystem};
+use chronoloom::{Processor, StreamSystem};
+use chronoloom::{Condition, Formula, Pattern};
 use chronoloom::{TimePointEvent, TimePointSequence};
 
-let mut room = SequenceSystem::new();
-room.insert("motion", TimePointSequence::from_events("motion", vec![
+let mut room = StreamSystem::new();
+room.insert_stream("motion", TimePointSequence::from_events("motion", vec![
     TimePointEvent::new(10, "motion_start"),
     TimePointEvent::new(25, "motion_end"),
-]));
+])).unwrap();
 
 let present = Formula::between(
     Pattern::new("motion", Condition::Equals("motion_start")),
     Pattern::new("motion", Condition::Equals("motion_end")),
 );
-let processor = Processor::new().with("present", present);
 
-// `run` makes a system of the outputs alone; `apply` adds them to `room`.
-let derived = processor.run(&room).unwrap();
-assert_eq!(derived.intervals("present").unwrap()[0].bounds(), (10, 25));
-processor.apply(&mut room).unwrap();
-assert!(room.contains("present"));
+// The system evaluates the processor and keeps its output up to date.
+room.add_processor(Processor::new("present", present)).unwrap();
+assert_eq!(room.intervals("present").unwrap()[0].bounds(), (10, 25));
+assert!(room.is_derived("present"));
 ```
 
 `While` holds the last sample: a threshold is `Greater`, and a range is `Within`,
@@ -383,32 +382,30 @@ which is half-open like a span. The formula is unknown before the first sample
 of a run of the extent, and the last sample holds to the end of the run.
 
 ```rust
-use chronoloom::{Condition, Formula, Pattern, Processor, SequenceSystem};
+use chronoloom::{Processor, StreamSystem};
+use chronoloom::{Condition, Formula, Pattern};
 use chronoloom::{TimePointEvent, TimePointSequence};
 
-let mut room = SequenceSystem::new();
-room.insert("temperature", TimePointSequence::from_events("temperature", vec![
+let mut room = StreamSystem::new();
+room.insert_stream("temperature", TimePointSequence::from_events("temperature", vec![
     TimePointEvent::new(0, 3.0),
     TimePointEvent::new(10, 7.0),
     TimePointEvent::new(20, 9.0),
     TimePointEvent::new(30, 4.0),
-]));
+])).unwrap();
 
 let hot = Formula::while_matching(Pattern::new("temperature", Condition::Greater(5.0)));
 let mild = Formula::while_matching(Pattern::new(
     "temperature",
     Condition::Within { low: 5.0, high: 8.0 },
 ));
-let derived = Processor::new()
-    .with("hot", hot)
-    .with("mild", mild)
-    .run(&room)
-    .unwrap();
+room.add_processor(Processor::new("hot", hot)).unwrap();
+room.add_processor(Processor::new("mild", mild)).unwrap();
 
-assert_eq!(derived.intervals("hot").unwrap()[0].bounds(), (10, 30));
-assert_eq!(derived.intervals("mild").unwrap()[0].bounds(), (10, 20));
+assert_eq!(room.intervals("hot").unwrap()[0].bounds(), (10, 30));
+assert_eq!(room.intervals("mild").unwrap()[0].bounds(), (10, 20));
 // Nothing is known before the first sample.
-assert!(!derived.intervals("hot").unwrap().is_observed(-1));
+assert!(!room.intervals("hot").unwrap().is_observed(-1));
 ```
 
 A span with no end is active as long as no end event is observed, and
@@ -427,52 +424,59 @@ that denotes the same timeline, and `Events::Edges` and `Events::Matching` are
 the outputs that are points rather than a timeline.
 
 ```rust
-use chronoloom::{Condition, Formula, Pattern, Processor, SequenceSystem};
+use chronoloom::{Processor, StreamSystem};
+use chronoloom::{Condition, Formula, Pattern};
 use chronoloom::{TimePointEvent, TimePointSequence};
 
-let mut room = SequenceSystem::new();
-room.insert("door", TimePointSequence::from_events("door", vec![
+let mut room = StreamSystem::new();
+room.insert_stream("door", TimePointSequence::from_events("door", vec![
     TimePointEvent::new(10, "open"),
     TimePointEvent::new(12, "open"),
     TimePointEvent::new(30, "open"),
-]));
+])).unwrap();
 
 // Recently opened: three ticks from each opening, merged where they overlap.
 let recent = Formula::hold(Pattern::new("door", Condition::Equals("open")), 3);
-let derived = Processor::new().with("recent", recent).run(&room).unwrap();
-let spans: Vec<(i64, i64)> = derived.intervals("recent").unwrap()
+room.add_processor(Processor::new("recent", recent)).unwrap();
+let spans: Vec<(i64, i64)> = room.intervals("recent").unwrap()
     .iter().map(|span| span.bounds()).collect();
 assert_eq!(spans, [(10, 15), (30, 33)]);
 ```
 
-A formula may name the key of another output of the same processor, and then
-reads that output, whatever the order the outputs were added in. A loop of
-outputs is `ProcessError::Cycle`, which `run`, `apply` and `Processor::check`
-report.
+A formula may name the key of the output of another processor, and then reads
+that output. A processor reads only what the system already holds, so the
+processors are added in the order they depend on each other, and a formula
+reading its own output is `ProcessError::Cycle`, which `Processor::check`
+reports without a system.
 
 ```rust
-use chronoloom::{Condition, Formula, Pattern, Processor, SequenceSystem};
+use chronoloom::{Processor, StreamSystem};
+use chronoloom::{Condition, Formula, Pattern};
 use chronoloom::{TimeIntervalEvent, TimeIntervalSequence, TimePointEvent, TimePointSequence};
 
-let mut room = SequenceSystem::new();
-room.insert("motion", TimePointSequence::from_events("motion", vec![
+let mut room = StreamSystem::new();
+room.insert_stream("motion", TimePointSequence::from_events("motion", vec![
     TimePointEvent::new(10, "motion_start"),
     TimePointEvent::new(25, "motion_end"),
-]));
-room.insert("door", TimeIntervalSequence::from_spans("door", vec![
+])).unwrap();
+room.insert_stream("door", TimeIntervalSequence::from_spans("door", vec![
     TimeIntervalEvent::span(40, 50).unwrap(),
-]));
+])).unwrap();
 
-let derived = Processor::new()
-    // Reads the output `present`, which is not a member of `room`.
-    .with("occupied", Formula::state("present").or(Formula::state("door")))
-    .with("present", Formula::between(
-        Pattern::new("motion", Condition::Equals("motion_start")),
-        Pattern::new("motion", Condition::Equals("motion_end")),
-    ))
-    .run(&room)
-    .unwrap();
-assert_eq!(derived.intervals("occupied").unwrap().len(), 2);
+room.add_processor(Processor::new("present", Formula::between(
+    Pattern::new("motion", Condition::Equals("motion_start")),
+    Pattern::new("motion", Condition::Equals("motion_end")),
+))).unwrap();
+// Reads the output `present`, which the system holds by now.
+room.add_processor(Processor::new(
+    "occupied",
+    Formula::state("present").or(Formula::state("door")),
+)).unwrap();
+assert_eq!(room.intervals("occupied").unwrap().len(), 2);
+
+// A formula reading its own output is a cycle.
+let looping = Processor::new("loop", Formula::state("loop"));
+assert!(looping.check().is_err());
 ```
 
 ### Step values
@@ -487,32 +491,30 @@ repeat dropped, for a host that stores or streams only the changes. Both work
 online, with no lag.
 
 ```rust
-use chronoloom::{Condition, Events, Formula, Pattern, Processor, SequenceSystem};
+use chronoloom::{Processor, StreamSystem};
+use chronoloom::{Condition, Events, Formula, Pattern};
 use chronoloom::{TimePointEvent, TimePointSequence};
 
-let mut room = SequenceSystem::new();
-room.insert("count", TimePointSequence::from_events("count", vec![
+let mut room = StreamSystem::new();
+room.insert_stream("count", TimePointSequence::from_events("count", vec![
     TimePointEvent::new(0, 2_i64),
     TimePointEvent::new(10, 9),
     TimePointEvent::new(20, 9),
     TimePointEvent::new(100, 1),
-]));
+])).unwrap();
 
 // Busy while the last count is above five, trusted for 30 ticks after it.
 let busy = Formula::while_within(Pattern::new("count", Condition::Greater(5_i64)), 30);
-let derived = Processor::new()
-    .with("busy", busy)
-    .with("steps", Events::changes("count"))
-    .run(&room)
-    .unwrap();
+room.add_processor(Processor::new("busy", busy)).unwrap();
+room.add_processor(Processor::new("steps", Events::changes("count"))).unwrap();
 
-let busy = derived.intervals("busy").unwrap();
+let busy = room.intervals("busy").unwrap();
 assert_eq!(busy[0].bounds(), (10, 50));
 // From 50 to 100 the sensor was silent: unknown, not inactive.
 assert!(!busy.contains(70) && !busy.is_observed(70));
 
 // The repeat at 20 is dropped.
-let steps = derived.points::<i64>("steps").unwrap();
+let steps = room.points::<i64>("steps").unwrap();
 let changes: Vec<(i64, i64)> = steps.iter().map(|e| (e.timestamp(), *e.value())).collect();
 assert_eq!(changes, [(0, 2), (10, 9), (100, 1)]);
 ```
@@ -522,25 +524,25 @@ assert_eq!(changes, [(0, 2), (10, 9), (100, 1)]);
 A processor may say what it expects of the members it reads, with
 `Processor::with_input(key, Input)`: a timeline, points of a value type, edges,
 or records of a `Schema`. `Processor::validate` then lists every problem without
-a system, in a stable order (the cycle, then output by output), and `run`,
-`apply` and `Processor::live` refuse a system or a stream that contradicts a
+a system, in a stable order (the cycle first, then the reads of the formula),
+and a `StreamSystem` or a `LiveProcessor` refuses a stream that contradicts a
 declaration. A processor with no declarations behaves as before.
 
 ```rust
-use chronoloom::{Formula, Input, Kind, Processor, SequenceSystem, TimePointSequence};
+use chronoloom::{Processor, StreamSystem};
+use chronoloom::{Formula, Input, Kind, TimePointSequence};
 
-let processor = Processor::new()
+let processor = Processor::new("open", Formula::state("door").or(Formula::state("shut")))
     .with_input("door", Input::Timeline)
-    .with_input("temperature", Input::Points(Kind::Float))
-    .with("open", Formula::state("door").or(Formula::state("shut")));
+    .with_input("temperature", Input::Points(Kind::Float));
 
-// `shut` is neither an output nor a declared input.
+// `shut` is neither the output nor a declared input.
 assert_eq!(processor.validate().unwrap_err().len(), 1);
 
 // A system whose `temperature` holds integers contradicts the declaration.
-let mut system = SequenceSystem::new();
-system.insert("temperature", TimePointSequence::<i64>::new("temperature"));
-assert!(processor.run(&system).is_err());
+let mut system = StreamSystem::new();
+system.insert_stream("temperature", TimePointSequence::<i64>::new("temperature")).unwrap();
+assert!(system.add_processor(processor).is_err());
 ```
 
 ## Datasets
@@ -556,17 +558,14 @@ one subject over a stretch of time. Each piece answers one question.
 - **Metadata** says what the data means to you: a time unit, an origin, a unit
   per sensor. `Metadata` is a string map, kept on the system and on each member.
   chronoloom stores it and never reads it.
-- **A `Processor`** turns raw readings into timelines, so one dataset holds the
-  readings and the states derived from them.
-- **Lineage** says where a derived member came from: a member written by a
-  `Processor` keeps its output, `lineage(key)` reads it, and `rederive(key)`
-  evaluates it again against the current system. Recording into the member
-  clears it, since the data no longer follows from the formula.
+- **A `Processor`** turns raw readings into timelines, so one dataset (a
+  `StreamSystem`) holds the readings and the states derived from them.
 - **`slice`** cuts every member to a window of time, keeping keys, labels and
   metadata, and narrowing each extent to the window.
 
 ```rust
-use chronoloom::{Condition, Extent, Formula, Pattern, Processor, SequenceSystem};
+use chronoloom::{Processor, StreamSystem};
+use chronoloom::{Condition, Extent, Formula, Pattern};
 use chronoloom::{TimeIntervalEvent, TimePointEvent, TimePointSequence};
 
 let motion = TimePointSequence::from_events("motion", vec![
@@ -574,22 +573,20 @@ let motion = TimePointSequence::from_events("motion", vec![
     TimePointEvent::new(40, "motion_end"),
 ]);
 
-let mut room = SequenceSystem::new();
-room.insert("motion", motion);
-Processor::new()
-    .with("presence", Formula::between(
-        Pattern::new("motion", Condition::Equals("motion_start")),
-        Pattern::new("motion", Condition::Equals("motion_end")),
-    ))
-    .apply(&mut room)
-    .unwrap();
+let mut room = StreamSystem::new();
+room.insert_stream("motion", motion).unwrap();
+room.add_processor(Processor::new("presence", Formula::between(
+    Pattern::new("motion", Condition::Equals("motion_start")),
+    Pattern::new("motion", Condition::Equals("motion_end")),
+))).unwrap();
 room.metadata_mut().insert("unit".into(), "seconds".into());
 room.member_metadata_mut("motion")
     .unwrap()
     .insert("placement".into(), "door".into());
 
 // The recording stopped at 50: nothing is known after it.
-room.observe(&Extent::from_spans(vec![TimeIntervalEvent::span(i64::MIN, 50).unwrap()]));
+room.observe(&Extent::from_spans(vec![TimeIntervalEvent::span(i64::MIN, 50).unwrap()]))
+    .unwrap();
 assert!(!room.intervals("presence").unwrap().is_observed(60));
 
 // A playback window keeps keys, labels and metadata.
@@ -607,8 +604,8 @@ assert_eq!(
 
 ## Running a processor online
 
-`Processor::live(from)` makes a `LiveProcessor`, the same outputs produced as the
-inputs arrive. It is a state machine with no clock, input or output, that a host
+`LiveProcessor::new(&processors, from)` makes a `LiveProcessor`, the same outputs
+produced as the inputs arrive. It is a state machine with no clock, input or output, that a host
 drives: `on_point` and `on_span` record input events, `advance` moves the
 frontier (watermark) of one input, and each call returns the `Emission`s that
 became final. A state output emits `Edge`s, a `Start` once its instant is below
@@ -620,16 +617,17 @@ Every operator has a lag: the frontier of an output is a function of the
 frontiers of its inputs. Set operations take the smaller one, `Shift { alpha,
 beta }` adds `min(alpha, beta)`, and a chained output has the frontier of the
 output it reads. Everything before the frontier of an output is final, so the
-edges emitted are those of the batch `run` over the whole stream, whatever order
+edges emitted are those of the batch evaluation over the whole stream, whatever order
 and watermarks the inputs arrive with. `finish(horizon)` ends the stream, and
 what was emitted then equals the batch result with the extent of each input
 ending at the horizon.
 
 ```rust
-use chronoloom::{Condition, Edge, Emitted, Formula, Pattern, Processor, TimePointEvent};
+use chronoloom::{Processor};
+use chronoloom::{Condition, Edge, Emitted, Formula, LiveProcessor, Pattern, TimePointEvent};
 
 let busy = Formula::while_matching(Pattern::new("count", Condition::Greater(5_i64)));
-let mut live = Processor::new().with("busy", busy).live(0).unwrap();
+let mut live = LiveProcessor::new(&[Processor::new("busy", busy)], 0).unwrap();
 
 live.on_point("count", TimePointEvent::new(7, 9_i64)).unwrap();
 
@@ -677,8 +675,9 @@ a field of another kind is `ProcessError::ProjectionMismatch`. A live processor
 supports it like `Matching`, so what it emits equals the batch result.
 
 ```rust
+use chronoloom::{Processor, StreamSystem};
 use chronoloom::{
-    Condition, Emitted, Events, Formula, Kind, Pattern, Processor, RecordError, Schema,
+    Condition, Emitted, Events, Formula, Kind, LiveProcessor, Pattern, RecordError, Schema,
     SequenceSystem, TimePointEvent, TimePointSequence, Value,
 };
 
@@ -714,23 +713,29 @@ assert!(matches!(
 ));
 
 // A field becomes a sequence of its own, and an ordinary processor reads it.
-let processor = Processor::new()
-    .with("agent", Events::project("sensor", "agent.id", Kind::Integer))
-    .with(
+let mut result = StreamSystem::new();
+result.insert_stream("sensor", system.points::<Value>("sensor").unwrap().clone()).unwrap();
+result.set_schema("sensor", system.schema("sensor").unwrap().clone()).unwrap();
+result
+    .add_processor(Processor::new(
+        "agent",
+        Events::project("sensor", "agent.id", Kind::Integer),
+    ))
+    .unwrap();
+result
+    .add_processor(Processor::new(
         "far_agent",
         Formula::while_matching(Pattern::new("agent", Condition::Greater(8_i64))),
-    );
-let result = processor.run(&system).unwrap();
+    ))
+    .unwrap();
 
 let agents = result.points::<i64>("agent").unwrap();
 assert_eq!(agents.iter().map(|event| *event.value()).collect::<Vec<_>>(), [7, 9]);
 assert!(result.intervals("far_agent").unwrap().contains(25));
 
 // Online, the same projection emits each point once it is final.
-let mut live = Processor::new()
-    .with("zone", Events::project("sensor", "zone", Kind::Text))
-    .live(0)
-    .unwrap();
+let zone = Processor::new("zone", Events::project("sensor", "zone", Kind::Text));
+let mut live = LiveProcessor::new(&[zone], 0).unwrap();
 live.on_point("sensor", TimePointEvent::new(10, message(7, "gate"))).unwrap();
 let emitted = live.advance("sensor", 20).unwrap();
 let Emitted::Point(point) = &emitted[0].item else { panic!("a point") };
@@ -750,35 +755,34 @@ it and an ordering does not. A member that does not hold `Value` points is
 combined by formulas, an `And` of `While`s:
 
 ```rust
-use chronoloom::{
-    Condition, Formula, Pattern, Processor, SequenceSystem, TimePointEvent, TimePointSequence,
-    Value,
-};
+use chronoloom::{Processor, StreamSystem};
+use chronoloom::{Condition, Formula, Pattern, TimePointEvent, TimePointSequence, Value};
 
 let reading = |count: i64, zone: &str| {
     Value::record([("count", Value::from(count)), ("zone", Value::from(zone))])
 };
 
-let mut system = SequenceSystem::new();
-system.insert("motion", TimePointSequence::from_events("motion", vec![
+let mut system = StreamSystem::new();
+system.insert_stream("motion", TimePointSequence::from_events("motion", vec![
     TimePointEvent::new(10, reading(7, "gate")),
     TimePointEvent::new(20, reading(9, "yard")),
     TimePointEvent::new(30, reading(2, "yard")),
     TimePointEvent::new(40, reading(8, "gate")),
     TimePointEvent::new(50, Value::record([("zone", Value::from("gate"))])),
-]));
+])).unwrap();
 
 let busy = Pattern::field("motion", "count", Condition::Greater(Value::from(5)));
 let at_gate = Pattern::field("motion", "zone", Condition::Equals(Value::from("gate")));
 assert_eq!(busy.to_string(), "motion.count > 5");
 
 // Busy at the gate: both fields at once. The last record has no count.
-let processor = Processor::new().with(
-    "busy_at_gate",
-    Formula::And(vec![Formula::while_matching(busy), Formula::while_matching(at_gate)]),
-);
-let result = processor.run(&system).unwrap();
-let spans: Vec<(i64, i64)> = result
+system
+    .add_processor(Processor::new(
+        "busy_at_gate",
+        Formula::And(vec![Formula::while_matching(busy), Formula::while_matching(at_gate)]),
+    ))
+    .unwrap();
+let spans: Vec<(i64, i64)> = system
     .intervals("busy_at_gate")
     .unwrap()
     .iter()
@@ -805,19 +809,20 @@ patterns over any other member are shared: a door is the same door for every
 agent.
 
 ```rust
-use chronoloom::{Condition, Formula, Group, Output, Pattern, Processor, SequenceSystem};
+use chronoloom::{Processor, StreamSystem};
+use chronoloom::{Condition, Formula, Group, Output, Pattern};
 use chronoloom::{TimePointEvent, TimePointSequence, Value};
 
 let crossing = |agent: &str, direction: &str| {
     Value::record([("agent", Value::from(agent)), ("direction", Value::from(direction))])
 };
-let mut gate = SequenceSystem::new();
-gate.insert("gate", TimePointSequence::from_events("gate", vec![
+let mut gate = StreamSystem::new();
+gate.insert_stream("gate", TimePointSequence::from_events("gate", vec![
     TimePointEvent::new(10, crossing("agent-7", "in")),
     TimePointEvent::new(12, crossing("agent-9", "in")),
     TimePointEvent::new(20, crossing("agent-7", "out")),
     TimePointEvent::new(30, crossing("agent-9", "out")),
-]));
+])).unwrap();
 
 // Present from an "in" of an agent until the next "out" of the same agent.
 let direction = |text: &str| {
@@ -826,13 +831,19 @@ let direction = |text: &str| {
 let present = Formula::between(direction("in"), direction("out"));
 let by_agent = Group::new("gate", "agent");
 
-let processor = Processor::new()
-    .with("presence", Output::per_entity(by_agent.clone(), present.clone()))
-    .with("anyone", Output::any_entity(by_agent.clone(), present.clone()))
-    .with("crowd", Output::count_entities(by_agent, present))
-    // Any output reads the others by key, the members of `presence` included.
-    .with("seven_after_hours", Formula::state("presence/agent-7").shift(0, 60));
-let result = processor.run(&gate).unwrap();
+gate.add_processor(Processor::new("presence", Output::per_entity(by_agent.clone(), present.clone())))
+    .unwrap();
+gate.add_processor(Processor::new("anyone", Output::any_entity(by_agent.clone(), present.clone())))
+    .unwrap();
+gate.add_processor(Processor::new("crowd", Output::count_entities(by_agent, present)))
+    .unwrap();
+// A processor reads the others by key, the members of `presence` included.
+gate.add_processor(Processor::new(
+    "seven_after_hours",
+    Formula::state("presence/agent-7").shift(0, 60),
+))
+.unwrap();
+let result = &gate;
 
 assert_eq!(result.intervals("presence/agent-7").unwrap()[0].bounds(), (10, 20));
 assert_eq!(result.intervals("presence/agent-9").unwrap()[0].bounds(), (12, 30));
@@ -848,10 +859,8 @@ let crowd: Vec<(i64, i64)> = result
     .collect();
 assert_eq!(crowd, [(i64::MIN, 0), (10, 1), (12, 2), (20, 1), (30, 0)]);
 
-// Each member remembers the output and the entity it is the timeline of.
-let mut system = gate;
-processor.apply(&mut system).unwrap();
-assert_eq!(system.lineage_entity("presence/agent-9"), Some(&Value::from("agent-9")));
+// Each member is the timeline of one entity.
+assert_eq!(gate.entity("presence/agent-9"), Some(&Value::from("agent-9")));
 ```
 
 An entity is a distinct value of the field: a boolean, a number or text. A record
@@ -890,9 +899,9 @@ advance costs in proportion.
 
 A `StreamSystem` puts the pieces above together: it holds the streams of a
 subject and a list of processors, and keeps what the processors derive up to
-date as data arrives. A `processor::Processor` is one recipe: the inputs it
-reads, a formula over them, and the one output it produces. The inputs are the
-keys its formula reads; `with_input` declares what one must be.
+date as data arrives. Each `Processor` has the inputs it
+reads, which are the keys its formula reads (`with_input` declares what one must
+be), and the one output it produces.
 
 Derived streams are read-only and always current. An `Update`, a set of points
 and spans by stream key recorded all or nothing, evaluates again the processors
@@ -902,8 +911,7 @@ processor reads only what the system already holds, and what a processor reads
 cannot be removed, so the list is always in an order the system can evaluate.
 
 ```rust
-use chronoloom::processor::Processor;
-use chronoloom::stream_system::{StreamSystem, Update};
+use chronoloom::{Processor, StreamSystem, Update};
 use chronoloom::{Condition, Formula, Pattern, TimeIntervalEvent, TimeIntervalSequence};
 use chronoloom::{TimePointEvent, TimePointSequence};
 
@@ -946,8 +954,8 @@ run as doctests of the `serialisation` module. A `TimePointSequence`, a
 are documents that start with a format version, `{ "format": 1, .. }`; what is
 nested in them carries none (a checkpoint holds a processor and a system, which
 are documents of their own), and a reader refuses any version it does not know.
-A system is saved whole: members, metadata, frontiers of live members, lineage,
-entities and schemas.
+A system is saved whole: members, metadata, frontiers of live members, the
+output each derived member came from (its lineage), entities and schemas.
 
 ```rust,ignore
 use chronoloom::{
@@ -961,19 +969,15 @@ system.insert("count", TimePointSequence::from_events("count", vec![
 ]));
 system.metadata_mut().insert("unit".to_owned(), "seconds".to_owned());
 
-// A derived member is saved with the output that produced it.
-let processor = Processor::new().with(
-    "busy",
-    Formula::occurs(Pattern::new("count", Condition::Greater(5_i64))),
-);
-processor.apply(&mut system).unwrap();
-
 let saved = serde_json::to_string(&system).unwrap();
 let loaded: SequenceSystem = serde_json::from_str(&saved).unwrap();
 assert_eq!(loaded, system);
-assert!(loaded.lineage("busy").is_some());
 
-// The processor is a document of its own, and a loaded one has been checked.
+// A processor is a document of its own, and a loaded one has been checked.
+let processor = Processor::new(
+    "busy",
+    Formula::occurs(Pattern::new("count", Condition::Greater(5_i64))),
+);
 let rules = serde_json::to_string(&processor).unwrap();
 let rules: Processor = serde_json::from_str(&rules).unwrap();
 assert_eq!(rules, processor);
@@ -1012,17 +1016,17 @@ processor holding an input of a value type outside the closed set above cannot
 be checkpointed, and the error names the key.
 
 ```rust,ignore
-use chronoloom::{Condition, Formula, LiveProcessor, Pattern, Processor, TimePointEvent};
+use chronoloom::{Condition, Formula, LiveProcessor, Pattern, TimePointEvent};
 
 let busy = Formula::while_matching(Pattern::new("count", Condition::Greater(5_i64)));
-let mut live = Processor::new().with("busy", busy).live(0).unwrap();
+let mut live = LiveProcessor::new(&[Processor::new("busy", busy)], 0).unwrap();
 live.on_point("count", TimePointEvent::new(7, 9_i64)).unwrap();
 live.advance("count", 10).unwrap();
 
 // The host saves it with its own offsets, and a new process loads it.
 let saved = serde_json::to_string(&live).unwrap();
 let mut restored: LiveProcessor = serde_json::from_str(&saved).unwrap();
-assert_eq!(restored.processor(), live.processor());
+assert_eq!(restored.processors(), live.processors());
 assert_eq!(restored.frontier("busy"), Some(10));
 assert_eq!(restored.finish(30).unwrap(), live.finish(30).unwrap());
 ```
@@ -1039,12 +1043,11 @@ the processor document for editors and servers.
 use chronoloom::serialisation::processor_json_schema;
 use chronoloom::{Formula, Input, Kind, Processor};
 
-let processor = Processor::new()
+let processor = Processor::new("open", Formula::state("door").or(Formula::state("shut")))
     .with_input("door", Input::Timeline)
-    .with_input("temperature", Input::Points(Kind::Float))
-    .with("open", Formula::state("door").or(Formula::state("shut")));
+    .with_input("temperature", Input::Points(Kind::Float));
 
-// `shut` is neither an output nor a declared input.
+// Once inputs are declared, `shut` must be one of them.
 assert_eq!(processor.validate().unwrap_err().len(), 1);
 
 // The schema describes the document that is saved, `inputs` included.

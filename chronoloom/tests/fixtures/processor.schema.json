@@ -1605,6 +1605,9 @@
     "format": {
       "const": 1
     },
+    "formula": {
+      "$ref": "#/$defs/Output"
+    },
     "inputs": {
       "items": {
         "properties": {
@@ -1623,28 +1626,14 @@
       },
       "type": "array"
     },
-    "outputs": {
-      "items": {
-        "properties": {
-          "key": {
-            "$ref": "#/$defs/Key"
-          },
-          "output": {
-            "$ref": "#/$defs/Output"
-          }
-        },
-        "required": [
-          "key",
-          "output"
-        ],
-        "type": "object"
-      },
-      "type": "array"
+    "output": {
+      "$ref": "#/$defs/Key"
     }
   },
   "required": [
     "format",
-    "outputs"
+    "output",
+    "formula"
   ],
   "type": "object"
 }

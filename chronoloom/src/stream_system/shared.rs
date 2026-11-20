@@ -1,7 +1,7 @@
 //! What every mode of a stream system shares: reading, metadata, the list of
 //! processors, and evaluating the processors a change affects.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::ops::RangeBounds;
 
 use crate::primitives::Timestamp;
@@ -11,6 +11,7 @@ use crate::values::Schema;
 
 use crate::processor::Processor;
 
+use super::pipeline::{writes, Pipeline};
 use super::{Batch, Mode, Report, StreamSystem, UpdateError};
 
 impl<M: Mode> StreamSystem<M> {
@@ -60,19 +61,15 @@ impl<M: Mode> StreamSystem<M> {
     /// Whether `key` is a derived stream.
     #[must_use]
     pub fn is_derived(&self, key: &str) -> bool {
-        self.producer(key).is_some()
+        let key = Key::from(key);
+        self.members.lineage(key.as_str()).is_some() && self.pipeline.producer(&key).is_some()
     }
 
     /// The processor that produces the derived stream under `key`.
     #[must_use]
     pub fn producer(&self, key: &str) -> Option<&Processor> {
-        let (output, _) = self
-            .produced
-            .iter()
-            .find(|(_, members)| members.contains(key))?;
-        self.processors
-            .iter()
-            .find(|processor| processor.output() == output)
+        self.members.lineage(key)?;
+        self.pipeline.producer(&Key::from(key))
     }
 
     /// The entity the derived stream under `key` is about, for a member of a
@@ -85,7 +82,7 @@ impl<M: Mode> StreamSystem<M> {
     /// The processors, in the order they are evaluated in.
     #[must_use]
     pub fn processors(&self) -> &[Processor] {
-        &self.processors
+        self.pipeline.processors()
     }
 
     /// The metadata of the system itself.
@@ -128,46 +125,33 @@ impl<M: Mode> StreamSystem<M> {
     pub fn slice(&self, range: impl RangeBounds<Timestamp>) -> StreamSystem<Batch> {
         StreamSystem {
             members: self.members.slice(range),
-            processors: self.processors.clone(),
-            produced: self.produced.clone(),
+            pipeline: self.pipeline.clone(),
             mode: Batch,
         }
     }
 
     /// The output key of a processor that reads `key`, if any does.
     pub(super) fn reader_of(&self, key: &Key) -> Option<&Key> {
-        self.processors
-            .iter()
-            .find(|processor| processor.inputs().contains(key))
-            .map(Processor::output)
+        self.pipeline.reader_of(key)
     }
 }
 
-/// Evaluate again the processors that read a key of `changed`, directly or
-/// through the output of another, in the order of `processors`, or all of
-/// them when `changed` is `None`. Each processor's members in `members`
-/// replace the ones it wrote before, keeping their metadata. Returns the
-/// derived streams whose content changed.
+/// Evaluate again the processors of `pipeline` at `indices`, in list order.
+/// Each processor's members in `members` replace the ones it wrote before,
+/// keeping their metadata. Returns the derived streams whose content changed.
 ///
-/// On an error, `members` and `produced` may be half updated: callers work on
-/// copies.
+/// On an error, `members` may be half updated: callers work on a copy.
 pub(super) fn evaluate(
-    processors: &[Processor],
+    pipeline: &Pipeline,
+    indices: &[usize],
     members: &mut SequenceSystem,
-    produced: &mut BTreeMap<Key, BTreeSet<Key>>,
-    changed: Option<BTreeSet<Key>>,
 ) -> Result<Report, UpdateError> {
-    let mut changed = changed;
     let mut report = Report::default();
 
-    for processor in processors {
-        if let Some(changed) = &changed {
-            if !processor.inputs().iter().any(|key| changed.contains(*key)) {
-                continue;
-            }
-        }
-
+    for &index in indices {
+        let processor = &pipeline.processors()[index];
         let output = processor.output();
+        report.evaluated.insert(output.clone());
         let mut fresh = processor
             .as_set()
             .run(members)
@@ -176,7 +160,11 @@ pub(super) fn evaluate(
                 error,
             })?;
 
-        let before = produced.remove(output).unwrap_or_default();
+        let before: BTreeSet<Key> = members
+            .keys()
+            .filter(|key| writes(processor, key) && members.lineage(key.as_str()).is_some())
+            .cloned()
+            .collect();
         let after: BTreeSet<Key> = fresh.keys().cloned().collect();
         if let Some(key) = after
             .iter()
@@ -210,12 +198,6 @@ pub(super) fn evaluate(
                 *kept = metadata;
             }
         }
-
-        if let Some(changed) = &mut changed {
-            changed.insert(output.clone());
-            changed.extend(before.union(&after).cloned());
-        }
-        produced.insert(output.clone(), after);
     }
 
     Ok(report)

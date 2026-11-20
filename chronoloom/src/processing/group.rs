@@ -207,7 +207,7 @@ pub(super) fn member_key(output: &Key, name: &str) -> Key {
 }
 
 /// Whether `key` is a member key under the output `output`.
-pub(super) fn is_under(key: &Key, output: &Key) -> bool {
+pub(crate) fn is_under(key: &Key, output: &Key) -> bool {
     key.as_str()
         .strip_prefix(output.as_str())
         .is_some_and(|rest| rest.starts_with('/'))

@@ -35,6 +35,7 @@ pub use emission::{Emission, Emitted};
 pub use errors::ProcessError;
 pub use events::Events;
 pub use formula::{Formula, OpenEnd};
+pub(crate) use group::is_under;
 #[cfg(feature = "serde")]
 pub(crate) use group::render as entity_name;
 pub use group::Group;

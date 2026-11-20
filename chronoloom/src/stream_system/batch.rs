@@ -1,15 +1,17 @@
 //! The batch mode of a stream system: a dataset held whole, whose derived
 //! streams are evaluated again whenever what they read changes.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use crate::sequence_system::{Key, RecordError, Sequence, SequenceSystem};
 use crate::sequences::Extent;
 use crate::values::Schema;
 
-use super::shared::evaluate;
+use crate::processing::Recipe;
 use crate::processor::Processor;
 
+use super::pipeline::{writes, Pipeline};
+use super::shared::evaluate;
 use super::{Batch, Report, StreamSystem, Update, UpdateError};
 
 impl Default for StreamSystem<Batch> {
@@ -24,8 +26,7 @@ impl StreamSystem<Batch> {
     pub fn new() -> Self {
         Self {
             members: SequenceSystem::new(),
-            processors: Vec::new(),
-            produced: BTreeMap::new(),
+            pipeline: Pipeline::default(),
             mode: Batch,
         }
     }
@@ -56,8 +57,8 @@ impl StreamSystem<Batch> {
     ///
     /// # Errors
     ///
-    /// [`UpdateError::Derived`] if `key` is a derived stream or the output of
-    /// a processor, and [`UpdateError::Process`] if a processor that reads it
+    /// [`UpdateError::Derived`] if `key` is a derived stream, the output of a
+    /// processor or a key under its per-entity output, and [`UpdateError::Process`] if a processor that reads it
     /// fails over the new stream (another shape or value type, say). Nothing
     /// changes in any case.
     pub fn insert_stream(
@@ -100,31 +101,31 @@ impl StreamSystem<Batch> {
     /// # Errors
     ///
     /// [`UpdateError::Taken`] if its output key is already a stream, a derived
-    /// stream or another processor's output, and [`UpdateError::Process`] if
+    /// stream or another processor's output, if it lies under the per-entity
+    /// output of another processor, or if it is a per-entity output over keys
+    /// the system already holds, and [`UpdateError::Process`] if
     /// it fails: it reads a key the system does not hold (its own output
     /// included), or a member of another shape or value type than its formula
     /// or its declarations say. Nothing changes in any case.
     pub fn add_processor(&mut self, processor: Processor) -> Result<Report, UpdateError> {
         let output = processor.output();
-        if self.members.contains(output.as_str()) || self.produced.contains_key(output) {
+        let under = matches!(processor.recipe(), Recipe::PerEntity { .. })
+            && self.members.keys().any(|key| writes(&processor, key));
+        if self.members.contains(output.as_str()) || under {
             return Err(UpdateError::Taken {
                 key: output.clone(),
             });
         }
 
         // Nothing reads the new output yet, so it is the only one to evaluate.
+        let mut pipeline = self.pipeline.clone();
+        pipeline.push(processor)?;
         let mut members = self.members.clone();
-        let mut produced = self.produced.clone();
-        let report = evaluate(
-            core::slice::from_ref(&processor),
-            &mut members,
-            &mut produced,
-            None,
-        )?;
+        let last = pipeline.processors().len() - 1;
+        let report = evaluate(&pipeline, &[last], &mut members)?;
 
         self.members = members;
-        self.produced = produced;
-        self.processors.push(processor);
+        self.pipeline = pipeline;
         Ok(report)
     }
 
@@ -137,31 +138,17 @@ impl StreamSystem<Batch> {
     /// and [`UpdateError::Read`] if another processor reads what it produces.
     /// Nothing changes in either case.
     pub fn remove_processor(&mut self, output: &str) -> Result<Processor, UpdateError> {
-        let index = self
-            .processors
-            .iter()
-            .position(|processor| processor.output().as_str() == output)
-            .ok_or_else(|| UpdateError::UnknownProcessor { key: output.into() })?;
-
-        let written = self.produced.get(output).cloned().unwrap_or_default();
-        for key in written.iter().chain([self.processors[index].output()]) {
-            let reader = self
-                .processors
-                .iter()
-                .find(|other| other.output().as_str() != output && other.inputs().contains(key));
-            if let Some(reader) = reader {
-                return Err(UpdateError::Read {
-                    key: key.clone(),
-                    by: reader.output().clone(),
-                });
-            }
-        }
-
+        let processor = self.pipeline.remove(output)?;
+        let written: Vec<Key> = self
+            .members
+            .keys()
+            .filter(|key| writes(&processor, key) && self.members.lineage(key.as_str()).is_some())
+            .cloned()
+            .collect();
         for key in &written {
             self.members.remove(key.as_str());
         }
-        self.produced.remove(output);
-        Ok(self.processors.remove(index))
+        Ok(processor)
     }
 
     /// Replace the attribute of the stream under `key`, keeping its data.
@@ -201,7 +188,7 @@ impl StreamSystem<Batch> {
 
     /// Refuse to write into `key` if it is derived or a processor's output.
     fn writable(&self, key: &Key) -> Result<(), UpdateError> {
-        if self.is_derived(key.as_str()) || self.produced.contains_key(key) {
+        if self.pipeline.producer(key).is_some() || self.is_derived(key.as_str()) {
             return Err(UpdateError::Derived { key: key.clone() });
         }
         Ok(())
@@ -215,12 +202,14 @@ impl StreamSystem<Batch> {
         edit: impl FnOnce(&mut SequenceSystem) -> Result<(), RecordError>,
     ) -> Result<Report, UpdateError> {
         let mut members = self.members.clone();
-        let mut produced = self.produced.clone();
         edit(&mut members)?;
-        let report = evaluate(&self.processors, &mut members, &mut produced, changed)?;
+        let indices = changed.map_or_else(
+            || (0..self.pipeline.processors().len()).collect(),
+            |changed| self.pipeline.affected(&changed),
+        );
+        let report = evaluate(&self.pipeline, &indices, &mut members)?;
 
         self.members = members;
-        self.produced = produced;
         Ok(report)
     }
 }

@@ -10,6 +10,7 @@ use crate::sequence_system::Key;
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Report {
     pub(super) changed: BTreeSet<Key>,
+    pub(super) evaluated: BTreeSet<Key>,
 }
 
 impl Report {
@@ -17,6 +18,13 @@ impl Report {
     #[must_use]
     pub const fn changed(&self) -> &BTreeSet<Key> {
         &self.changed
+    }
+
+    /// The outputs of the processors that were evaluated again, whether or
+    /// not their content changed.
+    #[must_use]
+    pub const fn evaluated(&self) -> &BTreeSet<Key> {
+        &self.evaluated
     }
 
     /// Whether no derived stream changed.

@@ -2,6 +2,8 @@
 
 ## Added
 
+- `Report::evaluated`, the outputs of the processors a change evaluated again,
+  whether or not their content changed.
 - `Extent`, the instants a sequence was observed over, as normalized spans.
   Every `TimeIntervalSequence` and `TimePointSequence` carries one, defaulting
   to everything, so existing behaviour is unchanged. `observed()`,
@@ -164,6 +166,14 @@
   streams that changed. `insert_stream`, `remove_stream`, `add_processor` and
   `remove_processor` refuse what would break that (`UpdateError`). The mode is
   a type parameter; batch mode is the first.
+
+## Fixed
+
+- A processor whose output is under another processor's per-entity output, or a
+  per-entity processor over a stream or output already under its key, is
+  refused with `UpdateError::Taken`, and so is inserting a stream under a
+  per-entity output. Before, they were accepted, and the per-entity processor
+  could overwrite or delete the other member.
 
 ## Removed
 

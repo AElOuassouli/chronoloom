@@ -1,11 +1,11 @@
 //! The main abstraction of the crate: a system of streams and the processors
 //! that derive new streams from them.
 
-use std::collections::{BTreeMap, BTreeSet};
-
+#[cfg(doc)]
 use crate::processor::Processor;
-use crate::sequence_system::{Key, SequenceSystem};
+use crate::sequence_system::SequenceSystem;
 
+use super::pipeline::Pipeline;
 use super::{Batch, Mode};
 
 /// The streams of a subject and the processors that derive new streams from
@@ -104,9 +104,7 @@ pub struct StreamSystem<M: Mode = Batch> {
     /// Streams and derived streams together, so that a processor reads both
     /// the same way.
     pub(super) members: SequenceSystem,
-    /// In an order where every processor comes after what it reads.
-    pub(super) processors: Vec<Processor>,
-    /// For each processor, by its output key, the members it wrote.
-    pub(super) produced: BTreeMap<Key, BTreeSet<Key>>,
+    /// The processors, each after what it reads.
+    pub(super) pipeline: Pipeline,
     pub(super) mode: M,
 }

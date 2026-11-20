@@ -98,6 +98,101 @@ fn an_update_reaches_every_processor_that_reads_it_and_no_other() {
 }
 
 #[test]
+fn an_update_reaches_a_processor_through_two_levels_of_outputs() {
+    let mut room = room();
+    room.add_processor(Processor::new(
+        "alarm",
+        Formula::state("occupied").and(Formula::state("door")),
+    ))
+    .unwrap();
+    room.insert_stream("light", TimePointSequence::<f64>::new("light"))
+        .unwrap();
+    room.add_processor(Processor::new(
+        "bright",
+        Formula::while_matching(Pattern::new("light", Condition::Greater(100.0))),
+    ))
+    .unwrap();
+
+    // Motion reaches `alarm` only through `presence` and `occupied`.
+    let report = room.update(motion(&[(10, "start"), (25, "end")])).unwrap();
+    let evaluated: Vec<&str> = report.evaluated().iter().map(|key| key.as_str()).collect();
+    assert_eq!(evaluated, ["alarm", "occupied", "presence"]);
+    assert_eq!(bounds(room.intervals("alarm").unwrap()), [(40, 50)]);
+}
+
+#[test]
+fn a_processor_that_reads_nothing_that_changed_is_not_evaluated() {
+    let mut room = room();
+    room.insert_stream("light", TimePointSequence::<f64>::new("light"))
+        .unwrap();
+    room.add_processor(Processor::new(
+        "bright",
+        Formula::while_matching(Pattern::new("light", Condition::Greater(100.0))),
+    ))
+    .unwrap();
+
+    let report = room.update(motion(&[(10, "start"), (25, "end")])).unwrap();
+    assert!(!report.evaluated().contains("bright"));
+    assert!(report.evaluated().contains("presence"));
+}
+
+#[test]
+fn a_per_entity_output_and_another_output_never_nest() {
+    let per_entity = || {
+        Processor::new(
+            "presence",
+            Recipe::per_entity(Group::new("gate", "agent"), Formula::state("gate")),
+        )
+    };
+    let gate = || {
+        let mut gate = StreamSystem::new();
+        gate.insert_stream("gate", TimePointSequence::<Value>::new("gate"))
+            .unwrap();
+        gate.insert_stream("door", TimeIntervalSequence::new("door"))
+            .unwrap();
+        gate
+    };
+
+    // An output under the per-entity output of another processor.
+    let mut first = gate();
+    first.add_processor(per_entity()).unwrap();
+    assert_eq!(
+        first.add_processor(Processor::new("presence/ada", Formula::state("door"))),
+        Err(UpdateError::Taken {
+            key: "presence/ada".into()
+        })
+    );
+
+    // A per-entity output over an output, or a stream, already under it.
+    let mut second = gate();
+    second
+        .add_processor(Processor::new("presence/ada", Formula::state("door")))
+        .unwrap();
+    assert_eq!(
+        second.add_processor(per_entity()),
+        Err(UpdateError::Taken {
+            key: "presence".into()
+        })
+    );
+    assert!(second.is_derived("presence/ada"));
+
+    // A stream put under a per-entity output afterwards.
+    assert!(matches!(
+        first.insert_stream("presence/carol", TimeIntervalSequence::new("carol")),
+        Err(UpdateError::Derived { .. })
+    ));
+
+    let mut third = gate();
+    third
+        .insert_stream("presence/bob", TimeIntervalSequence::new("presence/bob"))
+        .unwrap();
+    assert!(matches!(
+        third.add_processor(per_entity()),
+        Err(UpdateError::Taken { .. })
+    ));
+}
+
+#[test]
 fn streams_and_derived_streams_are_told_apart() {
     let room = room();
     let streams: Vec<&str> = room.streams().map(|key| key.as_str()).collect();

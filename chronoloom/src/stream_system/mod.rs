@@ -5,6 +5,7 @@
 mod batch;
 mod errors;
 mod mode;
+mod pipeline;
 mod report;
 mod shared;
 mod system;

@@ -1,6 +1,7 @@
 //! One member of a system: either shape of sequence.
 
 use crate::sequences::attribute::Attribute;
+use crate::sequences::extent::Extent;
 use crate::sequences::{TimeIntervalSequence, TimePointSequence};
 
 use super::erased::{AnyPointSequence, PointValue};
@@ -35,8 +36,7 @@ pub enum Sequence {
 }
 
 impl Sequence {
-    /// The attribute the sequence corresponds to, which a system files it
-    /// under.
+    /// The attribute the sequence corresponds to.
     ///
     /// For a timeline this is the whole description, its [`transformation`]
     /// included: `A` shifted by `[1, 2]` corresponds to `A[1, 2]`, not to `A`.
@@ -50,8 +50,16 @@ impl Sequence {
         }
     }
 
-    /// The sequence's [`attribute`] written out — the text a system files it
-    /// under.
+    /// The instants the sequence was observed over.
+    #[must_use]
+    pub fn observed(&self) -> &Extent {
+        match self {
+            Self::TimePoint(points) => points.observed(),
+            Self::TimeInterval(timeline) => timeline.observed(),
+        }
+    }
+
+    /// The sequence's [`attribute`] written out.
     ///
     /// [`attribute`]: Sequence::attribute
     #[must_use]

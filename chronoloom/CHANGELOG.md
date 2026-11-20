@@ -1,3 +1,198 @@
+# Unreleased
+
+## Added
+
+- `Report::evaluated`, the outputs of the processors a change evaluated again,
+  whether or not their content changed.
+- `Extent`, the instants a sequence was observed over, as normalized spans.
+  Every `TimeIntervalSequence` and `TimePointSequence` carries one, defaulting
+  to everything, so existing behaviour is unchanged. `observed()`,
+  `is_observed(t)`, `with_observed(extent)` and `observe(&extent)` read, set and
+  narrow it, clipping the data to it. Inserting an event outside the extent
+  grows it. Equality includes the extent; `covers_same` does not.
+- The set operations and `transform` of `TimeIntervalSequence` follow
+  three-valued logic: a result is known wherever it can be decided from what is
+  known, and its extent says where.
+- `TimeIntervalSequence::complement`, the observed instants that are not
+  active, and `Attribute::Complement` for its label `¬A`.
+- `slice(range)` on `TimePointSequence`, `TimeIntervalSequence`, `Sequence` and
+  `SequenceSystem`: the data and extent inside the range, with labels,
+  metadata and the output a derived member came from kept. A reversed range gives an empty, unobserved result.
+- `Key`, the identity of a member of a `SequenceSystem`, kept apart from its
+  attribute (its description). Two members may share an attribute under
+  different keys, and `SequenceSystem::relabel` replaces a member's attribute
+  in place, keeping its key and data. `SequenceSystem::observe` narrows every
+  member's extent at once.
+- Opaque `Metadata` (string maps) on a `SequenceSystem` and on each member:
+  `metadata`, `metadata_mut`, `member_metadata` and `member_metadata_mut`.
+  Inserting starts a member with empty metadata, replacing or removing drops it,
+  and equality includes it.
+- Live members of a `SequenceSystem`. `insert_live` files a member with a
+  frontier, before which its data is final, and recording an event before it is
+  `RecordError::Late`, with nothing recorded. `advance` moves the frontier and
+  marks what it passed over as observed, `advance_unobserved` moves it without
+  observing (except the instants of data already recorded there), and
+  `advance_all` advances every live member. `frontier_of` and `frontier` read
+  it, and equality ignores it. `RecordError::NotLive` reports advancing a batch
+  member. `SequenceSystem::drain_finalised` hands over the final part of every
+  live member by its own frontier, the events before it and the spans ending
+  before it, whole, as a system of batch members with the same keys and
+  metadata; the system keeps the rest, so a live member holds only its open
+  spans and its non-final events.
+- The `processing` module, re-exported at the crate root. A `Formula` is data
+  that describes a state (`State`, `Between`, `While`, `Occurs`, `Not`, `And`,
+  `Or`, `Shift`), read from a `SequenceSystem` through `Pattern`s, a key and a
+  `Condition` on the values of that member, and evaluated three-valued with an
+  extent. A `Shift` never fails, keeping bounds at the ends of time and
+  saturating the others. `Between` takes an `OpenEnd` (`Extent` or `Head`) for a
+  span that no end event closes. `Formula::hold(pattern, ticks)` is `Occurs`
+  held for `ticks` ticks, as a `Shift` rather than a variant, and panics unless
+  `ticks` is at least one. `Formula::conjunctive_normal_form` rewrites a formula
+  as an `And` of `Or`s of literals denoting the same timeline. `Events`
+  (`Edges`, `Matching`) are the formulas whose result is points, with `Edge`
+  (`Start`, `End`).
+- `Processor`, one recipe: `Processor::new(output, recipe)` files a `Recipe`
+  under the key of the one output it produces, evaluated by a `StreamSystem`.
+  A `Recipe` is `Timeline`, `Points` or a per-entity kind, read with
+  `Processor::recipe`, and written to documents under `formula` with the
+  variants `state` and `events`; the JSON Schema definition for it is named
+  `Recipe`.
+  A formula may name the key of another processor's output, and a formula
+  reading its own output is `ProcessError::Cycle { keys }`, reported by
+  `Processor::check`.
+- Step values, with no new sequence shape: a step is a point sequence of its
+  changes read with sample and hold. `Formula::while_within(pattern, timeout)`
+  is a `While` whose sample stops holding `timeout` ticks after it was taken,
+  unknown from then until the next sample (it panics unless `timeout` is
+  positive). `Events::changes(key)` is the points of a member of any value type
+  with each repeat dropped, keeping the first sample of each run of the extent.
+- One timeline per entity, as processor outputs rather than a new sequence type.
+  `Group::new(key, path)` names the member of `Value` records and the field that
+  holds the entity. `Recipe::per_entity` files the formula of each entity under
+  `<output key>/<entity>`, with the patterns over the member of the group
+  restricted to the entity's records and the others shared;
+  `Recipe::any_entity` is the union of those timelines; and
+  `Recipe::count_entities` is a `TimePointSequence<i64>` of the number of
+  entities active, as its changes. An entity exists, and is observed, from its
+  first record. `StreamSystem::entity` gives the entity of a member, and
+  `ProcessError::DuplicateMember`,
+  `SeveralMembers` and `GroupedRead` report two members under one key, an
+  `Recipe::evaluate` of a per-entity output, and a live processor asked to read
+  a member of one.
+- `LiveProcessor`, from `LiveProcessor::new(&processors, from)`: it runs the
+  processors online, driven by its host, with no clock, input or output of its
+  own. `on_point` and `on_span` record input events (a late one is
+  `ProcessError::Late`), `advance(key, watermark)` returns the `Emission`s that became final, and
+  `finish(horizon)` ends the stream (`ProcessError::Finished` after that). A
+  state output emits `Emitted::Edge`s once their instant is below the frontier
+  of the output, which follows the lag of each node (a set operation takes the
+  smaller frontier, `Shift` adds `min(alpha, beta)`, a chained output has that
+  of the output it reads). `Events::Matching`, `Events::Changes` and
+  `Events::Project` emit `Emitted::Point`s with the value erased as `AnyValue`,
+  and a per-entity output emits under its member keys, counts as points of
+  `i64`. What is emitted equals the batch evaluation over the whole stream, below
+  each frontier and in the end, whatever order and watermarks the inputs arrive
+  with. `OpenEnd::Head` is the frontier of the inputs online, and unknown
+  regions emit nothing. Each advance evaluates the outputs again over a
+  retained window, cut to what the part not yet emitted needs; `frontier(output)`
+  and `retained()` read the output frontier and the size of that window. The
+  state of a per-entity output grows with the entities seen.
+- Record values. `Value` (`Null`, `Bool`, `Integer`, `Float`, `Text`, `Record`)
+  is a dynamic payload for a `TimePointSequence<Value>`, beside the sequences of
+  one fixed value type: values of one kind compare naturally, an integer and a
+  float compare as numbers, any other pair is unordered (so a `Condition<Value>`
+  works unchanged), `get` reaches a field by a dotted path, and typed accessors,
+  `From` conversions and a JSON-like `Display` build and read it. A `Schema`
+  (`Any`, `Null`, `Bool`, `Integer`, `Float`, `Text`, `Record`, `Optional`; a
+  record rejects unknown fields) is filed on the system with
+  `SequenceSystem::set_schema` and read with `schema`; `check` says where a
+  value differs through a `SchemaError`. Recording a value without the shape is
+  `RecordError::SchemaMismatch`, in an update too, which stays all or nothing.
+- `Events::Project { key, path, into: Kind }` reads a field of each record into
+  a point sequence of the type the `Kind` names (`Bool`, `Integer`, `Float`,
+  `Text`, `Value`), skipping records without the field.
+  `ProcessError::ProjectionMismatch` and `ProcessError::SchemaMismatch` report a
+  field of another kind and a derived member that no longer has its schema.
+- `Pattern::field(key, path, condition)`, a condition on one field of the record
+  `Value`s of a member, read by a dotted path. It works in `Between`, `While`,
+  `Occurs`, `hold` and `Events::Matching`, batch and online. A record without
+  the field does not match, a `Null` field is a value like another, and a
+  member that does not hold `Value` points is `ProcessError::ValueTypeMismatch`.
+- Declared inputs and full validation. `Input` says what a `Processor` expects
+  of the member under a key (a timeline, points of a value type, edges, or
+  records of a `Schema`), declared with `Processor::with_input` and read with
+  `inputs()`; a processor without declarations behaves as before.
+  `Processor::validate` lists every problem without a system, in a stable order,
+  with `ProcessError::{InOutput, InputIsOutput, MissingField, FieldMismatch}`,
+  and a `StreamSystem` and a `LiveProcessor` hold the streams to the
+  declarations.
+- The optional `serde` feature (the only dependency, off by default, which
+  leaves the default build with none): `Serialize` and `Deserialize` for
+  sequences, extents, values, schemas, formulas, processors, systems and
+  `LiveProcessor`, with the `chronoloom::serialisation` module documenting the
+  format. A `TimePointSequence`, a `TimeIntervalSequence`, a `SequenceSystem`, a
+  `Processor` and a `LiveProcessor` are documents that start with `"format": 1`
+  (`FORMAT_VERSION`), and a reader refuses any other number. Loading validates:
+  spans and extents are normalized, a span that ends before it starts is
+  refused, events are sorted, data outside the extent is refused (a point at
+  `i64::MAX` and the data of a live member excepted), a schema must fit its
+  member's data, lineage (the output a derived member came from), entity and
+  frontier must agree, and a processor must pass `Processor::check`. A `Value` is plain JSON and keeps `5` and `5.0`
+  apart. The point members of a system and the patterns of a processor are
+  tagged with one of `f64`, `i64`, `bool`, `text`, `value` and `edge`; any other
+  type is an error naming the key. The processor document has an `inputs` array,
+  left out when empty. `make lint` and `make test` also run with
+  `--all-features`, and `make lint` asserts that the default build has no
+  dependencies.
+- Checkpoints of a live processor, behind the `serde` feature: the document of a
+  `LiveProcessor` holds its processor, the retained window of its inputs (with
+  the placeholder inputs that no event has typed yet), where each output has
+  emitted up to and is trusted from, the entities seen and the points of each
+  count, and recomputes the rest on load. A restored processor emits, and
+  reports `frontier` and `retained`, exactly as one that never stopped. A
+  document is validated on load (inputs against the processor, views against
+  their entities, cursors against frontiers); an input of a value type outside
+  the closed set cannot be saved, and the error names its key.
+  `LiveProcessor::processors` reads the processors a live one was built from.
+- The optional `json-schema` feature (implies `serde`; adds `schemars` and
+  `serde_json`): `serialisation::processor_json_schema()` returns the JSON
+  Schema of the processor document.
+- `StreamSystem`, in module `stream_system`: the streams of a subject and a
+  list of `processor::Processor`s, each one recipe (the inputs it reads, a
+  formula over them, one output), whose derived streams are read-only and
+  follow every change. `update(Update)` records into the streams, all or
+  nothing, and evaluates again only the processors that read what changed,
+  directly or through another output, returning a `Report` of the derived
+  streams that changed. `insert_stream`, `remove_stream`, `add_processor` and
+  `remove_processor` refuse what would break that (`UpdateError`). The mode is
+  a type parameter; batch mode is the first.
+
+## Fixed
+
+- A processor whose output is under another processor's per-entity output, or a
+  per-entity processor over a stream or output already under its key, is
+  refused with `UpdateError::Taken`, and so is inserting a stream under a
+  per-entity output. Before, they were accepted, and the per-entity processor
+  could overwrite or delete the other member.
+
+## Removed
+
+- `sequence_system::Batch`, the recording buffer: it is now `stream_system::Update`
+  (also at the crate root), and `SequenceSystem::record_batch` is
+  `record_update`. `Batch` at the root now names the batch mode of a
+  `StreamSystem`.
+- Filing a member under its own label: `SequenceSystem::insert` now takes the key
+  as its first argument, `insert(key, sequence)`. `FromIterator` and `Extend`
+  take `(key, sequence)` pairs, and `Update::points` and `Update::spans` take a
+  key.
+- `SequenceSystem::attributes()`, replaced by `keys()`.
+- The `btree_map` iterators of `SequenceSystem`: `iter()` and `into_iter()` now
+  return the named `sequence_system::Iter` and `IntoIter`, and yield `Key`
+  instead of `String`.
+- The `attribute` field of every `RecordError` variant, replaced by `key`.
+- Support for Rust older than 1.85: the crate is now on the 2024 edition, and
+  its minimum supported Rust version is 1.85.
+
 # 0.3.1 - 2026-10-22
 
 ## Added

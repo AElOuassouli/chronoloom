@@ -3,9 +3,10 @@
 fmt: ## Format Rust sources
 	cargo fmt --all
 
-lint: ## Lint, and assert the crate stays free of pyo3
+lint: ## Lint with and without optional features, and assert the dependency tree
 	cargo fmt --all -- --check
 	cargo clippy --all-targets -- -D warnings
+	cargo clippy --all-targets --all-features -- -D warnings
 	@# The entire point of this crate is that Rust consumers get it without
 	@# dragging in pyo3. That is easy to regress by adding one convenience
 	@# #[pyfunction], so assert it rather than trusting review.
@@ -14,9 +15,20 @@ lint: ## Lint, and assert the crate stays free of pyo3
 		echo "hint: bindings belong in ../chronoloompy/rust, not here"; \
 		exit 1; \
 	fi
+	@# The default build has no dependencies at all: what a plain user of the
+	@# algebra does not need, such as serde, sits behind a feature.
+	@if [ "$$(cargo tree --quiet --edges normal | grep -c .)" != "1" ]; then \
+		echo "error: the default build of chronoloom has dependencies"; \
+		echo "hint: put them behind an optional feature"; \
+		cargo tree --edges normal; \
+		exit 1; \
+	fi
 
-test: ## Run unit and doc tests
-	cargo test
+test: ## Run unit and integration tests with default features, then everything with all features
+	@# Doc tests run once, with all features: each one is its own executable,
+	@# and running them twice doubles the slowest part of the suite.
+	cargo test --lib --tests
+	cargo test --all-features
 
 check-publish: ## Validate crates.io packaging without burning a version
 	cargo publish --dry-run

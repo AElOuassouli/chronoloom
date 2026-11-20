@@ -9,6 +9,7 @@
 
 use crate::primitives::TimeIntervalEvent;
 use crate::sequences::attribute::SetOperation;
+use crate::sequences::extent::Extent;
 
 use super::normalization::absorb;
 use super::TimeIntervalSequence;
@@ -37,42 +38,15 @@ impl TimeIntervalSequence {
     /// ```
     #[must_use]
     pub fn union(&self, other: &Self) -> Self {
-        // At most every span from both sides survives, so this capacity is an
-        // exact upper bound.
-        let mut spans = Vec::with_capacity(self.spans.len() + other.spans.len());
-        let (mut i, mut j) = (0, 0);
-
-        loop {
-            // Take whichever side starts earlier. A tie can go either way,
-            // since the two will merge regardless.
-            let next = match (self.spans.get(i), other.spans.get(j)) {
-                (Some(mine), Some(theirs)) => {
-                    if mine.start() <= theirs.start() {
-                        i += 1;
-                        *mine
-                    } else {
-                        j += 1;
-                        *theirs
-                    }
-                }
-                (Some(mine), None) => {
-                    i += 1;
-                    *mine
-                }
-                (None, Some(theirs)) => {
-                    j += 1;
-                    *theirs
-                }
-                (None, None) => break,
-            };
-
-            absorb(&mut spans, next);
-        }
+        let spans = union_spans(&self.spans, &other.spans);
+        // Known where both are known, and wherever either is known active.
+        let observed = union_spans(&self.observed.intersection_spans(&other.observed), &spans);
 
         Self::from_parts(
             self.combined_attribute(SetOperation::Union, other),
             (0, 0),
             spans,
+            Extent::from_normalized(observed),
         )
     }
 
@@ -105,28 +79,21 @@ impl TimeIntervalSequence {
     /// ```
     #[must_use]
     pub fn intersection(&self, other: &Self) -> Self {
-        let mut spans = Vec::new();
-        let (mut i, mut j) = (0, 0);
-
-        while let (Some(mine), Some(theirs)) = (self.spans.get(i), other.spans.get(j)) {
-            // What the pair shares is the primitive's business, not this loop's.
-            if let Some(overlap) = mine.intersection(theirs) {
-                spans.push(overlap);
-            }
-
-            // Whichever ends first cannot reach anything still to come, so it is
-            // safe to drop. That is the entire trick.
-            if mine.end() < theirs.end() {
-                i += 1;
-            } else {
-                j += 1;
-            }
-        }
+        let spans = intersection_spans(&self.spans, &other.spans);
+        // Known where both are known, and wherever either is known inactive.
+        let observed = union_spans(
+            &union_spans(
+                &self.observed.intersection_spans(&other.observed),
+                &difference_spans(self.observed.as_slice(), &self.spans),
+            ),
+            &difference_spans(other.observed.as_slice(), &other.spans),
+        );
 
         Self::from_parts(
             self.combined_attribute(SetOperation::Intersection, other),
             (0, 0),
             spans,
+            Extent::from_normalized(observed),
         )
     }
 
@@ -154,57 +121,20 @@ impl TimeIntervalSequence {
     pub fn difference(&self, other: &Self) -> Self {
         let attribute = self.combined_attribute(SetOperation::Difference, other);
 
-        // `cursor` is the first instant of the current span not yet accounted
-        // for. Starting it needs a first span, so an empty timeline is done
-        // before the loop begins.
-        let Some(first) = self.spans.first() else {
-            return Self::from_parts(attribute, (0, 0), Vec::new());
-        };
+        // Known where both are known, where this is known inactive, and where
+        // `other` is known active.
+        let observed = union_spans(
+            &union_spans(
+                &self.observed.intersection_spans(&other.observed),
+                &difference_spans(self.observed.as_slice(), &self.spans),
+            ),
+            &other.spans,
+        );
+        // Only what is known stays: an instant active here is unknown, not
+        // active, where `other` was not observed.
+        let spans = intersection_spans(&difference_spans(&self.spans, &other.spans), &observed);
 
-        let mut spans = Vec::new();
-        let (mut i, mut j) = (0, 0);
-        let mut cursor = first.start();
-
-        while let Some(mine) = self.spans.get(i) {
-            match other.spans.get(j) {
-                // Nothing of `other` reaches into what is left of this span.
-                Some(theirs) if theirs.start() < mine.end() => {
-                    if theirs.end() <= cursor {
-                        // Already behind the cursor, so it covers nothing new.
-                        j += 1;
-                        continue;
-                    }
-
-                    if cursor < theirs.start() {
-                        spans.push(TimeIntervalEvent::raw(cursor, theirs.start()));
-                    }
-                    // The guard above established `theirs.end() > cursor`, so
-                    // this only ever moves the cursor forward.
-                    cursor = theirs.end();
-
-                    if cursor >= mine.end() {
-                        // This span is fully accounted for, but `theirs` may
-                        // still reach into the next one.
-                        i += 1;
-                    } else {
-                        j += 1;
-                    }
-                }
-                _ => {
-                    if cursor < mine.end() {
-                        spans.push(TimeIntervalEvent::raw(cursor, mine.end()));
-                    }
-                    i += 1;
-                }
-            }
-
-            // Every new span starts uncovered.
-            if let Some(next) = self.spans.get(i) {
-                cursor = cursor.max(next.start());
-            }
-        }
-
-        Self::from_parts(attribute, (0, 0), spans)
+        Self::from_parts(attribute, (0, 0), spans, Extent::from_normalized(observed))
     }
 
     /// The instants covered by exactly **one** of the two timelines.
@@ -236,12 +166,143 @@ impl TimeIntervalSequence {
     /// ```
     #[must_use]
     pub fn symmetric_difference(&self, other: &Self) -> Self {
-        let composed = self.difference(other).union(&other.difference(self));
+        // Known only where both are.
+        let observed = self.observed.intersection_spans(&other.observed);
+        let only_one = union_spans(
+            &difference_spans(&self.spans, &other.spans),
+            &difference_spans(&other.spans, &self.spans),
+        );
+        let spans = intersection_spans(&only_one, &observed);
 
         Self::from_parts(
             self.combined_attribute(SetOperation::SymmetricDifference, other),
             (0, 0),
-            composed.spans,
+            spans,
+            Extent::from_normalized(observed),
         )
     }
+}
+
+/// The union of two normalized span lists, normalized, in one pass.
+pub(crate) fn union_spans(
+    first: &[TimeIntervalEvent<()>],
+    second: &[TimeIntervalEvent<()>],
+) -> Vec<TimeIntervalEvent<()>> {
+    // At most every span from both sides survives, so this capacity is an
+    // exact upper bound.
+    let mut spans = Vec::with_capacity(first.len() + second.len());
+    let (mut i, mut j) = (0, 0);
+
+    loop {
+        // Take whichever side starts earlier. A tie can go either way,
+        // since the two will merge regardless.
+        let next = match (first.get(i), second.get(j)) {
+            (Some(mine), Some(theirs)) => {
+                if mine.start() <= theirs.start() {
+                    i += 1;
+                    *mine
+                } else {
+                    j += 1;
+                    *theirs
+                }
+            }
+            (Some(mine), None) => {
+                i += 1;
+                *mine
+            }
+            (None, Some(theirs)) => {
+                j += 1;
+                *theirs
+            }
+            (None, None) => break,
+        };
+
+        absorb(&mut spans, next);
+    }
+
+    spans
+}
+
+/// The intersection of two normalized span lists, normalized, in one pass.
+pub(crate) fn intersection_spans(
+    first: &[TimeIntervalEvent<()>],
+    second: &[TimeIntervalEvent<()>],
+) -> Vec<TimeIntervalEvent<()>> {
+    let mut spans = Vec::new();
+    let (mut i, mut j) = (0, 0);
+
+    while let (Some(mine), Some(theirs)) = (first.get(i), second.get(j)) {
+        // What the pair shares is the primitive's business, not this loop's.
+        if let Some(overlap) = mine.intersection(theirs) {
+            spans.push(overlap);
+        }
+
+        // Whichever ends first cannot reach anything still to come, so it is
+        // safe to drop. That is the entire trick.
+        if mine.end() < theirs.end() {
+            i += 1;
+        } else {
+            j += 1;
+        }
+    }
+
+    spans
+}
+
+/// The part of `first` not covered by `second`, normalized, in one pass.
+pub(crate) fn difference_spans(
+    first: &[TimeIntervalEvent<()>],
+    second: &[TimeIntervalEvent<()>],
+) -> Vec<TimeIntervalEvent<()>> {
+    // `cursor` is the first instant of the current span not yet accounted
+    // for. Starting it needs a first span, so an empty timeline is done
+    // before the loop begins.
+    let Some(head) = first.first() else {
+        return Vec::new();
+    };
+
+    let mut spans = Vec::new();
+    let (mut i, mut j) = (0, 0);
+    let mut cursor = head.start();
+
+    while let Some(mine) = first.get(i) {
+        match second.get(j) {
+            // Nothing of `second` reaches into what is left of this span.
+            Some(theirs) if theirs.start() < mine.end() => {
+                if theirs.end() <= cursor {
+                    // Already behind the cursor, so it covers nothing new.
+                    j += 1;
+                    continue;
+                }
+
+                if cursor < theirs.start() {
+                    spans.push(TimeIntervalEvent::raw(cursor, theirs.start()));
+                }
+                // The guard above established `theirs.end() > cursor`, so
+                // this only ever moves the cursor forward.
+                cursor = theirs.end();
+
+                if cursor >= mine.end() {
+                    // This span is fully accounted for, but `theirs` may
+                    // still reach into the next one.
+                    i += 1;
+                } else {
+                    j += 1;
+                }
+            }
+            _ => {
+                if cursor < mine.end() {
+                    spans.push(TimeIntervalEvent::raw(cursor, mine.end()));
+                }
+                i += 1;
+            }
+        }
+
+        // Every new span starts uncovered.
+        if let Some(next) = first.get(i) {
+            cursor = cursor.max(next.start());
+        }
+    }
+
+    spans
 }

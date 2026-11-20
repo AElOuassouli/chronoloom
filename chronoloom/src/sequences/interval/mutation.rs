@@ -44,6 +44,9 @@ impl TimeIntervalSequence {
     ///
     /// [`active_duration`]: TimeIntervalSequence::active_duration
     pub fn insert(&mut self, span: TimeIntervalEvent<()>) {
+        // An event is evidence that its instants were observed.
+        self.observed.grow(&[span]);
+
         // Both comparisons are non-strict, which is what makes merely touching
         // spans merge rather than sit adjacent. The invariant makes everything
         // between these two indices a contiguous run.

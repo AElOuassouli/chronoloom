@@ -64,9 +64,11 @@
 //! [`primitives`]: crate::primitives
 
 pub mod attribute;
+pub mod extent;
 pub mod interval;
 pub mod time_point;
 
 pub use attribute::{Attribute, SetOperation};
+pub use extent::Extent;
 pub use interval::TimeIntervalSequence;
 pub use time_point::TimePointSequence;

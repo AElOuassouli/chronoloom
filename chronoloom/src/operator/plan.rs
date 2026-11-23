@@ -13,6 +13,7 @@ use super::entities::{AnyEntity, CountEntities, Member, PerEntity};
 use super::matching::Matching;
 use super::not::Not;
 use super::occurs::Occurs;
+use super::online::OnlineNode;
 use super::or::Or;
 use super::project::Project;
 use super::r#while::While;
@@ -119,6 +120,12 @@ impl TimelinePlan {
         }
     }
 
+    /// The running state of the plan, or `None` while a node of it has no online form.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn online(&self) -> Option<OnlineNode> {
+        self.root.online()
+    }
+
     /// The labelled timeline of the plan over the whole `inputs`.
     pub(crate) fn batch(
         &self,
@@ -188,6 +195,18 @@ impl Node {
                 alpha,
                 beta,
             } => Self::Shift(Shift::new(Self::compile(formula), *alpha, *beta)),
+        }
+    }
+
+    /// The running state of the node, or `None` for a kind with no online form yet.
+    pub(super) fn online(&self) -> Option<OnlineNode> {
+        match self {
+            Self::State(operator) => Some(operator.online()),
+            Self::Occurs(operator) => Some(operator.online()),
+            Self::Not(operator) => operator.online(),
+            Self::And(operator) => operator.online(),
+            Self::Or(operator) => operator.online(),
+            Self::Between(_) | Self::While(_) | Self::Shift(_) => None,
         }
     }
 

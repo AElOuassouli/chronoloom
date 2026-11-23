@@ -40,6 +40,9 @@ pub(crate) trait ErasedPoints: fmt::Debug + Send + Sync {
     fn observed_mut(&mut self) -> &mut Extent;
     fn slice_bounds(&self, range: (Bound<Timestamp>, Bound<Timestamp>)) -> Box<dyn ErasedPoints>;
     fn split_before(&mut self, frontier: Timestamp) -> Box<dyn ErasedPoints>;
+    /// Append `next`, which comes after, and grow the extent by its own; false
+    /// and untouched when `next` carries another value type.
+    fn append(&mut self, next: &dyn ErasedPoints) -> bool;
     fn len(&self) -> usize;
     fn value_type_name(&self) -> &'static str;
     /// The events at or after `from`, their values erased.
@@ -112,6 +115,18 @@ impl<T: PointValue> ErasedPoints for TimePointSequence<T> {
 
     fn split_before(&mut self, frontier: Timestamp) -> Box<dyn ErasedPoints> {
         Box::new(Self::split_before(self, frontier))
+    }
+
+    fn append(&mut self, next: &dyn ErasedPoints) -> bool {
+        let Some(next) = next.as_any().downcast_ref::<Self>() else {
+            return false;
+        };
+
+        for event in next.iter() {
+            self.insert(event.clone());
+        }
+        self.observed_mut().grow(next.observed().as_slice());
+        true
     }
 
     fn len(&self) -> usize {
@@ -417,6 +432,13 @@ impl AnyPointSequence {
     /// The distinct instants holding an event in `[start, end)`, in order.
     pub(crate) fn instants_in(&self, start: Timestamp, end: Timestamp) -> Vec<Timestamp> {
         self.0.instants_in(start, end)
+    }
+
+    /// Append `next`, the points that follow, and grow the extent by its own;
+    /// false and unchanged when the two carry different value types.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn append(&mut self, next: &Self) -> bool {
+        self.0.append(&*next.0)
     }
 
     /// Replace the attribute, for the system's own relabelling.

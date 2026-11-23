@@ -1,8 +1,12 @@
 //! `State`: a timeline member, as it is.
 
+use crate::primitives::Timestamp;
 use crate::processing::ProcessError;
 use crate::sequence_system::{Key, Sequence, SequenceSystem};
 use crate::sequences::TimeIntervalSequence;
+
+use super::chunk::{Chunk, Inputs};
+use super::online::OnlineNode;
 
 #[derive(Debug, Clone)]
 pub(super) struct State {
@@ -12,6 +16,13 @@ pub(super) struct State {
 impl State {
     pub(super) fn new(key: Key) -> Self {
         Self { key }
+    }
+
+    pub(super) fn online(&self) -> OnlineNode {
+        OnlineNode::State(OnlineState {
+            key: self.key.clone(),
+            frontier: Timestamp::MIN,
+        })
     }
 
     pub(super) fn batch(
@@ -27,5 +38,37 @@ impl State {
                 key: self.key.clone(),
             }),
         }
+    }
+}
+
+/// The running state of [`State`]: the member's chunks, as they come.
+#[derive(Debug, Clone)]
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) struct OnlineState {
+    key: Key,
+    frontier: Timestamp,
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+impl OnlineState {
+    pub(super) fn step(&mut self, inputs: &Inputs, to: Timestamp) -> Result<Chunk, ProcessError> {
+        let chunk = inputs
+            .get(&self.key)
+            .ok_or_else(|| ProcessError::UnknownKey {
+                key: self.key.clone(),
+            })?;
+        if chunk.timeline().is_none() {
+            return Err(ProcessError::NotATimeline {
+                key: self.key.clone(),
+            });
+        }
+
+        let output = chunk.slice(self.frontier, to);
+        self.frontier = output.to();
+        Ok(output)
+    }
+
+    pub(super) const fn frontier(&self) -> Timestamp {
+        self.frontier
     }
 }

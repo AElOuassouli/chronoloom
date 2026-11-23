@@ -1,9 +1,13 @@
 //! `Or`: active where at least one input is.
 
+use crate::primitives::Timestamp;
 use crate::processing::ProcessError;
 use crate::sequence_system::SequenceSystem;
 use crate::sequences::TimeIntervalSequence;
 
+use super::chunk::{Chunk, Inputs};
+use super::combination::Combination;
+use super::online::OnlineNode;
 use super::plan::Node;
 
 #[derive(Debug, Clone)]
@@ -14,6 +18,21 @@ pub(super) struct Or {
 impl Or {
     pub(super) fn new(parts: Vec<Node>) -> Self {
         Self { parts }
+    }
+
+    /// The running state, or `None` while a part has no online form yet.
+    pub(super) fn online(&self) -> Option<OnlineNode> {
+        let parts = self
+            .parts
+            .iter()
+            .map(Node::online)
+            .collect::<Option<Vec<_>>>()?;
+
+        Some(OnlineNode::Or(OnlineOr(Combination::new(
+            parts,
+            TimeIntervalSequence::new("⊥"),
+            TimeIntervalSequence::union,
+        ))))
     }
 
     pub(super) fn batch(
@@ -31,5 +50,21 @@ impl Or {
             timeline = timeline.union(&part.batch(inputs)?);
         }
         Ok(timeline)
+    }
+}
+
+/// The running state of [`Or`]: the union of its parts' chunks.
+#[derive(Debug, Clone)]
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) struct OnlineOr(Combination);
+
+#[cfg_attr(not(test), allow(dead_code))]
+impl OnlineOr {
+    pub(super) fn step(&mut self, inputs: &Inputs, to: Timestamp) -> Result<Chunk, ProcessError> {
+        self.0.step(inputs, to)
+    }
+
+    pub(super) const fn frontier(&self) -> Timestamp {
+        self.0.frontier()
     }
 }

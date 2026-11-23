@@ -345,9 +345,10 @@ Turning them into a timeline does not happen on the sequence types, which hold
 data, extent and the set algebra and nothing else. It goes through a
 `Processor`, one recipe: a formula filed under the key of the one output it
 produces, evaluated by a `StreamSystem` (see Stream systems). A `Formula` is
-data: it can be compared, printed, evaluated against any system and later
-stored. It reads points through a `Pattern`, a key and a
-`Condition` on the values (`Equals`, `Greater`, `Within`, `In`, `And`, `Not` and
+data: it can be compared, printed, evaluated against any stream system and
+later stored. `Processor::evaluate` gives the output over a system once,
+without storing it, and `add_processor` keeps it up to date. It reads points
+through a `Pattern`, a key and a `Condition` on the values (`Equals`, `Greater`, `Within`, `In`, `And`, `Not` and
 so on) over the value type of that member.
 
 `Between` is active from a point matching `start` until the next point matching
@@ -375,6 +376,28 @@ let present = Formula::between(
 room.add_processor(Processor::new("present", present)).unwrap();
 assert_eq!(room.intervals("present").unwrap()[0].bounds(), (10, 25));
 assert!(room.is_derived("present"));
+```
+
+A processor can also be evaluated once, over a system, without adding it:
+
+```rust
+use chronoloom::{Condition, Formula, Pattern, Processor, StreamSystem};
+use chronoloom::{TimePointEvent, TimePointSequence};
+
+let mut room = StreamSystem::new();
+room.insert_stream("motion", TimePointSequence::from_events("motion", vec![
+    TimePointEvent::new(10, "motion_start"),
+    TimePointEvent::new(25, "motion_end"),
+])).unwrap();
+
+let present = Formula::between(
+    Pattern::new("motion", Condition::Equals("motion_start")),
+    Pattern::new("motion", Condition::Equals("motion_end")),
+);
+
+let sequence = Processor::new("present", present).evaluate(&room).unwrap();
+assert_eq!(sequence.as_time_interval().unwrap()[0].bounds(), (10, 25));
+assert!(!room.contains("present"));
 ```
 
 `While` holds the last sample: a threshold is `Greater`, and a range is `Within`,

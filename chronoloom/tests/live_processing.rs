@@ -17,6 +17,8 @@ use chronoloom::{
     TimeIntervalSequence, TimePointEvent, TimePointSequence, Value,
 };
 
+use update::Evaluate;
+
 use common::{bounds, for_each_seed, span};
 use streams::{processors, stream, Op, Stream, POINT_INPUTS, RECORD_INPUTS, STATE_INPUTS};
 
@@ -323,8 +325,11 @@ fn online_equals_batch_below_every_frontier_and_in_the_end() {
     for_each_seed(CASES, |random, _| {
         let processor = processors(random);
         let stream = stream(random);
-        let reference = update::run(&batch_inputs(&stream), &reference_processor(&processor))
-            .expect("the batch result");
+        let reference = update::run(
+            &update::streams_of(&batch_inputs(&stream)),
+            &reference_processor(&processor),
+        )
+        .expect("the batch result");
 
         let fed = stream
             .ops
@@ -504,13 +509,15 @@ fn online_equals_batch_below_every_frontier_and_in_the_end() {
                         Emitted::Point(_) => None,
                     })
                     .collect();
-                let mut rebuilt = SequenceSystem::new();
-                rebuilt.insert("edges", TimePointSequence::from_events("edges", edges));
+                let mut rebuilt = StreamSystem::new();
+                rebuilt
+                    .insert_stream("edges", TimePointSequence::from_events("edges", edges))
+                    .unwrap();
                 let between = Formula::between(
                     Pattern::new("edges", Condition::Equals(Edge::Start)),
                     Pattern::new("edges", Condition::Equals(Edge::End)),
                 );
-                let timeline = between.evaluate(&rebuilt).expect("edges are edges");
+                let timeline = between.evaluate_over(&rebuilt).expect("edges are edges");
                 let batch = reference.intervals(key.as_str()).expect("a timeline");
                 assert_eq!(bounds(&timeline), bounds(batch), "{key} rebuilt");
             }
@@ -865,7 +872,7 @@ fn point_events_and_the_bound_agree_with_the_batch_on_a_long_stream() {
             TimeIntervalEvent::span(i64::MIN, 1_000).expect("ordered"),
         ])),
     );
-    let expected = update::run(&system, &processor).expect("batch");
+    let expected = update::run(&update::streams_of(&system), &processor).expect("batch");
     let spans: Vec<(i64, i64)> = bounds(expected.intervals("run").expect("timeline"));
     let rebuilt: Vec<(i64, Edge)> = edges(&all);
     let from_batch: Vec<(i64, Edge)> = spans

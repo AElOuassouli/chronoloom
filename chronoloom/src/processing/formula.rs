@@ -123,25 +123,27 @@ pub enum OpenEnd {
 /// timeout, so `While` has no lag with or without one.
 ///
 /// ```
-/// use chronoloom::{Condition, Formula, Pattern, SequenceSystem};
+/// use chronoloom::stream_system::StreamSystem;
+/// use chronoloom::{Condition, Formula, Pattern, Processor};
 /// use chronoloom::{TimePointEvent, TimePointSequence};
 ///
-/// let mut room = SequenceSystem::new();
-/// room.insert("count", TimePointSequence::from_events("count", vec![
+/// let mut room = StreamSystem::new();
+/// room.insert_stream("count", TimePointSequence::from_events("count", vec![
 ///     TimePointEvent::new(0, 2_i64),
 ///     TimePointEvent::new(10, 9),
 ///     TimePointEvent::new(100, 1),
-/// ]));
+/// ]))?;
 ///
 /// // Busy while the last count is above five, for at most 30 ticks after it.
 /// let busy = Formula::while_within(Pattern::new("count", Condition::Greater(5_i64)), 30);
-/// let busy = busy.evaluate(&room)?;
+/// let busy = Processor::new("busy", busy).evaluate(&room)?;
+/// let busy = busy.as_time_interval().unwrap();
 ///
 /// assert_eq!(busy[0].bounds(), (10, 40));
 /// // Past the timeout the sensor was silent: unknown, not inactive.
 /// assert!(!busy.contains(50) && !busy.is_observed(50));
 /// assert!(busy.is_observed(100));
-/// # Ok::<(), chronoloom::ProcessError>(())
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 ///
 /// # Normal form
@@ -393,7 +395,10 @@ impl Formula {
     /// [`ProcessError::NotPoints`] for a pattern over a timeline,
     /// [`ProcessError::ValueTypeMismatch`] for a condition over another value
     /// type than its member's.
-    pub fn evaluate(&self, system: &SequenceSystem) -> Result<TimeIntervalSequence, ProcessError> {
+    pub(crate) fn evaluate(
+        &self,
+        system: &SequenceSystem,
+    ) -> Result<TimeIntervalSequence, ProcessError> {
         TimelinePlan::compile(self).batch(system)
     }
 

@@ -7,7 +7,7 @@ mod update;
 
 use chronoloom::{
     Condition, Events, Formula, Group, Input, Kind, LiveProcessor, Pattern, ProcessError,
-    Processor, Recipe, Schema, SequenceSystem, TimeIntervalEvent, TimeIntervalSequence,
+    Processor, Recipe, Schema, StreamSystem, TimeIntervalEvent, TimeIntervalSequence,
     TimePointEvent, TimePointSequence, Value,
 };
 
@@ -220,30 +220,36 @@ fn a_path_through_an_any_shape_is_not_missing() {
     assert_eq!(processor.validate(), Ok(()));
 }
 
-fn world() -> SequenceSystem {
-    let mut system = SequenceSystem::new();
-    system.insert(
-        "temperature",
-        TimePointSequence::from_events("temperature", vec![TimePointEvent::new(1, 2.0_f64)]),
-    );
-    system.insert(
-        "door",
-        TimeIntervalSequence::from_spans("door", vec![TimeIntervalEvent::span(0, 5).unwrap()]),
-    );
-    system.insert(
-        "records",
-        TimePointSequence::from_events(
+fn world() -> StreamSystem {
+    let mut system = StreamSystem::new();
+    system
+        .insert_stream(
+            "temperature",
+            TimePointSequence::from_events("temperature", vec![TimePointEvent::new(1, 2.0_f64)]),
+        )
+        .unwrap();
+    system
+        .insert_stream(
+            "door",
+            TimeIntervalSequence::from_spans("door", vec![TimeIntervalEvent::span(0, 5).unwrap()]),
+        )
+        .unwrap();
+    system
+        .insert_stream(
             "records",
-            vec![TimePointEvent::new(
-                2,
-                Value::record([
-                    ("agent", Value::from("a")),
-                    ("count", Value::from(1)),
-                    ("site", Value::record([("zone", Value::from("z"))])),
-                ]),
-            )],
-        ),
-    );
+            TimePointSequence::from_events(
+                "records",
+                vec![TimePointEvent::new(
+                    2,
+                    Value::record([
+                        ("agent", Value::from("a")),
+                        ("count", Value::from(1)),
+                        ("site", Value::record([("zone", Value::from("z"))])),
+                    ]),
+                )],
+            ),
+        )
+        .unwrap();
     system
 }
 
@@ -253,21 +259,25 @@ fn a_stream_system_holds_its_streams_to_the_declarations() {
     assert!(update::run(&world(), &processor).is_ok());
 
     let mut missing = world();
-    missing.remove("door");
+    missing.remove_stream("door").unwrap();
     assert_eq!(
         update::run(&missing, &processor).err(),
         Some(ProcessError::UnknownKey { key: "door".into() })
     );
 
     let mut flipped = world();
-    flipped.insert("door", TimePointSequence::<f64>::new("door"));
+    flipped
+        .insert_stream("door", TimePointSequence::<f64>::new("door"))
+        .unwrap();
     assert_eq!(
         update::run(&flipped, &processor).err(),
         Some(ProcessError::NotATimeline { key: "door".into() })
     );
 
     let mut flipped = world();
-    flipped.insert("temperature", TimeIntervalSequence::new("temperature"));
+    flipped
+        .insert_stream("temperature", TimeIntervalSequence::new("temperature"))
+        .unwrap();
     assert_eq!(
         update::run(&flipped, &processor).err(),
         Some(ProcessError::NotPoints {
@@ -276,23 +286,27 @@ fn a_stream_system_holds_its_streams_to_the_declarations() {
     );
 
     let mut integers = world();
-    integers.insert("temperature", TimePointSequence::<i64>::new("temperature"));
+    integers
+        .insert_stream("temperature", TimePointSequence::<i64>::new("temperature"))
+        .unwrap();
     assert!(matches!(
         update::run(&integers, &processor),
         Err(ProcessError::ValueTypeMismatch { key, .. }) if key.as_str() == "temperature"
     ));
 
     let mut stray = world();
-    stray.insert(
-        "records",
-        TimePointSequence::from_events(
+    stray
+        .insert_stream(
             "records",
-            vec![TimePointEvent::new(
-                2,
-                Value::record([("agent", Value::from(1))]),
-            )],
-        ),
-    );
+            TimePointSequence::from_events(
+                "records",
+                vec![TimePointEvent::new(
+                    2,
+                    Value::record([("agent", Value::from(1))]),
+                )],
+            ),
+        )
+        .unwrap();
     assert!(matches!(
         update::run(&stray, &processor),
         Err(ProcessError::SchemaMismatch { key, .. }) if key.as_str() == "records"
@@ -308,12 +322,14 @@ fn a_stream_system_holds_its_streams_to_the_declarations() {
 #[test]
 fn a_processor_without_declarations_reads_what_its_formula_reads() {
     let processor = [Processor::new("open", Formula::state("door"))];
-    let mut system = SequenceSystem::new();
-    system.insert("door", TimeIntervalSequence::new("door"));
+    let mut system = StreamSystem::new();
+    system
+        .insert_stream("door", TimeIntervalSequence::new("door"))
+        .unwrap();
 
     assert!(update::run(&system, &processor).is_ok());
     assert_eq!(
-        update::run(&SequenceSystem::new(), &processor).err(),
+        update::run(&StreamSystem::new(), &processor).err(),
         Some(ProcessError::UnknownKey { key: "door".into() })
     );
 }
@@ -365,4 +381,63 @@ fn live_creates_the_declared_inputs_and_refuses_records_off_the_schema() {
         live.on_point("records", TimePointEvent::new(1, stray)),
         Err(ProcessError::SchemaMismatch { key, .. }) if key.as_str() == "records"
     ));
+}
+
+#[test]
+fn evaluating_a_processor_once_holds_the_system_to_the_declarations_and_stores_nothing() {
+    let processor = declared("open", Formula::state("door"));
+    let system = world();
+
+    let sequence = processor.evaluate(&system).expect("the door is a timeline");
+    assert_eq!(
+        sequence.as_time_interval().map(TimeIntervalSequence::len),
+        Some(1)
+    );
+    assert!(!system.contains("open"));
+
+    let mut flipped = world();
+    flipped
+        .insert_stream("door", TimePointSequence::<f64>::new("door"))
+        .unwrap();
+    assert_eq!(
+        processor.evaluate(&flipped),
+        Err(ProcessError::NotATimeline { key: "door".into() })
+    );
+}
+
+#[test]
+fn evaluating_a_processor_once_names_a_missing_or_shadowed_input() {
+    let system = world();
+
+    let missing =
+        Processor::new("open", Formula::state("door")).with_input("ghost", Input::Timeline);
+    assert_eq!(
+        missing.evaluate(&system),
+        Err(ProcessError::UnknownKey {
+            key: "ghost".into()
+        })
+    );
+
+    let shadowed =
+        Processor::new("door", Formula::state("door")).with_input("door", Input::Timeline);
+    assert_eq!(
+        shadowed.evaluate(&system),
+        Err(ProcessError::InputIsOutput { key: "door".into() })
+    );
+
+    // Reading its own output is refused without any declaration, as adding it is.
+    assert_eq!(
+        Processor::new("door", Formula::state("door")).evaluate(&system),
+        Err(ProcessError::Cycle {
+            keys: vec!["door".into()]
+        })
+    );
+
+    // Without declarations the recipe alone is evaluated, and an unread key is an error of the recipe.
+    assert!(Processor::new("open", Formula::state("door"))
+        .evaluate(&system)
+        .is_ok());
+    assert!(Processor::new("open", Formula::state("nothing"))
+        .evaluate(&system)
+        .is_err());
 }

@@ -133,7 +133,7 @@ fn the_emissions_are_the_batch_result() {
         )
         .expect("ordered")])),
     );
-    let batch = update::run(&system, &presence()).expect("a result");
+    let batch = update::run(&update::streams_of(&system), &presence()).expect("a result");
 
     for agent in ["a", "b", "c"] {
         let key = format!("presence/{agent}");

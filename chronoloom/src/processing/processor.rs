@@ -88,12 +88,12 @@ impl Recipe {
     ///
     /// # Errors
     ///
-    /// As [`Formula::evaluate`] and [`Events::evaluate`];
+    /// As the formula and the events;
     /// [`ProcessError::SeveralMembers`] for `PerEntity`, which has no single
     /// sequence (add its processor to a stream system); for the grouped outputs, the errors of
     /// reading the records of the group like a projection does, and those of
     /// the formula.
-    pub fn evaluate(&self, system: &SequenceSystem) -> Result<Sequence, ProcessError> {
+    pub(crate) fn evaluate(&self, system: &SequenceSystem) -> Result<Sequence, ProcessError> {
         compile_recipe(self).batch(system)
     }
 

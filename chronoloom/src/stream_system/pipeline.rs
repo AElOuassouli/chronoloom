@@ -21,7 +21,7 @@ pub(crate) struct Pipeline {
 
 /// Whether `processor` writes the member under `key`: its output for most
 /// recipes, a key under it for a per-entity one.
-pub(super) fn writes(processor: &Processor, key: &Key) -> bool {
+pub(crate) fn writes(processor: &Processor, key: &Key) -> bool {
     match processor.recipe() {
         Recipe::PerEntity { .. } => is_under(key, processor.output()),
         _ => processor.output() == key,

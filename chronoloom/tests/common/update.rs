@@ -1,22 +1,19 @@
 //! Processors run in batch, the way the tests before stream systems ran a set
-//! of outputs: a stream system holding the members of a system as streams and
-//! the processors, each added after the outputs it reads.
+//! of outputs: a stream system holding the streams of another and the
+//! processors, each added after the outputs it reads.
+
+#![allow(dead_code, reason = "each test file uses some of these")]
 
 use chronoloom::stream_system::{StreamSystem, UpdateError};
-use chronoloom::{ProcessError, Processor, SequenceSystem};
+use chronoloom::{
+    Events, Formula, ProcessError, Processor, Recipe, Sequence, SequenceSystem,
+    TimeIntervalSequence,
+};
 
 /// A batch stream system of `streams` and `processors`, or the error of the
 /// first processor that cannot be added once every other that can has been.
-pub fn run(
-    streams: &SequenceSystem,
-    processors: &[Processor],
-) -> Result<StreamSystem, ProcessError> {
-    let mut system = StreamSystem::new();
-    for (key, sequence) in streams {
-        system
-            .insert_stream(key.clone(), sequence.clone())
-            .expect("a system with no processor takes any stream");
-    }
+pub fn run(streams: &StreamSystem, processors: &[Processor]) -> Result<StreamSystem, ProcessError> {
+    let mut system = streams.clone();
 
     let mut pending = processors.to_vec();
     while !pending.is_empty() {
@@ -44,4 +41,54 @@ pub fn run(
         }
     }
     Ok(system)
+}
+
+/// The streams of a sequence system, as a batch stream system, for the tests
+/// that still feed a sequence system by hand.
+pub fn streams_of(system: &SequenceSystem) -> StreamSystem {
+    let mut streams = StreamSystem::new();
+    for (key, sequence) in system {
+        streams
+            .insert_stream(key.clone(), sequence.clone())
+            .expect("a system with no processor takes any stream");
+    }
+    streams
+}
+
+/// A recipe evaluated once over a stream system, through
+/// [`Processor::evaluate`].
+pub trait Evaluate {
+    /// What the recipe evaluates to.
+    type Output;
+
+    /// The output over `system`, nothing stored.
+    fn evaluate_over(&self, system: &StreamSystem) -> Result<Self::Output, ProcessError>;
+}
+
+impl Evaluate for Recipe {
+    type Output = Sequence;
+
+    fn evaluate_over(&self, system: &StreamSystem) -> Result<Sequence, ProcessError> {
+        Processor::new("output", self.clone()).evaluate(system)
+    }
+}
+
+impl Evaluate for Events {
+    type Output = Sequence;
+
+    fn evaluate_over(&self, system: &StreamSystem) -> Result<Sequence, ProcessError> {
+        Recipe::Points(self.clone()).evaluate_over(system)
+    }
+}
+
+impl Evaluate for Formula {
+    type Output = TimeIntervalSequence;
+
+    fn evaluate_over(&self, system: &StreamSystem) -> Result<TimeIntervalSequence, ProcessError> {
+        let sequence = Recipe::Timeline(self.clone()).evaluate_over(system)?;
+        Ok(sequence
+            .as_time_interval()
+            .expect("a formula is a timeline")
+            .clone())
+    }
 }

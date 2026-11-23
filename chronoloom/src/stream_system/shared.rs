@@ -91,6 +91,11 @@ impl<M: Mode> StreamSystem<M> {
         self.members.lineage_entity(key)
     }
 
+    /// The streams and derived streams together, as a sequence system.
+    pub(crate) const fn members(&self) -> &SequenceSystem {
+        &self.members
+    }
+
     /// The processors, in the order they are evaluated in.
     #[must_use]
     pub fn processors(&self) -> &[Processor] {

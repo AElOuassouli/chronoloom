@@ -374,30 +374,32 @@ impl ErasedCondition for FieldCondition {
 /// `While` span and counts as no `start` or `end` of a `Between`.
 ///
 /// ```
+/// use chronoloom::stream_system::StreamSystem;
 /// use chronoloom::{
-///     Condition, Formula, Pattern, SequenceSystem, TimePointEvent,
+///     Condition, Formula, Pattern, Processor, TimePointEvent,
 ///     TimePointSequence, Value,
 /// };
 ///
 /// let reading = |count: i64| Value::record([("count", Value::from(count))]);
-/// let mut system = SequenceSystem::new();
-/// system.insert("motion", TimePointSequence::from_events("motion", vec![
+/// let mut system = StreamSystem::new();
+/// system.insert_stream("motion", TimePointSequence::from_events("motion", vec![
 ///     TimePointEvent::new(10, reading(7)),
 ///     TimePointEvent::new(20, Value::record([("zone", Value::from("a"))])),
 ///     TimePointEvent::new(30, reading(2)),
-/// ]));
+/// ]))?;
 ///
 /// let busy = Pattern::field("motion", "count", Condition::Greater(Value::from(5)));
 /// assert_eq!(busy.to_string(), "motion.count > 5");
 ///
 /// // The reading without a count does not match, so it ends the span.
-/// let busy = Formula::while_matching(busy).evaluate(&system)?;
+/// let busy = Processor::new("busy", Formula::while_matching(busy)).evaluate(&system)?;
+/// let busy = busy.as_time_interval().unwrap();
 /// let spans: Vec<(i64, i64)> = busy
 ///     .iter()
 ///     .map(|span| (span.start(), span.end()))
 ///     .collect();
 /// assert_eq!(spans, [(10, 20)]);
-/// # Ok::<(), chronoloom::ProcessError>(())
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 ///
 /// [`Display`]: core::fmt::Display

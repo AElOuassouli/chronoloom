@@ -9,8 +9,10 @@ mod update;
 
 use chronoloom::{
     Condition, Edge, Events, Extent, Formula, Key, Kind, OpenEnd, Pattern, ProcessError, Processor,
-    Recipe, SequenceSystem, TimeIntervalSequence, TimePointEvent, TimePointSequence, Value,
+    Recipe, StreamSystem, TimeIntervalSequence, TimePointEvent, TimePointSequence, Value,
 };
+
+use update::Evaluate;
 
 use common::{bounds, extent, for_each_seed, span, spans, Random, DOMAIN_END, DOMAIN_START};
 
@@ -52,15 +54,15 @@ fn motion_between() -> Formula {
     Formula::between(word("motion", "start"), word("motion", "end"))
 }
 
-fn system_with(motion: TimePointSequence<&'static str>) -> SequenceSystem {
-    let mut system = SequenceSystem::new();
-    system.insert("motion", motion);
+fn system_with(motion: TimePointSequence<&'static str>) -> StreamSystem {
+    let mut system = StreamSystem::new();
+    system.insert_stream("motion", motion).unwrap();
     system
 }
 
 fn motion_spans(events: &[(i64, &'static str)]) -> Vec<(i64, i64)> {
     let timeline = motion_between()
-        .evaluate(&system_with(words("motion", events)))
+        .evaluate_over(&system_with(words("motion", events)))
         .unwrap();
     bounds(&timeline)
 }
@@ -222,7 +224,7 @@ fn chained_and_and_or_stay_flat() {
 fn between_spans_from_a_start_to_the_next_end() {
     let events = [(10, "start"), (25, "end"), (40, "start"), (50, "end")];
     let system = system_with(words("motion", &events));
-    let active = motion_between().evaluate(&system).unwrap();
+    let active = motion_between().evaluate_over(&system).unwrap();
 
     assert_eq!(bounds(&active), [(10, 25), (40, 50)]);
     assert_eq!(active.observed(), &Extent::everything());
@@ -273,12 +275,14 @@ fn one_point_matching_both_patterns_opens_while_inactive_and_closes_while_active
         Pattern::new("signal", Condition::<i64>::Any),
         Pattern::new("signal", Condition::<i64>::Any),
     );
-    let mut system = SequenceSystem::new();
-    system.insert("signal", numbers("signal", &[(1, 0), (4, 0), (6, 0)]));
+    let mut system = StreamSystem::new();
+    system
+        .insert_stream("signal", numbers("signal", &[(1, 0), (4, 0), (6, 0)]))
+        .unwrap();
 
     // Opens at 1, closes at 4, opens at 6, and stays open.
     assert_eq!(
-        bounds(&both.evaluate(&system).unwrap()),
+        bounds(&both.evaluate_over(&system).unwrap()),
         [(1, 4), (6, i64::MAX)]
     );
 }
@@ -288,11 +292,11 @@ fn an_open_span_stops_at_the_end_of_its_run_of_the_extent() {
     let open = [(4, "start")];
 
     let forever = system_with(words("motion", &open));
-    let active = motion_between().evaluate(&forever).unwrap();
+    let active = motion_between().evaluate_over(&forever).unwrap();
     assert_eq!(bounds(&active), [(4, i64::MAX)]);
 
     let bounded = system_with(words("motion", &open).with_observed(window(0, 30)));
-    let active = motion_between().evaluate(&bounded).unwrap();
+    let active = motion_between().evaluate_over(&bounded).unwrap();
     assert_eq!(bounds(&active), [(4, 30)]);
     assert_eq!(extent_bounds(active.observed()), [(0, 30)]);
     assert!(!active.contains(30) && !active.is_observed(30));
@@ -307,7 +311,7 @@ fn an_open_span_up_to_the_head_is_unknown_from_the_head_on() {
             word("motion", "end"),
             OpenEnd::Head,
         )
-        .evaluate(&system)
+        .evaluate_over(&system)
         .unwrap()
     };
 
@@ -346,7 +350,7 @@ fn between_reads_each_run_of_the_extent_by_itself() {
         )
         .with_observed(seen.clone()),
     );
-    let active = motion_between().evaluate(&system).unwrap();
+    let active = motion_between().evaluate_over(&system).unwrap();
 
     // Opened in the first run and left open at its end; the end at 40 finds
     // nothing open in the second run.
@@ -356,17 +360,21 @@ fn between_reads_each_run_of_the_extent_by_itself() {
 
 #[test]
 fn between_two_members_is_observed_where_both_are() {
-    let mut system = SequenceSystem::new();
-    system.insert(
-        "door",
-        words("door", &[(5, "open"), (10, "open"), (60, "open")]).with_observed(window(0, 100)),
-    );
-    system.insert(
-        "light",
-        words("light", &[(5, "off"), (30, "off"), (70, "off")]).with_observed(window(0, 50)),
-    );
+    let mut system = StreamSystem::new();
+    system
+        .insert_stream(
+            "door",
+            words("door", &[(5, "open"), (10, "open"), (60, "open")]).with_observed(window(0, 100)),
+        )
+        .unwrap();
+    system
+        .insert_stream(
+            "light",
+            words("light", &[(5, "off"), (30, "off"), (70, "off")]).with_observed(window(0, 50)),
+        )
+        .unwrap();
     let formula = Formula::between(word("door", "open"), word("light", "off"));
-    let active = formula.evaluate(&system).unwrap();
+    let active = formula.evaluate_over(&system).unwrap();
 
     // At 5 the start comes before the end, so the span lasts one tick; then
     // 10 opens another until 30. The points past 50 are outside the extent.
@@ -384,10 +392,12 @@ fn while_holds_the_last_sample() {
         .enumerate()
         .map(|(index, count)| (index as i64 * 10, *count))
         .collect();
-    let mut system = SequenceSystem::new();
-    system.insert("count", numbers("count", &events));
+    let mut system = StreamSystem::new();
+    system
+        .insert_stream("count", numbers("count", &events))
+        .unwrap();
     let crowded = Formula::while_matching(Pattern::new("count", Condition::Greater(5_i64)));
-    let active = crowded.evaluate(&system).unwrap();
+    let active = crowded.evaluate_over(&system).unwrap();
 
     assert_eq!(bounds(&active), [(10, 30), (50, 70)]);
     assert_eq!(active.label(), "while(count > 5)");
@@ -398,13 +408,15 @@ fn while_holds_the_last_sample() {
 
 #[test]
 fn while_holds_the_last_sample_to_the_end_of_the_extent() {
-    let mut system = SequenceSystem::new();
-    system.insert(
-        "count",
-        numbers("count", &[(10, 2), (20, 9)]).with_observed(window(0, 100)),
-    );
+    let mut system = StreamSystem::new();
+    system
+        .insert_stream(
+            "count",
+            numbers("count", &[(10, 2), (20, 9)]).with_observed(window(0, 100)),
+        )
+        .unwrap();
     let active = Formula::while_matching(Pattern::new("count", Condition::Greater(5_i64)))
-        .evaluate(&system)
+        .evaluate_over(&system)
         .unwrap();
 
     assert_eq!(bounds(&active), [(20, 100)]);
@@ -415,12 +427,14 @@ fn while_holds_the_last_sample_to_the_end_of_the_extent() {
 fn while_takes_the_last_recorded_of_the_samples_sharing_an_instant() {
     let crowded = Formula::while_matching(Pattern::new("count", Condition::Greater(5_i64)));
     let spans_of = |events: &[(i64, i64)]| {
-        let mut system = SequenceSystem::new();
-        system.insert(
-            "count",
-            numbers("count", events).with_observed(window(0, 40)),
-        );
-        bounds(&crowded.evaluate(&system).unwrap())
+        let mut system = StreamSystem::new();
+        system
+            .insert_stream(
+                "count",
+                numbers("count", events).with_observed(window(0, 40)),
+            )
+            .unwrap();
+        bounds(&crowded.evaluate_over(&system).unwrap())
     };
 
     assert_eq!(spans_of(&[(10, 9), (10, 2)]), []);
@@ -429,14 +443,16 @@ fn while_takes_the_last_recorded_of_the_samples_sharing_an_instant() {
 
 #[test]
 fn while_restarts_in_each_run_of_the_extent() {
-    let mut system = SequenceSystem::new();
-    system.insert(
-        "count",
-        numbers("count", &[(5, 8), (70, 8)])
-            .with_observed(Extent::from_spans(vec![span(0, 50), span(60, 100)])),
-    );
+    let mut system = StreamSystem::new();
+    system
+        .insert_stream(
+            "count",
+            numbers("count", &[(5, 8), (70, 8)])
+                .with_observed(Extent::from_spans(vec![span(0, 50), span(60, 100)])),
+        )
+        .unwrap();
     let active = Formula::while_matching(Pattern::new("count", Condition::Greater(5_i64)))
-        .evaluate(&system)
+        .evaluate_over(&system)
         .unwrap();
 
     assert_eq!(bounds(&active), [(5, 50), (70, 100)]);
@@ -445,11 +461,13 @@ fn while_restarts_in_each_run_of_the_extent() {
 
 #[test]
 fn while_within_reads_a_range() {
-    let mut system = SequenceSystem::new();
-    system.insert(
-        "level",
-        numbers("level", &[(0, 4), (10, 5), (20, 9), (30, 10)]).with_observed(window(0, 50)),
-    );
+    let mut system = StreamSystem::new();
+    system
+        .insert_stream(
+            "level",
+            numbers("level", &[(0, 4), (10, 5), (20, 9), (30, 10)]).with_observed(window(0, 50)),
+        )
+        .unwrap();
     let active = Formula::while_matching(Pattern::new(
         "level",
         Condition::Within {
@@ -457,7 +475,7 @@ fn while_within_reads_a_range() {
             high: 10,
         },
     ))
-    .evaluate(&system)
+    .evaluate_over(&system)
     .unwrap();
 
     assert_eq!(bounds(&active), [(10, 30)]);
@@ -467,36 +485,42 @@ fn while_within_reads_a_range() {
 
 #[test]
 fn occurs_is_active_on_the_instant_of_each_matching_point() {
-    let mut system = SequenceSystem::new();
-    system.insert(
-        "door",
-        words(
+    let mut system = StreamSystem::new();
+    system
+        .insert_stream(
             "door",
-            &[(5, "open"), (9, "open"), (9, "open"), (12, "close")],
+            words(
+                "door",
+                &[(5, "open"), (9, "open"), (9, "open"), (12, "close")],
+            )
+            .with_observed(window(0, 20)),
         )
-        .with_observed(window(0, 20)),
-    );
+        .unwrap();
     let opened = Formula::occurs(word("door", "open"));
-    let active = opened.evaluate(&system).unwrap();
+    let active = opened.evaluate_over(&system).unwrap();
 
     assert_eq!(bounds(&active), [(5, 6), (9, 10)]);
     assert_eq!(extent_bounds(active.observed()), [(0, 20)]);
     assert!(active.is_observed(7) && !active.contains(7));
 
     // Holding an event for three ticks is a shift of the upper bound.
-    let held = opened.shift(0, 2).evaluate(&system).unwrap();
+    let held = opened.shift(0, 2).evaluate_over(&system).unwrap();
     assert_eq!(bounds(&held), [(5, 8), (9, 12)]);
 }
 
 // Combinations
 
-fn two_states() -> SequenceSystem {
-    let mut system = SequenceSystem::new();
-    system.insert(
-        "a",
-        timeline("a", &[(0, 10), (20, 30)]).with_observed(window(0, 40)),
-    );
-    system.insert("b", timeline("b", &[(5, 25)]).with_observed(window(0, 50)));
+fn two_states() -> StreamSystem {
+    let mut system = StreamSystem::new();
+    system
+        .insert_stream(
+            "a",
+            timeline("a", &[(0, 10), (20, 30)]).with_observed(window(0, 40)),
+        )
+        .unwrap();
+    system
+        .insert_stream("b", timeline("b", &[(5, 25)]).with_observed(window(0, 50)))
+        .unwrap();
     system
 }
 
@@ -506,7 +530,7 @@ fn the_algebra_nodes_are_the_operations_of_the_sequences() {
     let a = system.intervals("a").unwrap();
     let b = system.intervals("b").unwrap();
     let same = |formula: Formula, expected: &TimeIntervalSequence| {
-        let evaluated = formula.evaluate(&system).unwrap();
+        let evaluated = formula.evaluate_over(&system).unwrap();
         assert!(evaluated.covers_same(expected), "{formula}");
         assert_eq!(evaluated.observed(), expected.observed(), "{formula}");
         assert_eq!(evaluated.label(), formula.to_string());
@@ -526,12 +550,12 @@ fn the_algebra_nodes_are_the_operations_of_the_sequences() {
 
 #[test]
 fn an_empty_and_is_everywhere_and_an_empty_or_nowhere() {
-    let system = SequenceSystem::new();
-    let everywhere = Formula::And(vec![]).evaluate(&system).unwrap();
+    let system = StreamSystem::new();
+    let everywhere = Formula::And(vec![]).evaluate_over(&system).unwrap();
     assert_eq!(bounds(&everywhere), [(i64::MIN, i64::MAX)]);
     assert_eq!(everywhere.observed(), &Extent::everything());
 
-    let nowhere = Formula::Or(vec![]).evaluate(&system).unwrap();
+    let nowhere = Formula::Or(vec![]).evaluate_over(&system).unwrap();
     assert!(nowhere.is_empty());
     assert_eq!(nowhere.observed(), &Extent::everything());
 }
@@ -540,31 +564,35 @@ fn an_empty_and_is_everywhere_and_an_empty_or_nowhere() {
 
 #[test]
 fn evaluation_names_what_went_wrong() {
-    let mut system = SequenceSystem::new();
-    system.insert("count", numbers("count", &[(1, 1)]));
-    system.insert("up", timeline("up", &[(0, 5)]));
+    let mut system = StreamSystem::new();
+    system
+        .insert_stream("count", numbers("count", &[(1, 1)]))
+        .unwrap();
+    system
+        .insert_stream("up", timeline("up", &[(0, 5)]))
+        .unwrap();
     let count = |condition| Formula::while_matching(Pattern::new("count", condition));
 
     assert_eq!(
-        Formula::state("nope").evaluate(&system),
+        Formula::state("nope").evaluate_over(&system),
         Err(ProcessError::UnknownKey { key: "nope".into() })
     );
     assert_eq!(
-        Formula::occurs(Pattern::new("nope", Condition::<i64>::Any)).evaluate(&system),
+        Formula::occurs(Pattern::new("nope", Condition::<i64>::Any)).evaluate_over(&system),
         Err(ProcessError::UnknownKey { key: "nope".into() })
     );
     assert_eq!(
-        Formula::state("count").evaluate(&system),
+        Formula::state("count").evaluate_over(&system),
         Err(ProcessError::NotATimeline {
             key: "count".into()
         })
     );
     assert_eq!(
-        Formula::while_matching(Pattern::new("up", Condition::<i64>::Any)).evaluate(&system),
+        Formula::while_matching(Pattern::new("up", Condition::<i64>::Any)).evaluate_over(&system),
         Err(ProcessError::NotPoints { key: "up".into() })
     );
     assert_eq!(
-        count(Condition::Equals(1.0_f64)).evaluate(&system),
+        count(Condition::Equals(1.0_f64)).evaluate_over(&system),
         Err(ProcessError::ValueTypeMismatch {
             key: "count".into(),
             expected: "i64",
@@ -577,7 +605,7 @@ fn evaluation_names_what_went_wrong() {
         Pattern::new("count", Condition::Equals("end")),
     );
     assert!(matches!(
-        wrong_end.evaluate(&system),
+        wrong_end.evaluate_over(&system),
         Err(ProcessError::ValueTypeMismatch { .. })
     ));
     assert!(!ProcessError::UnknownKey { key: "x".into() }
@@ -590,15 +618,20 @@ fn a_shift_keeps_the_end_of_time_and_saturates_other_bounds() {
     // On the default extent an open span lasts for good, so it reaches the end
     // of time; shifting it must neither fail nor move that end.
     let system = system_with(words("motion", &[(10, "start")]));
-    let widened = motion_between().shift(-2, 5).evaluate(&system).unwrap();
+    let widened = motion_between()
+        .shift(-2, 5)
+        .evaluate_over(&system)
+        .unwrap();
     assert_eq!(bounds(&widened), [(8, i64::MAX)]);
 
     // A shift too large for a bounded span saturates rather than failing.
-    let mut system = SequenceSystem::new();
-    system.insert("up", timeline("up", &[(0, 5)]));
+    let mut system = StreamSystem::new();
+    system
+        .insert_stream("up", timeline("up", &[(0, 5)]))
+        .unwrap();
     let pushed = Formula::state("up")
         .shift(i64::MAX, i64::MAX)
-        .evaluate(&system)
+        .evaluate_over(&system)
         .unwrap();
     assert!(pushed.is_empty());
 }
@@ -615,7 +648,7 @@ fn nested_algebra_over_between_while_and_shift_matches_the_sequence_algebra() {
         timeout: None,
     };
     let occurs = Formula::Occurs(word("motion", "stop"));
-    let evaluate = |formula: &Formula| formula.evaluate(&system).unwrap();
+    let evaluate = |formula: &Formula| formula.evaluate_over(&system).unwrap();
     let (shifted, held_timeline, stops) = (
         evaluate(&between.clone().shift(-1, 2)),
         evaluate(&held),
@@ -643,17 +676,23 @@ fn an_error_inside_any_node_surfaces_unchanged() {
     let error = || Err(ProcessError::UnknownKey { key: "nope".into() });
     let state = || Formula::state("a");
 
-    assert_eq!(missing().shift(1, 1).evaluate(&system).map(|_| ()), error());
-    assert_eq!((!missing()).evaluate(&system).map(|_| ()), error());
     assert_eq!(
-        state().and(missing()).evaluate(&system).map(|_| ()),
+        missing().shift(1, 1).evaluate_over(&system).map(|_| ()),
         error()
     );
-    assert_eq!(missing().or(state()).evaluate(&system).map(|_| ()), error());
+    assert_eq!((!missing()).evaluate_over(&system).map(|_| ()), error());
+    assert_eq!(
+        state().and(missing()).evaluate_over(&system).map(|_| ()),
+        error()
+    );
+    assert_eq!(
+        missing().or(state()).evaluate_over(&system).map(|_| ()),
+        error()
+    );
     assert_eq!(
         Formula::Occurs(word("nope", "x"))
             .and(state())
-            .evaluate(&system)
+            .evaluate_over(&system)
             .map(|_| ()),
         error()
     );
@@ -663,8 +702,10 @@ fn an_error_inside_any_node_surfaces_unchanged() {
 fn a_recipe_evaluates_like_its_formula_or_events_and_keeps_the_label() {
     let system = two_states();
     let formula = Formula::state("a").and(!Formula::state("b"));
-    let direct = formula.evaluate(&system).unwrap();
-    let through = Recipe::Timeline(formula.clone()).evaluate(&system).unwrap();
+    let direct = formula.evaluate_over(&system).unwrap();
+    let through = Recipe::Timeline(formula.clone())
+        .evaluate_over(&system)
+        .unwrap();
     let timeline = through.as_time_interval().expect("a timeline");
     assert!(timeline.covers_same(&direct));
     assert_eq!(timeline.observed(), direct.observed());
@@ -672,12 +713,14 @@ fn a_recipe_evaluates_like_its_formula_or_events_and_keeps_the_label() {
 
     let events = Events::Edges(Formula::state("a"));
     assert_eq!(
-        Recipe::Points(events.clone()).evaluate(&system).unwrap(),
-        events.evaluate(&system).unwrap()
+        Recipe::Points(events.clone())
+            .evaluate_over(&system)
+            .unwrap(),
+        events.evaluate_over(&system).unwrap()
     );
     assert_eq!(
         Recipe::Timeline(Formula::state("nope"))
-            .evaluate(&system)
+            .evaluate_over(&system)
             .map(|_| ()),
         Err(ProcessError::UnknownKey { key: "nope".into() })
     );
@@ -686,19 +729,23 @@ fn a_recipe_evaluates_like_its_formula_or_events_and_keeps_the_label() {
 #[test]
 fn every_points_recipe_evaluates_like_its_events() {
     let mut system = sightings();
-    system.insert(
-        "door",
-        words("door", &[(5, "open"), (7, "open"), (9, "close")]),
-    );
-    system.insert("up", timeline("up", &[(0, 5)]));
+    system
+        .insert_stream(
+            "door",
+            words("door", &[(5, "open"), (7, "open"), (9, "close")]),
+        )
+        .unwrap();
+    system
+        .insert_stream("up", timeline("up", &[(0, 5)]))
+        .unwrap();
     for events in [
         Events::Edges(Formula::state("up")),
         Events::Matching(word("door", "open")),
         Events::changes("door"),
         Events::project("sensor", "agent.id", Kind::Integer),
     ] {
-        let through = Recipe::Points(events.clone()).evaluate(&system);
-        assert_eq!(through, events.evaluate(&system));
+        let through = Recipe::Points(events.clone()).evaluate_over(&system);
+        assert_eq!(through, events.evaluate_over(&system));
         assert!(through.is_ok(), "{events}");
     }
 }
@@ -707,13 +754,15 @@ fn every_points_recipe_evaluates_like_its_events() {
 
 #[test]
 fn edges_are_a_start_and_an_end_for_each_span() {
-    let mut system = SequenceSystem::new();
-    system.insert(
-        "up",
-        timeline("up", &[(5, 10), (20, 50)]).with_observed(window(0, 50)),
-    );
+    let mut system = StreamSystem::new();
+    system
+        .insert_stream(
+            "up",
+            timeline("up", &[(5, 10), (20, 50)]).with_observed(window(0, 50)),
+        )
+        .unwrap();
     let edges = Events::Edges(Formula::state("up"))
-        .evaluate(&system)
+        .evaluate_over(&system)
         .unwrap();
     let points = edges.as_time_point::<Edge>().unwrap();
 
@@ -736,13 +785,15 @@ fn edges_are_a_start_and_an_end_for_each_span() {
 
 #[test]
 fn matching_keeps_the_points_and_their_values() {
-    let mut system = SequenceSystem::new();
-    system.insert(
-        "door",
-        words("door", &[(5, "open"), (7, "close"), (9, "open")]).with_observed(window(0, 20)),
-    );
+    let mut system = StreamSystem::new();
+    system
+        .insert_stream(
+            "door",
+            words("door", &[(5, "open"), (7, "close"), (9, "open")]).with_observed(window(0, 20)),
+        )
+        .unwrap();
     let matched = Events::Matching(word("door", "open"))
-        .evaluate(&system)
+        .evaluate_over(&system)
         .unwrap();
     let points = matched.as_time_point::<&str>().unwrap();
 
@@ -755,7 +806,7 @@ fn matching_keeps_the_points_and_their_values() {
     assert_eq!(points.observed(), &window(0, 20));
 
     assert!(matches!(
-        Events::Matching(Pattern::new("door", Condition::Equals(1_i64))).evaluate(&system),
+        Events::Matching(Pattern::new("door", Condition::Equals(1_i64))).evaluate_over(&system),
         Err(ProcessError::ValueTypeMismatch { .. })
     ));
 }
@@ -763,20 +814,22 @@ fn matching_keeps_the_points_and_their_values() {
 #[test]
 fn matching_and_edges_report_what_cannot_be_read() {
     let mut system = system_with(words("motion", &[(10, "start")]));
-    system.insert("up", timeline("up", &[(0, 5)]));
+    system
+        .insert_stream("up", timeline("up", &[(0, 5)]))
+        .unwrap();
 
     assert_eq!(
-        Events::Matching(word("nothing", "x")).evaluate(&system),
+        Events::Matching(word("nothing", "x")).evaluate_over(&system),
         Err(ProcessError::UnknownKey {
             key: "nothing".into()
         })
     );
     assert_eq!(
-        Events::Matching(Pattern::new("up", Condition::<i64>::Any)).evaluate(&system),
+        Events::Matching(Pattern::new("up", Condition::<i64>::Any)).evaluate_over(&system),
         Err(ProcessError::NotPoints { key: "up".into() })
     );
     assert_eq!(
-        Events::Edges(Formula::state("nothing")).evaluate(&system),
+        Events::Edges(Formula::state("nothing")).evaluate_over(&system),
         Err(ProcessError::UnknownKey {
             key: "nothing".into()
         })
@@ -785,7 +838,7 @@ fn matching_and_edges_report_what_cannot_be_read() {
     for (start, end) in [("nothing", "motion"), ("motion", "nothing")] {
         let formula = Formula::between(word(start, "start"), word(end, "stop"));
         assert_eq!(
-            formula.evaluate(&system).map(|_| ()),
+            formula.evaluate_over(&system).map(|_| ()),
             Err(ProcessError::UnknownKey {
                 key: "nothing".into()
             })
@@ -795,10 +848,12 @@ fn matching_and_edges_report_what_cannot_be_read() {
 
 #[test]
 fn edges_of_an_empty_timeline_are_no_points_and_keep_the_extent() {
-    let mut system = SequenceSystem::new();
-    system.insert("up", timeline("up", &[]).with_observed(window(0, 30)));
+    let mut system = StreamSystem::new();
+    system
+        .insert_stream("up", timeline("up", &[]).with_observed(window(0, 30)))
+        .unwrap();
     let edges = Events::Edges(Formula::state("up"))
-        .evaluate(&system)
+        .evaluate_over(&system)
         .unwrap();
     let points = edges.as_time_point::<Edge>().unwrap();
 
@@ -811,8 +866,8 @@ fn edges_read_back_by_between_rebuild_the_state() {
     for_each_seed(CASES, |random, _| {
         let up =
             TimeIntervalSequence::from_spans("up", spans(random, 10)).with_observed(extent(random));
-        let mut system = SequenceSystem::new();
-        system.insert("up", up.clone());
+        let mut system = StreamSystem::new();
+        system.insert_stream("up", up.clone()).unwrap();
 
         apply(
             &mut system,
@@ -823,7 +878,7 @@ fn edges_read_back_by_between_rebuild_the_state() {
             Pattern::new("edges", Condition::Equals(Edge::Start)),
             Pattern::new("edges", Condition::Equals(Edge::End)),
         )
-        .evaluate(&system)
+        .evaluate_over(&system)
         .unwrap();
 
         assert!(rebuilt.covers_same(&up));
@@ -833,23 +888,25 @@ fn edges_read_back_by_between_rebuild_the_state() {
 
 #[test]
 fn changes_drop_the_repeats_and_keep_the_first_point_of_each_run() {
-    let mut system = SequenceSystem::new();
-    system.insert(
-        "door",
-        words(
+    let mut system = StreamSystem::new();
+    system
+        .insert_stream(
             "door",
-            &[
-                (5, "open"),
-                (7, "open"),
-                (9, "close"),
-                (12, "close"),
-                (30, "close"),
-                (32, "open"),
-            ],
+            words(
+                "door",
+                &[
+                    (5, "open"),
+                    (7, "open"),
+                    (9, "close"),
+                    (12, "close"),
+                    (30, "close"),
+                    (32, "open"),
+                ],
+            )
+            .with_observed(Extent::from_spans(vec![span(0, 20), span(25, 40)])),
         )
-        .with_observed(Extent::from_spans(vec![span(0, 20), span(25, 40)])),
-    );
-    let changes = Events::changes("door").evaluate(&system).unwrap();
+        .unwrap();
+    let changes = Events::changes("door").evaluate_over(&system).unwrap();
     let points = changes.as_time_point::<&str>().unwrap();
 
     let listed: Vec<(i64, &str)> = points
@@ -870,15 +927,17 @@ fn changes_drop_the_repeats_and_keep_the_first_point_of_each_run() {
 
 #[test]
 fn changes_take_the_last_recorded_of_the_points_sharing_an_instant() {
-    let mut system = SequenceSystem::new();
-    system.insert(
-        "count",
-        numbers(
+    let mut system = StreamSystem::new();
+    system
+        .insert_stream(
             "count",
-            &[(5, 1), (10, 2), (10, 1), (15, 1), (20, 3), (20, 3)],
-        ),
-    );
-    let changes = Events::changes("count").evaluate(&system).unwrap();
+            numbers(
+                "count",
+                &[(5, 1), (10, 2), (10, 1), (15, 1), (20, 3), (20, 3)],
+            ),
+        )
+        .unwrap();
+    let changes = Events::changes("count").evaluate_over(&system).unwrap();
     let points = changes.as_time_point::<i64>().unwrap();
 
     let listed: Vec<(i64, i64)> = points
@@ -892,14 +951,16 @@ fn changes_take_the_last_recorded_of_the_points_sharing_an_instant() {
 fn changes_report_what_cannot_be_read() {
     let system = system_with(words("motion", &[(10, "start")]));
     let mut with_timeline = system.clone();
-    with_timeline.insert("up", timeline("up", &[(0, 5)]));
+    with_timeline
+        .insert_stream("up", timeline("up", &[(0, 5)]))
+        .unwrap();
 
     assert!(matches!(
-        Events::changes("nothing").evaluate(&system),
+        Events::changes("nothing").evaluate_over(&system),
         Err(ProcessError::UnknownKey { .. })
     ));
     assert!(matches!(
-        Events::changes("up").evaluate(&with_timeline),
+        Events::changes("up").evaluate_over(&with_timeline),
         Err(ProcessError::NotPoints { .. })
     ));
 }
@@ -909,8 +970,8 @@ fn changes_are_idempotent_and_leave_while_unchanged() {
     for_each_seed(CASES, |random, _| {
         let points = random_numbers(random);
         let (condition, _) = random_test(random);
-        let mut system = SequenceSystem::new();
-        system.insert("p", points);
+        let mut system = StreamSystem::new();
+        system.insert_stream("p", points).unwrap();
 
         let processor = vec![
             Processor::new("changes", Events::changes("p")),
@@ -933,12 +994,12 @@ fn changes_are_idempotent_and_leave_while_unchanged() {
         }));
 
         let mut together = system.clone();
-        together.insert("changes", once.clone());
+        together.insert_stream("changes", once.clone()).unwrap();
         let original = Formula::while_matching(Pattern::new("p", condition.clone()))
-            .evaluate(&together)
+            .evaluate_over(&together)
             .unwrap();
         let reduced = Formula::while_matching(Pattern::new("changes", condition))
-            .evaluate(&together)
+            .evaluate_over(&together)
             .unwrap();
         assert!(original.covers_same(&reduced));
         assert_eq!(original.observed(), reduced.observed());
@@ -948,11 +1009,11 @@ fn changes_are_idempotent_and_leave_while_unchanged() {
 // Processors
 
 /// The outputs of `processors` filed into `system`, all or nothing.
-fn apply(system: &mut SequenceSystem, processors: &[Processor]) -> Result<(), ProcessError> {
+fn apply(system: &mut StreamSystem, processors: &[Processor]) -> Result<(), ProcessError> {
     let derived = update::run(system, processors)?;
     for key in derived.derived() {
         let sequence = derived.get(key.as_str()).expect("listed").clone();
-        system.insert(key.clone(), sequence);
+        system.insert_stream(key.clone(), sequence).unwrap();
     }
     Ok(())
 }
@@ -960,7 +1021,9 @@ fn apply(system: &mut SequenceSystem, processors: &[Processor]) -> Result<(), Pr
 #[test]
 fn each_processor_files_its_output_under_its_key() {
     let mut system = system_with(words("motion", &[(10, "start"), (25, "end")]));
-    system.insert("up", timeline("up", &[(0, 5)]));
+    system
+        .insert_stream("up", timeline("up", &[(0, 5)]))
+        .unwrap();
 
     let processor = vec![
         Processor::new("active", motion_between()),
@@ -1071,11 +1134,11 @@ fn occurs_matches_its_definition_at_every_instant() {
     for_each_seed(CASES, |random, _| {
         let points = random_numbers(random);
         let (condition, test) = random_test(random);
-        let mut system = SequenceSystem::new();
-        system.insert("p", points.clone());
+        let mut system = StreamSystem::new();
+        system.insert_stream("p", points.clone()).unwrap();
 
         let active = Formula::occurs(Pattern::new("p", condition))
-            .evaluate(&system)
+            .evaluate_over(&system)
             .unwrap();
 
         for instant in CHECK {
@@ -1089,20 +1152,26 @@ fn occurs_matches_its_definition_at_every_instant() {
 
 #[test]
 fn hold_is_active_for_a_duration_from_each_matching_point() {
-    let mut system = SequenceSystem::new();
-    system.insert(
-        "p",
-        words("p", &[(0, "a"), (2, "a"), (3, "b"), (10, "a"), (20, "a")]),
-    );
+    let mut system = StreamSystem::new();
+    system
+        .insert_stream(
+            "p",
+            words("p", &[(0, "a"), (2, "a"), (3, "b"), (10, "a"), (20, "a")]),
+        )
+        .unwrap();
     let pattern = word("p", "a");
 
     // Holds [0, 3) and [2, 5) merge, [10, 13) stands alone, and the one at 20
     // lasts three ticks.
-    let held = Formula::hold(pattern.clone(), 3).evaluate(&system).unwrap();
+    let held = Formula::hold(pattern.clone(), 3)
+        .evaluate_over(&system)
+        .unwrap();
     assert_eq!(bounds(&held), [(0, 5), (10, 13), (20, 23)]);
 
     // Holds that touch merge too.
-    let touching = Formula::hold(pattern.clone(), 2).evaluate(&system).unwrap();
+    let touching = Formula::hold(pattern.clone(), 2)
+        .evaluate_over(&system)
+        .unwrap();
     assert_eq!(bounds(&touching), [(0, 4), (10, 12), (20, 22)]);
 
     // One tick is `Occurs`, and a hold is the shift it stands for.
@@ -1138,16 +1207,16 @@ fn hold_equals_its_shifted_occurs_and_its_definition_at_every_instant() {
         let points = random_numbers(random);
         let (condition, test) = random_test(random);
         let ticks = random.between(1, 6);
-        let mut system = SequenceSystem::new();
-        system.insert("p", points.clone());
+        let mut system = StreamSystem::new();
+        system.insert_stream("p", points.clone()).unwrap();
 
         let pattern = Pattern::new("p", condition);
         let held = Formula::hold(pattern.clone(), ticks)
-            .evaluate(&system)
+            .evaluate_over(&system)
             .unwrap();
         let definition = Formula::occurs(pattern)
             .shift(0, ticks - 1)
-            .evaluate(&system)
+            .evaluate_over(&system)
             .unwrap();
         assert_eq!(held, definition);
 
@@ -1173,11 +1242,11 @@ fn while_matches_its_definition_at_every_instant() {
     for_each_seed(CASES, |random, _| {
         let points = random_numbers(random);
         let (condition, test) = random_test(random);
-        let mut system = SequenceSystem::new();
-        system.insert("p", points.clone());
+        let mut system = StreamSystem::new();
+        system.insert_stream("p", points.clone()).unwrap();
 
         let active = Formula::while_matching(Pattern::new("p", condition))
-            .evaluate(&system)
+            .evaluate_over(&system)
             .unwrap();
 
         for instant in CHECK {
@@ -1202,11 +1271,11 @@ fn while_within_matches_its_definition_at_every_instant() {
         let points = random_numbers(random);
         let (condition, test) = random_test(random);
         let timeout = random.between(1, 12);
-        let mut system = SequenceSystem::new();
-        system.insert("p", points.clone());
+        let mut system = StreamSystem::new();
+        system.insert_stream("p", points.clone()).unwrap();
 
         let active = Formula::while_within(Pattern::new("p", condition), timeout)
-            .evaluate(&system)
+            .evaluate_over(&system)
             .unwrap();
 
         for instant in CHECK {
@@ -1236,16 +1305,16 @@ fn while_within_equals_while_matching_when_no_gap_outlasts_the_timeout() {
     for_each_seed(CASES, |random, _| {
         let points = random_numbers(random);
         let (condition, _) = random_test(random);
-        let mut system = SequenceSystem::new();
-        system.insert("p", points);
+        let mut system = StreamSystem::new();
+        system.insert_stream("p", points).unwrap();
 
         let pattern = || Pattern::new("p", condition.clone());
         // Longer than the domain, so no sample or run is ever that long.
         let within = Formula::while_within(pattern(), 10 * (DOMAIN_END - DOMAIN_START) + 100)
-            .evaluate(&system)
+            .evaluate_over(&system)
             .unwrap();
         let matching = Formula::while_matching(pattern())
-            .evaluate(&system)
+            .evaluate_over(&system)
             .unwrap();
 
         // The timeout only matters past the domain, where the last sample
@@ -1262,13 +1331,15 @@ fn while_within_equals_while_matching_when_no_gap_outlasts_the_timeout() {
 
 #[test]
 fn while_within_leaves_what_follows_the_timeout_unknown() {
-    let mut system = SequenceSystem::new();
-    system.insert(
-        "count",
-        numbers("count", &[(10, 9), (50, 1), (60, 9)]).with_observed(window(0, 100)),
-    );
+    let mut system = StreamSystem::new();
+    system
+        .insert_stream(
+            "count",
+            numbers("count", &[(10, 9), (50, 1), (60, 9)]).with_observed(window(0, 100)),
+        )
+        .unwrap();
     let crowded = Formula::while_within(Pattern::new("count", Condition::Greater(5_i64)), 15);
-    let active = crowded.evaluate(&system).unwrap();
+    let active = crowded.evaluate_over(&system).unwrap();
 
     assert_eq!(bounds(&active), [(10, 25), (60, 75)]);
     // Known from each sample for 15 ticks, unknown until the next one, and
@@ -1306,9 +1377,9 @@ fn between_matches_its_definition_at_every_instant() {
         let (start_condition, starts) = random_test(random);
         let (end_condition, ends) = random_test(random);
 
-        let mut system = SequenceSystem::new();
-        system.insert("p", first.clone());
-        system.insert("q", second.clone());
+        let mut system = StreamSystem::new();
+        system.insert_stream("p", first.clone()).unwrap();
+        system.insert_stream("q", second.clone()).unwrap();
         let end_key = if same_member { "p" } else { "q" };
         let closing = if same_member { &first } else { &second };
 
@@ -1317,7 +1388,7 @@ fn between_matches_its_definition_at_every_instant() {
             Pattern::new(end_key, end_condition),
             if head { OpenEnd::Head } else { OpenEnd::Extent },
         );
-        let active = formula.evaluate(&system).unwrap();
+        let active = formula.evaluate_over(&system).unwrap();
 
         // One past the latest point of the two members, and nothing before any.
         let latest = [&first, closing]
@@ -1382,8 +1453,10 @@ fn keys(names: &[&str]) -> Vec<Key> {
 
 #[test]
 fn point_outputs_can_read_point_outputs() {
-    let mut system = SequenceSystem::new();
-    system.insert("up", timeline("up", &[(0, 5), (8, 9)]));
+    let mut system = StreamSystem::new();
+    system
+        .insert_stream("up", timeline("up", &[(0, 5), (8, 9)]))
+        .unwrap();
 
     let processor = vec![
         Processor::new("edges", Events::Edges(Formula::state("up"))),
@@ -1405,7 +1478,7 @@ fn a_formula_that_reads_its_own_output_is_a_cycle() {
 
     assert_eq!(processor.check(), Err(error.clone()));
     assert_eq!(
-        update::run(&SequenceSystem::new(), &[processor]).map(drop),
+        update::run(&StreamSystem::new(), &[processor]).map(drop),
         Err(error)
     );
 }
@@ -1422,8 +1495,10 @@ fn check_accepts_a_processor_that_reads_another_output_or_a_member() {
 
 #[test]
 fn a_failure_in_a_chain_leaves_the_system_as_it_was() {
-    let mut system = SequenceSystem::new();
-    system.insert("up", timeline("up", &[(0, 5)]));
+    let mut system = StreamSystem::new();
+    system
+        .insert_stream("up", timeline("up", &[(0, 5)]))
+        .unwrap();
     let untouched = system.clone();
 
     let processor = vec![
@@ -1460,29 +1535,31 @@ fn sighting(agent: i64, zone: &str) -> Value {
 
 /// Three sightings, the middle one with no `agent` and no `seen`, over an
 /// extent that stops at 40.
-fn sightings() -> SequenceSystem {
-    let mut system = SequenceSystem::new();
-    system.insert(
-        "sensor",
-        TimePointSequence::from_events(
+fn sightings() -> StreamSystem {
+    let mut system = StreamSystem::new();
+    system
+        .insert_stream(
             "sensor",
-            vec![
-                TimePointEvent::new(10, sighting(7, "gate")),
-                TimePointEvent::new(20, Value::record([("zone", Value::from("hall"))])),
-                TimePointEvent::new(30, sighting(9, "yard")),
-            ],
+            TimePointSequence::from_events(
+                "sensor",
+                vec![
+                    TimePointEvent::new(10, sighting(7, "gate")),
+                    TimePointEvent::new(20, Value::record([("zone", Value::from("hall"))])),
+                    TimePointEvent::new(30, sighting(9, "yard")),
+                ],
+            )
+            .with_observed(window(0, 40)),
         )
-        .with_observed(window(0, 40)),
-    );
+        .unwrap();
     system
 }
 
 fn project(
-    system: &SequenceSystem,
+    system: &StreamSystem,
     path: &str,
     into: Kind,
 ) -> Result<chronoloom::Sequence, ProcessError> {
-    Events::project("sensor", path, into).evaluate(system)
+    Events::project("sensor", path, into).evaluate_over(system)
 }
 
 fn instants<T>(points: &TimePointSequence<T>) -> Vec<i64> {
@@ -1584,7 +1661,7 @@ fn a_missing_or_null_field_is_skipped_and_a_field_of_another_kind_is_the_error()
     ));
     // Not a record at all, so it has no field.
     sensor.insert(TimePointEvent::new(3, Value::from(9)));
-    system.insert("sensor", sensor);
+    system.insert_stream("sensor", sensor).unwrap();
 
     let integers = project(&system, "n", Kind::Integer).unwrap();
     assert_eq!(instants(integers.as_time_point::<i64>().unwrap()), [2]);
@@ -1627,21 +1704,25 @@ fn a_projection_keeps_the_timestamps_the_extent_and_names_the_field() {
 #[test]
 fn a_projection_reads_a_member_of_values_and_nothing_else() {
     let mut system = sightings();
-    system.insert("count", numbers("count", &[(1, 5)]));
-    system.insert("up", timeline("up", &[(0, 5)]));
+    system
+        .insert_stream("count", numbers("count", &[(1, 5)]))
+        .unwrap();
+    system
+        .insert_stream("up", timeline("up", &[(0, 5)]))
+        .unwrap();
 
     assert!(matches!(
-        Events::project("count", "n", Kind::Integer).evaluate(&system),
+        Events::project("count", "n", Kind::Integer).evaluate_over(&system),
         Err(ProcessError::ValueTypeMismatch { key, .. }) if key.as_str() == "count"
     ));
     assert_eq!(
-        Events::project("up", "n", Kind::Integer).evaluate(&system),
+        Events::project("up", "n", Kind::Integer).evaluate_over(&system),
         Err(ProcessError::NotPoints {
             key: Key::from("up")
         })
     );
     assert_eq!(
-        Events::project("nothing", "n", Kind::Integer).evaluate(&system),
+        Events::project("nothing", "n", Kind::Integer).evaluate_over(&system),
         Err(ProcessError::UnknownKey {
             key: Key::from("nothing")
         })
@@ -1708,23 +1789,25 @@ fn a_projection_mismatch_names_the_field_and_changes_nothing_when_applied() {
 
 #[test]
 fn conditions_over_whole_values_work_in_formulas() {
-    let mut system = SequenceSystem::new();
-    system.insert(
-        "reading",
-        TimePointSequence::from_events(
+    let mut system = StreamSystem::new();
+    system
+        .insert_stream(
             "reading",
-            vec![
-                TimePointEvent::new(0, Value::from(2)),
-                TimePointEvent::new(10, Value::from(7.5)),
-                TimePointEvent::new(20, Value::from("high")),
-                TimePointEvent::new(30, Value::from(3)),
-            ],
+            TimePointSequence::from_events(
+                "reading",
+                vec![
+                    TimePointEvent::new(0, Value::from(2)),
+                    TimePointEvent::new(10, Value::from(7.5)),
+                    TimePointEvent::new(20, Value::from("high")),
+                    TimePointEvent::new(30, Value::from(3)),
+                ],
+            )
+            .with_observed(window(0, 40)),
         )
-        .with_observed(window(0, 40)),
-    );
+        .unwrap();
 
     let high = Formula::while_matching(Pattern::new("reading", Condition::Greater(Value::from(5))));
-    let spans = high.evaluate(&system).unwrap();
+    let spans = high.evaluate_over(&system).unwrap();
 
     // Only the 7.5 is above five: the text matches no ordering, so its sample
     // is inactive, and so is the 3 after it.
@@ -1735,7 +1818,7 @@ fn conditions_over_whole_values_work_in_formulas() {
         "reading",
         Condition::GreaterOrEqual(Value::from(7.5)),
     ))
-    .evaluate(&system)
+    .evaluate_over(&system)
     .unwrap();
     assert_eq!(instants(matching.as_time_point::<Value>().unwrap()), [10]);
 }
@@ -1748,19 +1831,21 @@ fn count_record(count: Value) -> Value {
     Value::record([("count", count)])
 }
 
-fn counts(events: &[(i64, Value)]) -> SequenceSystem {
-    let mut system = SequenceSystem::new();
-    system.insert(
-        "motion",
-        TimePointSequence::from_events(
+fn counts(events: &[(i64, Value)]) -> StreamSystem {
+    let mut system = StreamSystem::new();
+    system
+        .insert_stream(
             "motion",
-            events
-                .iter()
-                .map(|(timestamp, value)| TimePointEvent::new(*timestamp, value.clone()))
-                .collect(),
+            TimePointSequence::from_events(
+                "motion",
+                events
+                    .iter()
+                    .map(|(timestamp, value)| TimePointEvent::new(*timestamp, value.clone()))
+                    .collect(),
+            )
+            .with_observed(window(0, 100)),
         )
-        .with_observed(window(0, 100)),
-    );
+        .unwrap();
     system
 }
 
@@ -1768,8 +1853,8 @@ fn field(path: &str, condition: Condition<Value>) -> Pattern {
     Pattern::field("motion", path, condition)
 }
 
-fn matched_instants(pattern: Pattern, system: &SequenceSystem) -> Vec<i64> {
-    let matching = Events::Matching(pattern).evaluate(system).unwrap();
+fn matched_instants(pattern: Pattern, system: &StreamSystem) -> Vec<i64> {
+    let matching = Events::Matching(pattern).evaluate_over(system).unwrap();
     instants(matching.as_time_point::<Value>().unwrap())
 }
 
@@ -1855,27 +1940,27 @@ fn a_field_pattern_works_in_every_leaf() {
     let is = |text: &str| field("count", Condition::Equals(Value::from(text)));
 
     let between = Formula::between(is("start"), is("end"))
-        .evaluate(&system)
+        .evaluate_over(&system)
         .unwrap();
     assert_eq!(bounds(&between), [(10, 40), (50, 100)]);
 
-    let occurs = Formula::occurs(is("end")).evaluate(&system).unwrap();
+    let occurs = Formula::occurs(is("end")).evaluate_over(&system).unwrap();
     assert_eq!(bounds(&occurs), [(40, 41)]);
 
-    let hold = Formula::hold(is("end"), 5).evaluate(&system).unwrap();
+    let hold = Formula::hold(is("end"), 5).evaluate_over(&system).unwrap();
     assert_eq!(bounds(&hold), [(40, 45)]);
 
     // The record without the field is a sample that does not match.
     let low = field("count", Condition::Less(Value::from(5)));
-    let held = Formula::while_matching(low).evaluate(&system).unwrap();
+    let held = Formula::while_matching(low).evaluate_over(&system).unwrap();
     assert_eq!(bounds(&held), [(20, 30)]);
 
     // Two fields: two patterns, combined by formulas.
-    let mut two = SequenceSystem::new();
+    let mut two = StreamSystem::new();
     let both = |count: i64, zone: &str| {
         Value::record([("count", Value::from(count)), ("zone", Value::from(zone))])
     };
-    two.insert(
+    two.insert_stream(
         "motion",
         TimePointSequence::from_events(
             "motion",
@@ -1886,25 +1971,28 @@ fn a_field_pattern_works_in_every_leaf() {
             ],
         )
         .with_observed(window(0, 40)),
-    );
+    )
+    .unwrap();
     let busy = Formula::while_matching(field("count", Condition::Greater(Value::from(5))));
     let gate = Formula::while_matching(field("zone", Condition::Equals(Value::from("gate"))));
-    let both_at_once = Formula::And(vec![busy, gate]).evaluate(&two).unwrap();
+    let both_at_once = Formula::And(vec![busy, gate]).evaluate_over(&two).unwrap();
     assert_eq!(bounds(&both_at_once), [(10, 20)]);
 }
 
 #[test]
 fn a_field_pattern_over_a_member_that_is_not_values_is_a_type_mismatch() {
-    let mut system = SequenceSystem::new();
-    system.insert("motion", numbers("motion", &[(1, 5)]));
+    let mut system = StreamSystem::new();
+    system
+        .insert_stream("motion", numbers("motion", &[(1, 5)]))
+        .unwrap();
     let pattern = field("count", Condition::Any);
 
     assert!(matches!(
-        Formula::occurs(pattern.clone()).evaluate(&system),
+        Formula::occurs(pattern.clone()).evaluate_over(&system),
         Err(ProcessError::ValueTypeMismatch { key, .. }) if key.as_str() == "motion"
     ));
     assert!(matches!(
-        Events::Matching(pattern.clone()).evaluate(&system),
+        Events::Matching(pattern.clone()).evaluate_over(&system),
         Err(ProcessError::ValueTypeMismatch { .. })
     ));
 
@@ -1912,10 +2000,10 @@ fn a_field_pattern_over_a_member_that_is_not_values_is_a_type_mismatch() {
     let records = counts(&[(1, count_record(Value::from(1)))]);
     assert!(
         Formula::occurs(Pattern::new("motion", Condition::Any::<i64>))
-            .evaluate(&records)
+            .evaluate_over(&records)
             .is_err()
     );
-    assert!(Formula::occurs(pattern).evaluate(&records).is_ok());
+    assert!(Formula::occurs(pattern).evaluate_over(&records).is_ok());
 }
 
 #[test]
@@ -1952,7 +2040,7 @@ fn a_field_and_a_projection_differ_only_for_an_event_without_the_field() {
 
 /// A record stream where `n` is, at each event, an integer, a float, null,
 /// text, or (when `gaps` allows) absent, and `a.n` an integer.
-fn field_stream(random: &mut Random, gaps: bool) -> SequenceSystem {
+fn field_stream(random: &mut Random, gaps: bool) -> StreamSystem {
     let mut timestamps: Vec<i64> = (0..random.below(16))
         .map(|_| random.between(DOMAIN_START, DOMAIN_END))
         .collect();
@@ -1977,11 +2065,13 @@ fn field_stream(random: &mut Random, gaps: bool) -> SequenceSystem {
         })
         .collect();
 
-    let mut system = SequenceSystem::new();
-    system.insert(
-        "motion",
-        TimePointSequence::from_events("motion", events).with_observed(extent(random)),
-    );
+    let mut system = StreamSystem::new();
+    system
+        .insert_stream(
+            "motion",
+            TimePointSequence::from_events("motion", events).with_observed(extent(random)),
+        )
+        .unwrap();
     system
 }
 

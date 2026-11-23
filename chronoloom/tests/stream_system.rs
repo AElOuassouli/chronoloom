@@ -485,7 +485,7 @@ fn derived_streams_always_equal_the_processors_run_from_scratch() {
             let report = system.update(update).unwrap();
 
             // From scratch: every processor added to the streams as they are.
-            let expected = update::run(&oracle, &list).unwrap();
+            let expected = update::run(&update::streams_of(&oracle), &list).unwrap();
             let derived: Vec<&str> = system.derived().map(|key| key.as_str()).collect();
             let wanted: Vec<&str> = expected.derived().map(|key| key.as_str()).collect();
             assert_eq!(derived, wanted);
@@ -506,7 +506,7 @@ fn derived_streams_always_equal_the_processors_run_from_scratch() {
             let window = Extent::from_spans(vec![span(stream.from, stream.horizon)]);
             system.observe(&window).unwrap();
             oracle.observe(&window);
-            let expected = update::run(&oracle, &list).unwrap();
+            let expected = update::run(&update::streams_of(&oracle), &list).unwrap();
             for key in expected.derived() {
                 assert_eq!(
                     system.get(key.as_str()),

@@ -5,7 +5,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::operator::compile_recipe;
 use crate::processing::{self, Input, ProcessError, Recipe};
-use crate::sequence_system::{Key, SequenceSystem};
+use crate::sequence_system::{Key, Sequence, SequenceSystem};
+use crate::stream_system::{writes, Mode, StreamSystem};
 
 /// One recipe of a [`StreamSystem`]: the inputs it reads, a formula over them,
 /// and the key of the one output it produces.
@@ -131,6 +132,28 @@ impl Processor {
         self.as_set()
             .problems(true)
             .map_err(|mut problems| problems.swap_remove(0))
+    }
+
+    /// The sequence the recipe denotes over the members of `system`, once:
+    /// nothing is stored, and the system is not changed.
+    ///
+    /// # Errors
+    ///
+    /// The first declared input the system does not satisfy, in key order;
+    /// [`ProcessError::Cycle`] for a processor reading its own output, or a
+    /// member under it, as adding it to a stream system would refuse;
+    /// otherwise the first [`ProcessError`] the recipe meets. For a per-entity
+    /// output that is
+    /// [`ProcessError::SeveralMembers`], as it has no single sequence (add its
+    /// processor to a stream system).
+    pub fn evaluate<M: Mode>(&self, system: &StreamSystem<M>) -> Result<Sequence, ProcessError> {
+        processing::check_declared(&self.declared, |key| key == &self.output, system.members())?;
+        if self.inputs().into_iter().any(|key| writes(self, key)) {
+            return Err(ProcessError::Cycle {
+                keys: vec![self.output.clone()],
+            });
+        }
+        self.recipe.evaluate(system.members())
     }
 
     /// The inputs whose shape was declared.

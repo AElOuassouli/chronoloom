@@ -14,9 +14,11 @@ use serde_json::{json, Value as Json};
 
 use chronoloom::{
     Condition, Edge, Emission, Emitted, Events, Formula, Group, Input, Kind, LiveProcessor,
-    Pattern, ProcessError, Processor, Recipe, Schema, SequenceSystem, TimePointEvent,
+    Pattern, ProcessError, Processor, Recipe, Schema, SequenceSystem, StreamSystem, TimePointEvent,
     TimePointSequence, Value,
 };
+
+use update::Evaluate;
 
 use common::{bounds, for_each_seed, span, Random};
 use streams::{processors, stream, Op, Stream, POINT_INPUTS, RECORD_INPUTS, STATE_INPUTS};
@@ -197,27 +199,29 @@ fn a_host_that_restarts_gets_the_batch_result() {
             chronoloom::TimeIntervalEvent::span(i64::MIN, 50).expect("ordered"),
         ])),
     );
-    let batch = update::run(&recorded, &processor).expect("the batch result");
+    let batch = update::run(&update::streams_of(&recorded), &processor).expect("the batch result");
 
-    let mut rebuilt = SequenceSystem::new();
-    rebuilt.insert(
-        "edges",
-        TimePointSequence::from_events(
+    let mut rebuilt = StreamSystem::new();
+    rebuilt
+        .insert_stream(
             "edges",
-            edges
-                .iter()
-                .filter_map(|emission| match &emission.item {
-                    Emitted::Edge(edge) => Some(*edge),
-                    Emitted::Point(_) => None,
-                })
-                .collect(),
-        ),
-    );
+            TimePointSequence::from_events(
+                "edges",
+                edges
+                    .iter()
+                    .filter_map(|emission| match &emission.item {
+                        Emitted::Edge(edge) => Some(*edge),
+                        Emitted::Point(_) => None,
+                    })
+                    .collect(),
+            ),
+        )
+        .unwrap();
     let timeline = Formula::between(
         Pattern::new("edges", Condition::Equals(Edge::Start)),
         Pattern::new("edges", Condition::Equals(Edge::End)),
     )
-    .evaluate(&rebuilt)
+    .evaluate_over(&rebuilt)
     .expect("edges are edges");
     assert_eq!(
         bounds(&timeline),

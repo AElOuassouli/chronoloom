@@ -36,4 +36,4 @@ mod tests;
 mod r#while;
 
 pub(crate) use entities::{any_of, count_of};
-pub(crate) use plan::{compile_recipe, PointsPlan, TimelinePlan};
+pub(crate) use plan::{compile_recipe, TimelinePlan};

@@ -2,6 +2,10 @@
 
 ## Added
 
+- `Processor::evaluate`, the output of a processor over a `StreamSystem`, once:
+  nothing is stored and the system is not changed. It refuses what
+  `add_processor` would refuse on its own (a formula reading its own output) and
+  holds the system to the declared inputs.
 - `StreamSystem::len` and `StreamSystem::is_empty`, the number of streams and
   derived streams it holds.
 - `Report::evaluated`, the outputs of the processors a change evaluated again,
@@ -185,6 +189,9 @@
 
 ## Removed
 
+- `Formula::evaluate`, `Events::evaluate` and `Recipe::evaluate`, which took a
+  `SequenceSystem`: evaluate a processor with `Processor::evaluate` over a
+  `StreamSystem`, or add it to one.
 - `sequence_system::Batch`, the recording buffer: it is now `stream_system::Update`
   (also at the crate root), and `SequenceSystem::record_batch` is
   `record_update`. `Batch` at the root now names the batch mode of a

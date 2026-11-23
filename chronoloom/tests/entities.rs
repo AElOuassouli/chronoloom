@@ -7,9 +7,11 @@ mod update;
 
 use chronoloom::stream_system::Update;
 use chronoloom::{
-    Condition, Extent, Formula, Group, Key, Pattern, ProcessError, Processor, Recipe,
-    SequenceSystem, StreamSystem, TimeIntervalSequence, TimePointEvent, TimePointSequence, Value,
+    Condition, Extent, Formula, Group, Key, Pattern, ProcessError, Processor, Recipe, StreamSystem,
+    TimeIntervalSequence, TimePointEvent, TimePointSequence, Value,
 };
+
+use update::Evaluate;
 
 use common::{bounds, extent, for_each_seed, span, spans, Random, DOMAIN_END, DOMAIN_START};
 
@@ -32,18 +34,20 @@ fn by_agent() -> Group {
     Group::new("gate", "agent")
 }
 
-fn gate(events: Vec<(i64, Value)>) -> SequenceSystem {
-    let mut system = SequenceSystem::new();
-    system.insert(
-        "gate",
-        TimePointSequence::from_events(
+fn gate(events: Vec<(i64, Value)>) -> StreamSystem {
+    let mut system = StreamSystem::new();
+    system
+        .insert_stream(
             "gate",
-            events
-                .into_iter()
-                .map(|(at, value)| TimePointEvent::new(at, value))
-                .collect(),
-        ),
-    );
+            TimePointSequence::from_events(
+                "gate",
+                events
+                    .into_iter()
+                    .map(|(at, value)| TimePointEvent::new(at, value))
+                    .collect(),
+            ),
+        )
+        .unwrap();
 
     system
 }
@@ -91,7 +95,7 @@ fn crossings(random: &mut Random) -> Vec<(i64, Value)> {
 }
 
 /// The events of one agent, as a member filtered by hand, and its first instant.
-fn filtered(system: &SequenceSystem, agent: i64) -> (SequenceSystem, Option<i64>) {
+fn filtered(system: &StreamSystem, agent: i64) -> (StreamSystem, Option<i64>) {
     let records = system.points::<Value>("gate").expect("records");
     let events: Vec<TimePointEvent<Value>> = records
         .iter()
@@ -101,10 +105,11 @@ fn filtered(system: &SequenceSystem, agent: i64) -> (SequenceSystem, Option<i64>
     let first = events.first().map(TimePointEvent::timestamp);
 
     let mut hand = system.clone();
-    hand.insert(
+    hand.insert_stream(
         "gate",
         TimePointSequence::from_events("gate", events).with_observed(records.observed().clone()),
-    );
+    )
+    .unwrap();
 
     (hand, first)
 }
@@ -114,10 +119,10 @@ fn an_entity_is_the_formula_over_its_own_records() {
     for_each_seed(CASES, |random, _| {
         let mut system = gate(crossings(random));
         let observed = extent(random);
-        system.observe(&observed);
+        system.observe(&observed).unwrap();
         let door = TimeIntervalSequence::from_spans("door", spans(random, 4))
             .with_observed(extent(random));
-        system.insert("door", door);
+        system.insert_stream("door", door).unwrap();
 
         // The door is shared by every agent, the records are not.
         let formula = present().and(Formula::state("door"));
@@ -132,7 +137,7 @@ fn an_entity_is_the_formula_over_its_own_records() {
             };
 
             // An entity is observed from its first record on.
-            let mut expected = formula.evaluate(&hand).expect("the formula");
+            let mut expected = formula.evaluate_over(&hand).expect("the formula");
             expected.observe(&Extent::from_spans(vec![span(first, i64::MAX)]));
             assert_eq!(result.intervals(&key), Some(&expected), "{key}");
         }
@@ -166,10 +171,12 @@ fn any_is_the_union_of_the_entities() {
 fn the_count_is_the_number_of_active_entities_at_every_instant() {
     for_each_seed(CASES, |random, _| {
         let mut system = gate(crossings(random));
-        system.observe(&Extent::from_spans(vec![span(
-            DOMAIN_START,
-            DOMAIN_END + 8,
-        )]));
+        system
+            .observe(&Extent::from_spans(vec![span(
+                DOMAIN_START,
+                DOMAIN_END + 8,
+            )]))
+            .unwrap();
         let result = update::run(&system, &processor(&present())).expect("a result");
 
         let members: Vec<&TimeIntervalSequence> = result
@@ -207,7 +214,9 @@ fn the_durations_of_the_entities_add_up_to_the_count_times_its_duration() {
     for_each_seed(CASES, |random, _| {
         let mut system = gate(crossings(random));
         let horizon = DOMAIN_END + 8;
-        system.observe(&Extent::from_spans(vec![span(0, horizon)]));
+        system
+            .observe(&Extent::from_spans(vec![span(0, horizon)]))
+            .unwrap();
         let result = update::run(&system, &processor(&present())).expect("a result");
 
         let entities: u64 = result
@@ -483,11 +492,13 @@ fn the_count_is_known_where_every_entity_is() {
         (10, crossing(Value::from(1), "in")),
         (30, crossing(Value::from(2), "in")),
     ]);
-    system.insert(
-        "door",
-        TimeIntervalSequence::from_spans("door", vec![span(0, 100)])
-            .with_observed(Extent::from_spans(vec![span(0, 40), span(60, 100)])),
-    );
+    system
+        .insert_stream(
+            "door",
+            TimeIntervalSequence::from_spans("door", vec![span(0, 100)])
+                .with_observed(Extent::from_spans(vec![span(0, 40), span(60, 100)])),
+        )
+        .unwrap();
     let result = update::run(
         &system,
         &[Processor::new(
@@ -519,22 +530,26 @@ fn an_entity_not_seen_yet_adds_no_uncertainty() {
     // there. Agent 1's timeline (present or door) is known over the gap
     // because the door is active; agent 2, who only appears at 70, must not
     // make the result unknown there.
-    let mut system = SequenceSystem::new();
-    system.insert(
-        "gate",
-        TimePointSequence::from_events(
+    let mut system = StreamSystem::new();
+    system
+        .insert_stream(
             "gate",
-            vec![
-                TimePointEvent::new(10, crossing(Value::from(1), "in")),
-                TimePointEvent::new(70, crossing(Value::from(2), "in")),
-            ],
+            TimePointSequence::from_events(
+                "gate",
+                vec![
+                    TimePointEvent::new(10, crossing(Value::from(1), "in")),
+                    TimePointEvent::new(70, crossing(Value::from(2), "in")),
+                ],
+            )
+            .with_observed(Extent::from_spans(vec![span(0, 20), span(30, 100)])),
         )
-        .with_observed(Extent::from_spans(vec![span(0, 20), span(30, 100)])),
-    );
-    system.insert(
-        "door",
-        TimeIntervalSequence::from_spans("door", vec![span(20, 30)]),
-    );
+        .unwrap();
+    system
+        .insert_stream(
+            "door",
+            TimeIntervalSequence::from_spans("door", vec![span(20, 30)]),
+        )
+        .unwrap();
 
     let formula = present().or(Formula::state("door"));
     let result = update::run(
@@ -565,7 +580,7 @@ fn an_entity_not_seen_yet_adds_no_uncertainty() {
 // Reading the members, and the order of evaluation
 // ---------------------------------------------------------------------------
 
-fn two_agents() -> SequenceSystem {
+fn two_agents() -> StreamSystem {
     gate(vec![
         (10, crossing(Value::from(7), "in")),
         (12, crossing(Value::from(9), "in")),
@@ -728,7 +743,7 @@ fn a_processor_that_cannot_be_evaluated_changes_nothing() {
 fn a_per_entity_output_has_no_single_sequence() {
     let output = Recipe::per_entity(by_agent(), present());
     assert_eq!(
-        output.evaluate(&two_agents()),
+        output.evaluate_over(&two_agents()),
         Err(ProcessError::SeveralMembers)
     );
     assert_eq!(
@@ -738,7 +753,7 @@ fn a_per_entity_output_has_no_single_sequence() {
 
     // The others do have one.
     let any = Recipe::any_entity(by_agent(), present());
-    let sequence = any.evaluate(&two_agents()).expect("a timeline");
+    let sequence = any.evaluate_over(&two_agents()).expect("a timeline");
     assert_eq!(
         sequence.as_time_interval().map(TimeIntervalSequence::len),
         Some(1)
@@ -753,33 +768,63 @@ fn a_per_entity_output_has_no_single_sequence() {
 fn entity_recipes_evaluate_to_one_labelled_sequence() {
     let system = two_agents();
     let recipe = Recipe::count_entities(by_agent(), present());
-    let sequence = recipe.evaluate(&system).expect("a sequence");
+    let sequence = recipe.evaluate_over(&system).expect("a sequence");
     let counts = sequence.as_time_point::<i64>().expect("integer points");
 
     assert_eq!(counts.label(), recipe.to_string());
     let any = Recipe::any_entity(by_agent(), present());
-    let evaluated = any.evaluate(&system).expect("a timeline");
+    let evaluated = any.evaluate_over(&system).expect("a timeline");
     let timeline = evaluated.as_time_interval().expect("a timeline");
     assert_eq!(timeline.label(), any.to_string());
 }
 
 #[test]
 fn the_records_of_a_group_must_be_values() {
-    let mut system = SequenceSystem::new();
-    system.insert("numbers", TimePointSequence::<i64>::new("numbers"));
-    system.insert("timeline", TimeIntervalSequence::new("timeline"));
+    let mut system = StreamSystem::new();
+    system
+        .insert_stream("numbers", TimePointSequence::<i64>::new("numbers"))
+        .unwrap();
+    system
+        .insert_stream("timeline", TimeIntervalSequence::new("timeline"))
+        .unwrap();
     let output = |key: &str| Recipe::count_entities(Group::new(key, "agent"), present());
 
     assert!(matches!(
-        output("numbers").evaluate(&system),
+        output("numbers").evaluate_over(&system),
         Err(ProcessError::ValueTypeMismatch { .. })
     ));
     assert!(matches!(
-        output("timeline").evaluate(&system),
+        output("timeline").evaluate_over(&system),
         Err(ProcessError::NotPoints { .. })
     ));
     assert!(matches!(
-        output("nothing").evaluate(&system),
+        output("nothing").evaluate_over(&system),
         Err(ProcessError::UnknownKey { .. })
+    ));
+}
+
+#[test]
+fn evaluating_a_per_entity_processor_refuses_to_read_a_key_under_its_output() {
+    let system = two_agents();
+    let reading = |output: &str, read: &str| {
+        Processor::new(output, Recipe::per_entity(by_agent(), Formula::state(read)))
+    };
+
+    // A member under the output is written by the processor, so reading it is a cycle.
+    assert_eq!(
+        reading("each", "each/7").evaluate(&system),
+        Err(ProcessError::Cycle {
+            keys: vec!["each".into()]
+        })
+    );
+    // A key that only shares the prefix is not under the output.
+    assert!(!matches!(
+        reading("each", "eachother").evaluate(&system),
+        Err(ProcessError::Cycle { .. })
+    ));
+    // A single-output processor writes only its own key, not one under it.
+    assert!(!matches!(
+        Processor::new("door", Formula::state("door/7")).evaluate(&system),
+        Err(ProcessError::Cycle { .. })
     ));
 }

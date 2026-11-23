@@ -13,6 +13,7 @@ pub(crate) mod update;
 
 pub use errors::UpdateError;
 pub use mode::{Batch, Mode};
+pub(crate) use pipeline::writes;
 pub use report::Report;
 pub use system::StreamSystem;
 pub use update::Update;

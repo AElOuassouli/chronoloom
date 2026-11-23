@@ -2,11 +2,9 @@
 
 use core::fmt;
 
-use crate::operator::PointsPlan;
-use crate::sequence_system::{Key, Sequence, SequenceSystem};
+use crate::sequence_system::Key;
 
 use super::condition::Pattern;
-use super::errors::ProcessError;
 use super::formula::Formula;
 use super::kind::Kind;
 
@@ -59,25 +57,27 @@ use super::kind::Kind;
 /// field written as `key.path`, or `key` for the empty path.
 ///
 /// ```
+/// use chronoloom::stream_system::StreamSystem;
 /// use chronoloom::{
-///     Events, Kind, SequenceSystem, TimePointEvent, TimePointSequence, Value,
+///     Events, Kind, Processor, TimePointEvent, TimePointSequence, Value,
 /// };
 ///
-/// let mut system = SequenceSystem::new();
-/// system.insert("sensor", TimePointSequence::from_events("sensor", vec![
+/// let mut system = StreamSystem::new();
+/// system.insert_stream("sensor", TimePointSequence::from_events("sensor", vec![
 ///     TimePointEvent::new(10, Value::record([("agent", Value::record([("id", Value::from(7))]))])),
 ///     TimePointEvent::new(20, Value::record([("note", Value::from("idle"))])),
 ///     TimePointEvent::new(30, Value::record([("agent", Value::record([("id", Value::from(9))]))])),
-/// ]));
+/// ]))?;
 ///
-/// let agents = Events::project("sensor", "agent.id", Kind::Integer).evaluate(&system)?;
+/// let agents = Events::project("sensor", "agent.id", Kind::Integer);
+/// let agents = Processor::new("agents", agents).evaluate(&system)?;
 ///
 /// // The event without an agent is skipped.
 /// let agents = agents.as_time_point::<i64>().unwrap();
 /// let seen: Vec<(i64, i64)> = agents.iter().map(|e| (e.timestamp(), *e.value())).collect();
 /// assert_eq!(seen, [(10, 7), (30, 9)]);
 /// assert_eq!(agents.label(), "sensor.agent.id");
-/// # Ok::<(), chronoloom::ProcessError>(())
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 ///
 /// [`Edge::End`]: super::Edge::End
@@ -138,20 +138,6 @@ impl Events {
             Self::Matching(pattern) => keys.push(&pattern.key),
             Self::Project { key, .. } | Self::Changes { key } => keys.push(key),
         }
-    }
-
-    /// The point sequence the events denote over the members of `system`.
-    ///
-    /// # Errors
-    ///
-    /// As [`Formula::evaluate`], [`ProcessError::NotPoints`] or
-    /// [`ProcessError::UnknownKey`] for a `Changes` of a member that is not a
-    /// point sequence, [`ProcessError::NotPoints`] or
-    /// [`ProcessError::ValueTypeMismatch`] for a pattern or projection the
-    /// member cannot satisfy, and [`ProcessError::ProjectionMismatch`] for a
-    /// field that is not of the kind projected.
-    pub fn evaluate(&self, system: &SequenceSystem) -> Result<Sequence, ProcessError> {
-        PointsPlan::compile(self).batch(system).map(Sequence::from)
     }
 }
 

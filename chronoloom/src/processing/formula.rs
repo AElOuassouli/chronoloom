@@ -3,13 +3,13 @@
 use core::fmt;
 use core::ops::Not;
 
+use crate::operator::TimelinePlan;
 use crate::primitives::Timestamp;
 use crate::sequence_system::{Key, SequenceSystem};
 use crate::sequences::TimeIntervalSequence;
 
 use super::condition::Pattern;
 use super::errors::ProcessError;
-use super::evaluate;
 
 /// Where a [`Formula::Between`] span with no end stops.
 ///
@@ -394,7 +394,7 @@ impl Formula {
     /// [`ProcessError::ValueTypeMismatch`] for a condition over another value
     /// type than its member's.
     pub fn evaluate(&self, system: &SequenceSystem) -> Result<TimeIntervalSequence, ProcessError> {
-        evaluate::evaluate(self, system)
+        TimelinePlan::compile(self).batch(system)
     }
 
     /// An `And` of `Or`s of literals that denotes the same timeline as this

@@ -3,6 +3,7 @@
 use core::fmt;
 use std::collections::BTreeMap;
 
+use crate::operator::records;
 use crate::primitives::{TimeIntervalEvent, TimePointEvent, Timestamp};
 use crate::sequence_system::{Key, Sequence, SequenceSystem};
 use crate::sequences::attribute::Attribute;
@@ -12,7 +13,6 @@ use crate::values::Value;
 
 use super::condition::Pattern;
 use super::errors::ProcessError;
-use super::evaluate;
 use super::formula::Formula;
 
 /// The member of `Value` records that carries the entities, and the field of
@@ -267,7 +267,7 @@ fn timelines(
     formula: &Formula,
     system: &SequenceSystem,
 ) -> Result<Timelines, ProcessError> {
-    let records = evaluate::records(&by.key, system)?;
+    let records = records(&by.key, system)?;
     let observed = records.observed().clone();
     let entities: Vec<Entity> = entities(records, &by.path)
         .into_iter()
@@ -335,7 +335,7 @@ pub(super) fn per_entity(
 }
 
 /// The `AnyEntity` timeline of the entities of `by`.
-pub(super) fn any(
+fn any(
     label: String,
     by: &Group,
     formula: &Formula,
@@ -353,7 +353,7 @@ pub(super) fn any(
 }
 
 /// The `CountEntities` changes of the entities of `by`.
-pub(super) fn count(
+fn count(
     label: String,
     by: &Group,
     formula: &Formula,
@@ -529,5 +529,37 @@ pub(super) fn retarget(formula: &Formula, from: &Key, to: &Key) -> Formula {
             alpha: *alpha,
             beta: *beta,
         },
+    }
+}
+
+/// An entity recipe as the operators hold it, its label written out.
+#[derive(Debug, Clone)]
+pub(crate) enum EntityRecipe {
+    /// Has no single sequence.
+    PerEntity,
+    AnyEntity {
+        label: String,
+        by: Group,
+        formula: Formula,
+    },
+    CountEntities {
+        label: String,
+        by: Group,
+        formula: Formula,
+    },
+}
+
+impl EntityRecipe {
+    /// The sequence of the recipe over the members of `system`.
+    pub(crate) fn evaluate(&self, system: &SequenceSystem) -> Result<Sequence, ProcessError> {
+        match self {
+            Self::PerEntity => Err(ProcessError::SeveralMembers),
+            Self::AnyEntity { label, by, formula } => {
+                any(label.clone(), by, formula, system).map(Sequence::from)
+            }
+            Self::CountEntities { label, by, formula } => {
+                count(label.clone(), by, formula, system).map(Sequence::from)
+            }
+        }
     }
 }

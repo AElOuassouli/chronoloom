@@ -702,6 +702,20 @@ fn a_per_entity_output_has_no_single_sequence() {
 }
 
 #[test]
+fn entity_recipes_evaluate_to_one_labelled_sequence() {
+    let system = two_agents();
+    let recipe = Recipe::count_entities(by_agent(), present());
+    let sequence = recipe.evaluate(&system).expect("a sequence");
+    let counts = sequence.as_time_point::<i64>().expect("integer points");
+
+    assert_eq!(counts.label(), recipe.to_string());
+    let any = Recipe::any_entity(by_agent(), present());
+    let evaluated = any.evaluate(&system).expect("a timeline");
+    let timeline = evaluated.as_time_interval().expect("a timeline");
+    assert_eq!(timeline.label(), any.to_string());
+}
+
+#[test]
 fn the_records_of_a_group_must_be_values() {
     let mut system = SequenceSystem::new();
     system.insert("numbers", TimePointSequence::<i64>::new("numbers"));

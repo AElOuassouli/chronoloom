@@ -1,12 +1,13 @@
 //! `Occurs`: `[t, t + 1)` for each matching point inside the extent.
 
 use crate::primitives::TimeIntervalEvent;
-use crate::processing::read;
 use crate::processing::{Pattern, ProcessError};
 use crate::sequence_system::SequenceSystem;
 use crate::sequences::attribute::Attribute;
 use crate::sequences::interval::normalization::normalize;
 use crate::sequences::TimeIntervalSequence;
+
+use super::reading::read;
 
 #[derive(Debug, Clone)]
 pub(super) struct Occurs {

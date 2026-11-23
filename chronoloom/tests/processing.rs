@@ -683,6 +683,26 @@ fn a_recipe_evaluates_like_its_formula_or_events_and_keeps_the_label() {
     );
 }
 
+#[test]
+fn every_points_recipe_evaluates_like_its_events() {
+    let mut system = sightings();
+    system.insert(
+        "door",
+        words("door", &[(5, "open"), (7, "open"), (9, "close")]),
+    );
+    system.insert("up", timeline("up", &[(0, 5)]));
+    for events in [
+        Events::Edges(Formula::state("up")),
+        Events::Matching(word("door", "open")),
+        Events::changes("door"),
+        Events::project("sensor", "agent.id", Kind::Integer),
+    ] {
+        let through = Recipe::Points(events.clone()).evaluate(&system);
+        assert_eq!(through, events.evaluate(&system));
+        assert!(through.is_ok(), "{events}");
+    }
+}
+
 // Events
 
 #[test]
@@ -738,6 +758,52 @@ fn matching_keeps_the_points_and_their_values() {
         Events::Matching(Pattern::new("door", Condition::Equals(1_i64))).evaluate(&system),
         Err(ProcessError::ValueTypeMismatch { .. })
     ));
+}
+
+#[test]
+fn matching_and_edges_report_what_cannot_be_read() {
+    let mut system = system_with(words("motion", &[(10, "start")]));
+    system.insert("up", timeline("up", &[(0, 5)]));
+
+    assert_eq!(
+        Events::Matching(word("nothing", "x")).evaluate(&system),
+        Err(ProcessError::UnknownKey {
+            key: "nothing".into()
+        })
+    );
+    assert_eq!(
+        Events::Matching(Pattern::new("up", Condition::<i64>::Any)).evaluate(&system),
+        Err(ProcessError::NotPoints { key: "up".into() })
+    );
+    assert_eq!(
+        Events::Edges(Formula::state("nothing")).evaluate(&system),
+        Err(ProcessError::UnknownKey {
+            key: "nothing".into()
+        })
+    );
+    // Both patterns of a between are read, whichever fails.
+    for (start, end) in [("nothing", "motion"), ("motion", "nothing")] {
+        let formula = Formula::between(word(start, "start"), word(end, "stop"));
+        assert_eq!(
+            formula.evaluate(&system).map(|_| ()),
+            Err(ProcessError::UnknownKey {
+                key: "nothing".into()
+            })
+        );
+    }
+}
+
+#[test]
+fn edges_of_an_empty_timeline_are_no_points_and_keep_the_extent() {
+    let mut system = SequenceSystem::new();
+    system.insert("up", timeline("up", &[]).with_observed(window(0, 30)));
+    let edges = Events::Edges(Formula::state("up"))
+        .evaluate(&system)
+        .unwrap();
+    let points = edges.as_time_point::<Edge>().unwrap();
+
+    assert_eq!(points.iter().count(), 0);
+    assert_eq!(points.observed(), &window(0, 30));
 }
 
 #[test]

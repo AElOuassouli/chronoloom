@@ -2,11 +2,11 @@
 
 use core::fmt;
 
+use crate::operator::PointsPlan;
 use crate::sequence_system::{Key, Sequence, SequenceSystem};
 
 use super::condition::Pattern;
 use super::errors::ProcessError;
-use super::evaluate;
 use super::formula::Formula;
 use super::kind::Kind;
 
@@ -151,7 +151,7 @@ impl Events {
     /// member cannot satisfy, and [`ProcessError::ProjectionMismatch`] for a
     /// field that is not of the kind projected.
     pub fn evaluate(&self, system: &SequenceSystem) -> Result<Sequence, ProcessError> {
-        evaluate::evaluate_events(self, system)
+        PointsPlan::compile(self).batch(system).map(Sequence::from)
     }
 }
 

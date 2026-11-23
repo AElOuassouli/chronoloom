@@ -10,7 +10,7 @@ use super::events::Events;
 use super::formula::Formula;
 use super::group::{self, Derived, Group};
 use super::input::Input;
-use crate::operator::Plan;
+use crate::operator::compile_recipe;
 
 /// What the members of a processor's result are: a timeline, points, or one
 /// timeline per entity. In a serialised document the first two are named
@@ -94,26 +94,7 @@ impl Recipe {
     /// reading the records of the group like a projection does, and those of
     /// the formula.
     pub fn evaluate(&self, system: &SequenceSystem) -> Result<Sequence, ProcessError> {
-        Plan::compile_recipe(self).batch(system)
-    }
-
-    /// The evaluation of the outputs that are not timelines, which the
-    /// operators do not own yet.
-    pub(crate) fn evaluate_legacy(
-        &self,
-        system: &SequenceSystem,
-    ) -> Result<Sequence, ProcessError> {
-        match self {
-            Self::Timeline(formula) => formula.evaluate(system).map(Sequence::from),
-            Self::Points(events) => events.evaluate(system),
-            Self::PerEntity { .. } => Err(ProcessError::SeveralMembers),
-            Self::AnyEntity { by, formula } => {
-                group::any(self.to_string(), by, formula, system).map(Sequence::from)
-            }
-            Self::CountEntities { by, formula } => {
-                group::count(self.to_string(), by, formula, system).map(Sequence::from)
-            }
-        }
+        compile_recipe(self).batch(system)
     }
 
     /// The members of the output filed under `key`.

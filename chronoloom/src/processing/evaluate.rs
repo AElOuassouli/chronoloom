@@ -9,6 +9,8 @@ use crate::sequences::interval::normalization::normalize;
 use crate::sequences::{Extent, TimeIntervalSequence, TimePointSequence};
 use crate::values::Value;
 
+use crate::operator::Plan;
+
 use super::condition::Pattern;
 use super::edge::Edge;
 use super::errors::ProcessError;
@@ -18,11 +20,11 @@ use super::kind::Kind;
 
 /// Whether each point of a member matches, in the member's order, and where it
 /// was observed.
-struct Marks<'a> {
+pub(crate) struct Marks<'a> {
     /// Each point's timestamp, and whether its value matches.
-    points: Vec<(Timestamp, bool)>,
+    pub(crate) points: Vec<(Timestamp, bool)>,
     /// The instants the member was observed over.
-    observed: &'a Extent,
+    pub(crate) observed: &'a Extent,
 }
 
 /// The formula's timeline, labelled with the formula written out.
@@ -30,7 +32,7 @@ pub(super) fn evaluate(
     formula: &Formula,
     system: &SequenceSystem,
 ) -> Result<TimeIntervalSequence, ProcessError> {
-    let mut timeline = node(formula, system)?;
+    let mut timeline = Plan::compile(formula).batch(system)?;
     timeline.set_attribute(formula.to_string());
 
     Ok(timeline)
@@ -172,53 +174,6 @@ impl Reading<'_> {
     }
 }
 
-/// The timeline of one node of the tree.
-fn node(formula: &Formula, system: &SequenceSystem) -> Result<TimeIntervalSequence, ProcessError> {
-    match formula {
-        Formula::State(key) => match system.get(key.as_str()) {
-            Some(Sequence::TimeInterval(timeline)) => Ok(timeline.clone()),
-            Some(Sequence::TimePoint(_)) => Err(ProcessError::NotATimeline { key: key.clone() }),
-            None => Err(ProcessError::UnknownKey { key: key.clone() }),
-        },
-        Formula::Between { start, end, open } => between(start, end, *open, system),
-        Formula::While { pattern, timeout } => hold(pattern, *timeout, system),
-        Formula::Occurs(pattern) => occurs(pattern, system),
-        Formula::Not(inner) => Ok(node(inner, system)?.complement()),
-        Formula::And(formulas) => {
-            let mut parts = formulas.iter();
-            let Some(first) = parts.next() else {
-                // The identity of the intersection: active everywhere.
-                let everywhere = TimeIntervalEvent::raw(Timestamp::MIN, Timestamp::MAX);
-                return Ok(TimeIntervalSequence::from_spans("⊤", vec![everywhere]));
-            };
-
-            let mut timeline = node(first, system)?;
-            for part in parts {
-                timeline = timeline.intersection(&node(part, system)?);
-            }
-            Ok(timeline)
-        }
-        Formula::Or(formulas) => {
-            let mut parts = formulas.iter();
-            let Some(first) = parts.next() else {
-                // The identity of the union: active nowhere.
-                return Ok(TimeIntervalSequence::new("⊥"));
-            };
-
-            let mut timeline = node(first, system)?;
-            for part in parts {
-                timeline = timeline.union(&node(part, system)?);
-            }
-            Ok(timeline)
-        }
-        Formula::Shift {
-            formula,
-            alpha,
-            beta,
-        } => Ok(node(formula, system)?.transform_unbounded(*alpha, *beta)),
-    }
-}
-
 /// The point sequence a pattern reads.
 fn points_of<'a>(
     pattern: &Pattern,
@@ -246,7 +201,10 @@ fn mismatch(pattern: &Pattern, points: &AnyPointSequence) -> ProcessError {
 }
 
 /// Which points of the member a pattern reads match, and where it was observed.
-fn read<'a>(pattern: &Pattern, system: &'a SequenceSystem) -> Result<Marks<'a>, ProcessError> {
+pub(crate) fn read<'a>(
+    pattern: &Pattern,
+    system: &'a SequenceSystem,
+) -> Result<Marks<'a>, ProcessError> {
     let points = points_of(pattern, system)?;
     let marks = pattern
         .condition
@@ -259,31 +217,9 @@ fn read<'a>(pattern: &Pattern, system: &'a SequenceSystem) -> Result<Marks<'a>, 
     })
 }
 
-/// `Occurs`: `[t, t + 1)` for each matching point inside the extent.
-fn occurs(
-    pattern: &Pattern,
-    system: &SequenceSystem,
-) -> Result<TimeIntervalSequence, ProcessError> {
-    let marks = read(pattern, system)?;
-    let spans = marks
-        .points
-        .iter()
-        // An instant the extent contains is below `i64::MAX`, so `t + 1` holds.
-        .filter(|(timestamp, matched)| *matched && marks.observed.contains(*timestamp))
-        .map(|(timestamp, _)| TimeIntervalEvent::raw(*timestamp, *timestamp + 1))
-        .collect();
-
-    Ok(TimeIntervalSequence::from_parts(
-        Attribute::name(format!("occurs({pattern})")),
-        (0, 0),
-        normalize(spans),
-        marks.observed.clone(),
-    ))
-}
-
 /// `While`: each sample holds until the next one, or until its timeout, within
 /// a run of the extent.
-fn hold(
+pub(crate) fn hold(
     pattern: &Pattern,
     timeout: Option<Timestamp>,
     system: &SequenceSystem,
@@ -339,7 +275,7 @@ fn hold(
 }
 
 /// `Between`: a state machine over the points of both patterns, run by run.
-fn between(
+pub(crate) fn between(
     start: &Pattern,
     end: &Pattern,
     open: OpenEnd,

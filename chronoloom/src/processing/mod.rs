@@ -33,6 +33,7 @@ pub use condition::{Condition, Pattern};
 pub use edge::Edge;
 pub use emission::{Emission, Emitted};
 pub use errors::ProcessError;
+pub(crate) use evaluate::{between, hold, read};
 pub use events::Events;
 pub use formula::{Formula, OpenEnd};
 pub(crate) use group::is_under;

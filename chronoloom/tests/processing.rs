@@ -603,6 +603,86 @@ fn a_shift_keeps_the_end_of_time_and_saturates_other_bounds() {
     assert!(pushed.is_empty());
 }
 
+#[test]
+fn nested_algebra_over_between_while_and_shift_matches_the_sequence_algebra() {
+    let system = system_with(words(
+        "motion",
+        &[(10, "start"), (20, "stop"), (40, "start")],
+    ));
+    let between = motion_between();
+    let held = Formula::While {
+        pattern: word("motion", "start"),
+        timeout: None,
+    };
+    let occurs = Formula::Occurs(word("motion", "stop"));
+    let evaluate = |formula: &Formula| formula.evaluate(&system).unwrap();
+    let (shifted, held_timeline, stops) = (
+        evaluate(&between.clone().shift(-1, 2)),
+        evaluate(&held),
+        evaluate(&occurs),
+    );
+
+    let formula = !(between
+        .clone()
+        .shift(-1, 2)
+        .and(held.clone())
+        .or(occurs.clone()));
+    let expected = shifted
+        .intersection(&held_timeline)
+        .union(&stops)
+        .complement();
+    let evaluated = evaluate(&formula);
+    assert!(evaluated.covers_same(&expected), "{formula}");
+    assert_eq!(evaluated.observed(), expected.observed());
+}
+
+#[test]
+fn an_error_inside_any_node_surfaces_unchanged() {
+    let system = two_states();
+    let missing = || Formula::state("nope");
+    let error = || Err(ProcessError::UnknownKey { key: "nope".into() });
+    let state = || Formula::state("a");
+
+    assert_eq!(missing().shift(1, 1).evaluate(&system).map(|_| ()), error());
+    assert_eq!((!missing()).evaluate(&system).map(|_| ()), error());
+    assert_eq!(
+        state().and(missing()).evaluate(&system).map(|_| ()),
+        error()
+    );
+    assert_eq!(missing().or(state()).evaluate(&system).map(|_| ()), error());
+    assert_eq!(
+        Formula::Occurs(word("nope", "x"))
+            .and(state())
+            .evaluate(&system)
+            .map(|_| ()),
+        error()
+    );
+}
+
+#[test]
+fn a_recipe_evaluates_like_its_formula_or_events_and_keeps_the_label() {
+    let system = two_states();
+    let formula = Formula::state("a").and(!Formula::state("b"));
+    let direct = formula.evaluate(&system).unwrap();
+    let through = Recipe::Timeline(formula.clone()).evaluate(&system).unwrap();
+    let timeline = through.as_time_interval().expect("a timeline");
+    assert!(timeline.covers_same(&direct));
+    assert_eq!(timeline.observed(), direct.observed());
+    assert_eq!(timeline.label(), formula.to_string());
+
+    let events = Events::Edges(Formula::state("a"));
+    assert_eq!(
+        Recipe::Points(events.clone()).evaluate(&system).unwrap(),
+        events.evaluate(&system).unwrap()
+    );
+    assert_eq!(
+        Recipe::Timeline(Formula::state("nope"))
+            .evaluate(&system)
+            .map(|_| ()),
+        Err(ProcessError::UnknownKey { key: "nope".into() })
+    );
+}
+
 // Events
 
 #[test]

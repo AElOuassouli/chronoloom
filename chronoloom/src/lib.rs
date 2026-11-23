@@ -212,6 +212,7 @@
 #[doc = include_str!("../README.md")]
 struct Readme;
 
+mod operator;
 pub mod primitives;
 pub mod processing;
 pub mod processor;

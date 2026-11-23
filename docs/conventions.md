@@ -76,7 +76,8 @@ The root [makefile](../makefile) fans out to both libraries:
 | `make <library>-release-fix\|minor\|major` | Cuts a release; see [releasing](releasing.md) |
 
 Each library has its own makefile with the same verbs: `make -C chronoloom test`,
-`make -C chronoloompy lint`, and so on. `make help` lists them.
+`make -C chronoloompy lint`, and so on, plus `check`, which runs `fmt`, `lint` and `test` in turn. `make help`
+lists them.
 
 ## Git hooks
 

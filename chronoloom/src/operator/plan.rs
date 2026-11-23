@@ -15,6 +15,7 @@ use super::not::Not;
 use super::occurs::Occurs;
 use super::online::OnlineNode;
 use super::online_points::OnlinePoints;
+use super::online_recipe::OnlineRecipe;
 use super::or::Or;
 use super::project::Project;
 use super::r#while::While;
@@ -78,6 +79,18 @@ impl RecipePlan {
         }
     }
 
+    /// The running state of the recipe, whose members are filed under `output`.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn online(&self, output: &Key) -> OnlineRecipe {
+        match self {
+            Self::Timeline(plan) => OnlineRecipe::Timeline(plan.online()),
+            Self::Points(plan) => OnlineRecipe::Points(plan.online()),
+            Self::PerEntity(operator) => OnlineRecipe::PerEntity(operator.online(output)),
+            Self::AnyEntity(operator) => OnlineRecipe::AnyEntity(operator.online()),
+            Self::CountEntities(operator) => OnlineRecipe::CountEntities(operator.online()),
+        }
+    }
+
     /// The members of the output filed under `output`: one, or one per entity.
     pub(crate) fn members(
         &self,
@@ -119,6 +132,11 @@ impl TimelinePlan {
             root: Node::compile(formula),
             label: formula.to_string(),
         }
+    }
+
+    /// The formula written out, which labels the timeline.
+    pub(super) fn label(&self) -> &str {
+        &self.label
     }
 
     /// The running state of the plan.

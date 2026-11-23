@@ -10,7 +10,9 @@
 use std::collections::BTreeMap;
 
 use crate::primitives::{TimeIntervalEvent, TimePointEvent, Timestamp};
-use crate::processing::{Condition, Events, Formula, Kind, OpenEnd, Pattern, ProcessError};
+use crate::processing::{
+    render, Condition, Events, Formula, Group, Kind, OpenEnd, Pattern, ProcessError, Recipe,
+};
 use crate::sequence_system::{Key, Sequence, SequenceSystem};
 use crate::sequences::{Extent, TimeIntervalSequence, TimePointSequence};
 use crate::values::Value;
@@ -19,6 +21,8 @@ use crate::AnyPointSequence;
 use super::chunk::{Chunk, Inputs};
 use super::online::OnlineNode;
 use super::online_points::OnlinePoints;
+use super::online_recipe::OnlineRecipe;
+use super::plan::{compile_recipe, RecipePlan};
 use super::{PointsPlan, TimelinePlan};
 
 /// First instant generated inputs use.
@@ -780,4 +784,262 @@ fn edges_stepped_in_chunks_have_no_edge_at_a_cut_and_forget_a_closed_span() {
 
     use crate::processing::Edge::{End, Start};
     assert_eq!(stamps, [(10, Start), (20, End), (40, Start), (50, End)]);
+}
+
+/// A pattern on a field of the records `r`.
+fn field_pattern(random: &mut Random) -> Pattern {
+    if random.chance(1, 4) {
+        Pattern::field(
+            "r",
+            "flag",
+            Condition::Equals(Value::from(random.chance(1, 2))),
+        )
+    } else {
+        Pattern::field(
+            "r",
+            "n",
+            Condition::GreaterOrEqual(Value::from(random.between(0, 4))),
+        )
+    }
+}
+
+/// The formula of one entity: a node over its own records, alone or combined
+/// with a formula over the other members.
+fn entity_formula(random: &mut Random) -> Formula {
+    let own = match random.below(3) {
+        0 => Formula::Occurs(field_pattern(random)),
+        1 => Formula::While {
+            pattern: field_pattern(random),
+            timeout: random.chance(1, 2).then(|| random.between(1, 12)),
+        },
+        _ => Formula::Between {
+            start: field_pattern(random),
+            end: field_pattern(random),
+            open: if random.chance(1, 2) {
+                OpenEnd::Extent
+            } else {
+                OpenEnd::Head
+            },
+        },
+    };
+    match random.below(5) {
+        0 => own,
+        1 => Formula::And(vec![own, formula(random, 1)]),
+        2 => Formula::Or(vec![own, formula(random, 1)]),
+        3 => Formula::Not(Box::new(own)),
+        _ => Formula::Shift {
+            formula: Box::new(own),
+            alpha: random.between(-6, 7),
+            beta: random.between(-6, 7),
+        },
+    }
+}
+
+fn entity_recipe(random: &mut Random) -> Recipe {
+    let by = Group::new("r", if random.chance(3, 4) { "n" } else { "flag" });
+    let formula = entity_formula(random);
+    match random.below(3) {
+        0 => Recipe::per_entity(by, formula),
+        1 => Recipe::any_entity(by, formula),
+        _ => Recipe::count_entities(by, formula),
+    }
+}
+
+fn recipe_keys(recipe: &Recipe) -> Vec<Key> {
+    let (Recipe::PerEntity { by, formula }
+    | Recipe::AnyEntity { by, formula }
+    | Recipe::CountEntities { by, formula }) = recipe
+    else {
+        panic!("an entity recipe");
+    };
+    let mut keys = vec![by.key.clone()];
+    read_keys(formula, &mut keys);
+    keys
+}
+
+/// Step a recipe over `system` as [`drive`] does, and join the chunks of each
+/// member, by the name of its entity.
+fn drive_recipe(
+    mut node: OnlineRecipe,
+    system: &SequenceSystem,
+    read: &[Key],
+    stops: &BTreeMap<Key, Vec<Timestamp>>,
+) -> Result<BTreeMap<String, Chunk>, ProcessError> {
+    let mut joined: BTreeMap<String, Chunk> = BTreeMap::new();
+    let mut frontiers: BTreeMap<Key, Timestamp> = system
+        .keys()
+        .map(|key| (key.clone(), Timestamp::MIN))
+        .collect();
+
+    let mut steps: Vec<Timestamp> = stops.values().flatten().copied().collect();
+    steps.sort_unstable();
+    steps.dedup();
+
+    for to in steps {
+        let mut inputs = Inputs::new();
+        for (key, frontier) in &mut frontiers {
+            let target = reached(&stops[key], to);
+            let sequence = system.get(key.as_str()).expect("the key is listed");
+            inputs.insert(key.clone(), Chunk::of(sequence, *frontier, target));
+            *frontier = target;
+        }
+
+        for member in node.step(&inputs, to)? {
+            let name = member.entity.as_ref().map(render).unwrap_or_default();
+            let chunk = member.chunk;
+            if let Some(earlier) = joined.remove(&name) {
+                joined.insert(name, earlier.join(chunk));
+            } else {
+                joined.insert(name, chunk);
+            }
+        }
+        let slowest = read.iter().map(|key| frontiers[key]).min().unwrap_or(to);
+        assert!(
+            node.frontier() <= slowest,
+            "the output is not final beyond the slowest input"
+        );
+        for chunk in joined.values() {
+            assert_eq!(
+                chunk.to(),
+                node.frontier(),
+                "every member is at the frontier"
+            );
+        }
+    }
+
+    Ok(joined)
+}
+
+#[test]
+fn joined_online_entity_chunks_equal_batch() {
+    for seed in 0..SEEDS {
+        let mut random = Random::new(seed ^ 0xE1);
+        let system = system(&mut random);
+        let recipe = entity_recipe(&mut random);
+        let stops = stops_of(&mut random, &system);
+        let read = recipe_keys(&recipe);
+        let output = Key::from("out");
+
+        let plan = compile_recipe(&recipe);
+        let joined = drive_recipe(plan.online(&output), &system, &read, &stops)
+            .expect("the recipe reads known keys");
+
+        match &plan {
+            RecipePlan::PerEntity(_) => {
+                let expected = plan
+                    .members(&output, &system)
+                    .expect("the recipe reads known keys");
+                assert_eq!(joined.len(), expected.len(), "seed {seed}: {recipe}");
+                for member in expected {
+                    let name = render(&member.entity.expect("a per-entity member"));
+                    let chunk = &joined[&name];
+                    assert_eq!(chunk.from(), Timestamp::MIN, "seed {seed}: {recipe}");
+                    assert_eq!(chunk.to(), Timestamp::MAX, "seed {seed}: {recipe}");
+                    let online = chunk.timeline().expect("a timeline");
+                    let expected = member.sequence.as_time_interval().expect("a timeline");
+                    assert_eq!(bounds(online), bounds(expected), "seed {seed}: {recipe}");
+                    assert_eq!(
+                        online.observed(),
+                        expected.observed(),
+                        "seed {seed}: {recipe}"
+                    );
+                }
+            }
+            _ => {
+                let expected = plan.batch(&system).expect("the recipe reads known keys");
+                let chunk = &joined[""];
+                assert_eq!(joined.len(), 1, "seed {seed}: {recipe}");
+                assert_eq!(chunk.from(), Timestamp::MIN, "seed {seed}: {recipe}");
+                assert_eq!(chunk.to(), Timestamp::MAX, "seed {seed}: {recipe}");
+                match (chunk.sequence(), &expected) {
+                    (Sequence::TimeInterval(online), Sequence::TimeInterval(expected)) => {
+                        assert_eq!(bounds(online), bounds(expected), "seed {seed}: {recipe}");
+                        assert_eq!(
+                            online.observed(),
+                            expected.observed(),
+                            "seed {seed}: {recipe}"
+                        );
+                    }
+                    (Sequence::TimePoint(online), Sequence::TimePoint(expected)) => {
+                        assert_eq!(online, expected, "seed {seed}: {recipe}");
+                    }
+                    _ => panic!("seed {seed}: {recipe} gives the shape batch gives"),
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn an_entity_seen_mid_stream_is_unobserved_before_its_first_record() {
+    let mut system = SequenceSystem::new();
+    system.insert(
+        "r",
+        TimePointSequence::from_events(
+            "r",
+            vec![
+                TimePointEvent::new(2, Value::record(vec![("n", Value::from(1_i64))])),
+                TimePointEvent::new(20, Value::record(vec![("n", Value::from(2_i64))])),
+            ],
+        )
+        .with_observed(Extent::everything()),
+    );
+    let by = Group::new("r", "n");
+    let formula = Formula::Occurs(Pattern::field(
+        "r",
+        "n",
+        Condition::GreaterOrEqual(Value::from(0_i64)),
+    ));
+    let plan = compile_recipe(&Recipe::per_entity(by, formula));
+    let mut node = plan.online(&Key::from("out"));
+
+    let mut inputs = Inputs::new();
+    let records = system.get("r").expect("`r` is known");
+    inputs.insert("r".into(), Chunk::of(records, Timestamp::MIN, 30));
+    let members = node.step(&inputs, 30).expect("`r` is known");
+
+    assert_eq!(members.len(), 2);
+    let second = members[1].chunk.timeline().expect("a timeline");
+    assert_eq!(bounds(second), [(20, 21)]);
+    assert!(!second.observed().as_slice().is_empty());
+    assert_eq!(second.observed().as_slice()[0].bounds(), (20, 30));
+}
+
+#[test]
+fn entities_that_share_a_name_are_refused() {
+    let mut system = SequenceSystem::new();
+    system.insert(
+        "r",
+        TimePointSequence::from_events(
+            "r",
+            vec![
+                TimePointEvent::new(2, Value::record(vec![("n", Value::from(1_i64))])),
+                TimePointEvent::new(3, Value::record(vec![("n", Value::from("1"))])),
+            ],
+        )
+        .with_observed(Extent::everything()),
+    );
+    let by = Group::new("r", "n");
+    let formula = Formula::state("a");
+    let plan = compile_recipe(&Recipe::per_entity(by, formula));
+    let mut node = plan.online(&Key::from("out"));
+
+    let mut inputs = Inputs::new();
+    inputs.insert(
+        "r".into(),
+        Chunk::of(system.get("r").expect("`r` is known"), Timestamp::MIN, 30),
+    );
+    inputs.insert(
+        "a".into(),
+        Chunk::new(
+            Timestamp::MIN,
+            30,
+            Sequence::from(TimeIntervalSequence::from_spans("a", Vec::new())),
+        ),
+    );
+
+    assert!(matches!(
+        node.step(&inputs, 30),
+        Err(ProcessError::DuplicateMember { .. })
+    ));
 }

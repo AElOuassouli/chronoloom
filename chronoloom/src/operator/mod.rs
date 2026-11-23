@@ -2,7 +2,8 @@
 //!
 //! A [`TimelinePlan`] or [`PointsPlan`] is a tree of nodes, one per node of the formula or events, each
 //! owning the algorithm that evaluates it over a whole system. The entity
-//! recipes compile to plans of their own.
+//! recipes compile to plans of their own, whose online form keeps one state of
+//! the formula per entity.
 //!
 //! Each node also has an online form, an [`OnlineNode`] that steps over the
 //! chunks of its inputs as they become final, and whose chunks joined end to
@@ -21,7 +22,9 @@ mod matching;
 mod not;
 mod occurs;
 mod online;
+mod online_entities;
 mod online_points;
+mod online_recipe;
 mod or;
 mod plan;
 mod project;

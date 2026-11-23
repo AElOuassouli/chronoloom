@@ -169,6 +169,12 @@
 
 ## Fixed
 
+- `any_entity` and `count_entities` no longer let an entity that has not
+  appeared yet narrow what is known: wherever every entity that has appeared is
+  known, the result is known, even where the records were unobserved, and
+  before the first entity appears it follows the extent of the records. Before,
+  an entity appearing later made the earlier instants unknown, so a result
+  already given could not be kept final online.
 - A processor whose output is under another processor's per-entity output, or a
   per-entity processor over a stream or output already under its key, is
   refused with `UpdateError::Taken`, and so is inserting a stream under a

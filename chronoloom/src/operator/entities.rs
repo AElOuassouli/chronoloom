@@ -11,6 +11,7 @@ use crate::sequences::interval::operations::{intersection_spans, union_spans};
 use crate::sequences::{Extent, TimeIntervalSequence, TimePointSequence};
 use crate::values::Value;
 
+use super::online_entities::{OnlineAnyEntity, OnlineCountEntities, OnlinePerEntity};
 use super::plan::TimelinePlan;
 use super::reading::records;
 
@@ -130,6 +131,16 @@ impl PerEntity {
         }
     }
 
+    /// The running state, with the members filed under `output`.
+    pub(super) fn online(&self, output: &Key) -> OnlinePerEntity {
+        OnlinePerEntity::new(
+            self.plan.label().to_owned(),
+            output.clone(),
+            self.by.clone(),
+            self.plan.online(),
+        )
+    }
+
     /// The members of the output filed under `output`.
     pub(super) fn members(
         &self,
@@ -174,6 +185,10 @@ impl AnyEntity {
         }
     }
 
+    pub(super) fn online(&self) -> OnlineAnyEntity {
+        OnlineAnyEntity::new(self.label.clone(), self.by.clone(), self.plan.online())
+    }
+
     pub(super) fn batch(
         &self,
         system: &SequenceSystem,
@@ -202,6 +217,10 @@ impl CountEntities {
         }
     }
 
+    pub(super) fn online(&self) -> OnlineCountEntities {
+        OnlineCountEntities::new(self.label.clone(), self.by.clone(), self.plan.online())
+    }
+
     pub(super) fn batch(
         &self,
         system: &SequenceSystem,
@@ -218,36 +237,49 @@ impl CountEntities {
     }
 }
 
-/// The instants an entity's timeline is known at, which includes the instants
-/// of `observed` before the entity first appeared.
-fn known_by(
-    timeline: &TimeIntervalSequence,
-    first: Timestamp,
-    observed: &Extent,
-) -> Vec<TimeIntervalEvent<()>> {
+/// The instants an entity's timeline is known at, which includes every instant
+/// before it first appeared: an entity not seen yet says nothing, so that what
+/// is known at an instant never depends on entities that appear later.
+/// `known_by_all` restricts the instants before the earliest entity to the
+/// records' extent, since no entity says anything there.
+fn known_by(timeline: &TimeIntervalSequence, first: Timestamp) -> Vec<TimeIntervalEvent<()>> {
     if first > Timestamp::MIN {
-        let before = intersection_spans(
-            observed.as_slice(),
+        union_spans(
+            timeline.observed().as_slice(),
             &[TimeIntervalEvent::raw(Timestamp::MIN, first)],
-        );
-        union_spans(timeline.observed().as_slice(), &before)
+        )
     } else {
         timeline.observed().as_slice().to_vec()
     }
 }
 
-/// The instants every entity is known at, or `observed` with no entity.
+/// The instants every entity that has appeared is known at, and `observed`
+/// before the first appeared; `observed` with no entity.
 fn known_by_all(
     members: &[(Timestamp, &TimeIntervalSequence)],
     observed: &Extent,
 ) -> Vec<TimeIntervalEvent<()>> {
     let mut known = members
         .iter()
-        .map(|(first, timeline)| known_by(timeline, *first, observed));
-    match known.next() {
-        None => observed.as_slice().to_vec(),
-        Some(first) => known.fold(first, |all, next| intersection_spans(&all, &next)),
+        .map(|(first, timeline)| known_by(timeline, *first));
+    let Some(first) = known.next() else {
+        return observed.as_slice().to_vec();
+    };
+    let all = known.fold(first, |all, next| intersection_spans(&all, &next));
+
+    let earliest = members
+        .iter()
+        .map(|(first, _)| *first)
+        .min()
+        .unwrap_or(Timestamp::MAX);
+    if earliest == Timestamp::MIN {
+        return all;
     }
+    let seen = union_spans(
+        observed.as_slice(),
+        &[TimeIntervalEvent::raw(earliest, Timestamp::MAX)],
+    );
+    intersection_spans(&all, &seen)
 }
 
 /// The union of the entities, known where one is active or all are known.

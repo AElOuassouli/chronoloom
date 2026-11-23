@@ -513,6 +513,54 @@ fn the_count_is_known_where_every_entity_is() {
     );
 }
 
+#[test]
+fn an_entity_not_seen_yet_adds_no_uncertainty() {
+    // The records were not observed over [20, 30), and the door is active
+    // there. Agent 1's timeline (present or door) is known over the gap
+    // because the door is active; agent 2, who only appears at 70, must not
+    // make the result unknown there.
+    let mut system = SequenceSystem::new();
+    system.insert(
+        "gate",
+        TimePointSequence::from_events(
+            "gate",
+            vec![
+                TimePointEvent::new(10, crossing(Value::from(1), "in")),
+                TimePointEvent::new(70, crossing(Value::from(2), "in")),
+            ],
+        )
+        .with_observed(Extent::from_spans(vec![span(0, 20), span(30, 100)])),
+    );
+    system.insert(
+        "door",
+        TimeIntervalSequence::from_spans("door", vec![span(20, 30)]),
+    );
+
+    let formula = present().or(Formula::state("door"));
+    let result = update::run(
+        &system,
+        &[
+            Processor::new("crowd", Recipe::count_entities(by_agent(), formula.clone())),
+            Processor::new("anyone", Recipe::any_entity(by_agent(), formula)),
+        ],
+    )
+    .expect("a result");
+
+    let runs = |observed: &Extent| -> Vec<(i64, i64)> {
+        observed.as_slice().iter().map(|run| run.bounds()).collect()
+    };
+    let crowd = result.points::<i64>("crowd").expect("a count");
+    let anyone = result.intervals("anyone").expect("a timeline");
+
+    // Known over all the records, the gap included.
+    assert_eq!(runs(crowd.observed()), [(0, 100)]);
+    assert_eq!(runs(anyone.observed()), [(0, 100)]);
+    assert_eq!(
+        changes_of(&result, "crowd"),
+        [(0, 0), (10, 1), (30, 0), (70, 1)]
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Reading the members, and the order of evaluation
 // ---------------------------------------------------------------------------

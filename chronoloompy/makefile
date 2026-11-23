@@ -33,6 +33,8 @@ test: ## Run Python and binding-crate tests
 	uv run pytest --cov=chronoloompy
 	cargo test --manifest-path $(CARGO_MANIFEST)
 
+check: fmt lint test ## Format, lint and test
+
 build: ## Build a release wheel into dist/
 	uv build
 
@@ -57,4 +59,4 @@ release-major: ## Bump the major version, close the changelog, commit and tag
 help:
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-25s\033[0m %s\n", $$1, $$2}'
 
-.PHONY: install clean fmt lint test build sdist publish release-fix release-minor release-major help
+.PHONY: install clean fmt lint test check build sdist publish release-fix release-minor release-major help

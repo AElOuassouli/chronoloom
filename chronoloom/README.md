@@ -877,9 +877,11 @@ its own members is a `Cycle`.
 
 An entity exists from its first record, and its timeline is observed from that
 instant. Before it, `any_entity` and `count_entities` treat it as inactive and
-known, so an entity that has not appeared adds no uncertainty and a count never
-changes for instants it has already given. This changes nothing for a formula
-that is inactive before the first record of the entity, which a presence is.
+known, so an entity that has not appeared adds no uncertainty to what the
+entities that have appeared give, and a count never changes for instants it has
+already given. Before any entity has appeared, the union and the count are known
+only where the records were observed. This changes nothing for a formula that
+is inactive before the first record of the entity, which a presence is.
 `count_entities` has a point where each run of its extent opens, the count being
 known there from every entity, and one at each later change, ending spans before
 starting ones at one instant so that a hand-over counts once. Within a fully known

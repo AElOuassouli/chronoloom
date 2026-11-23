@@ -39,6 +39,18 @@ impl<M: Mode> StreamSystem<M> {
         self.members.contains(key)
     }
 
+    /// The number of streams and derived streams.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.members.len()
+    }
+
+    /// Whether the system holds no stream and no derived stream.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.members.is_empty()
+    }
+
     /// Every key, streams and derived streams, in key order.
     pub fn keys(&self) -> impl Iterator<Item = &Key> {
         self.members.keys()

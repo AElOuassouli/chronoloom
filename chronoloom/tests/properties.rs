@@ -7,7 +7,7 @@ mod common;
 use std::collections::BTreeSet;
 
 use chronoloom::{
-    Condition, Extent, Formula, OpenEnd, Pattern, SequenceSystem, TimeIntervalSequence,
+    Condition, Extent, Formula, OpenEnd, Pattern, Processor, StreamSystem, TimeIntervalSequence,
     TimePointEvent, TimePointSequence,
 };
 
@@ -400,7 +400,7 @@ fn slicing_twice_is_slicing_once_to_the_overlap() {
 /// and two timelines, each observed over a random extent, with what the oracle
 /// knows of the timelines.
 struct World {
-    system: SequenceSystem,
+    system: StreamSystem,
     points: [TimePointSequence<i64>; 2],
     states: [Knowledge; 2],
 }
@@ -409,19 +409,19 @@ const POINT_KEYS: [&str; 2] = ["p", "q"];
 const STATE_KEYS: [&str; 2] = ["s", "t"];
 
 fn world(random: &mut Random) -> World {
-    let mut system = SequenceSystem::new();
+    let mut system = StreamSystem::new();
     let points = POINT_KEYS.map(|key| {
         let drawn = random.below(SPAN_COUNT + 1);
         let events = (0..drawn)
             .map(|_| TimePointEvent::new(random.between(0, DOMAIN_END), random.between(0, 4)))
             .collect();
         let sequence = TimePointSequence::from_events(key, events).with_observed(extent(random));
-        system.insert(key, sequence.clone());
+        system.insert_stream(key, sequence.clone()).unwrap();
         sequence
     });
     let states = STATE_KEYS.map(|key| {
         let (timeline, knowledge) = observed_timeline(random, key);
-        system.insert(key, timeline);
+        system.insert_stream(key, timeline).unwrap();
         knowledge
     });
 
@@ -605,9 +605,14 @@ fn formula(random: &mut Random, world: &World, depth: u32) -> (Formula, Knowledg
 
 /// Evaluate `formula`, which never fails over a world's members.
 fn evaluate(formula: &Formula, world: &World) -> TimeIntervalSequence {
-    formula
-        .evaluate(&world.system)
-        .expect("a random formula reads only members of its world")
+    let mut system = world.system.clone();
+    system
+        .add_processor(Processor::new("evaluated", formula.clone()))
+        .expect("a random formula reads only members of its world");
+    system
+        .intervals("evaluated")
+        .expect("a formula derives a timeline")
+        .clone()
 }
 
 #[test]
@@ -671,7 +676,7 @@ fn the_conjunctive_normal_form_denotes_the_same_timeline() {
         assert_eq!(normal.conjunctive_normal_form(), normal, "{normal}");
 
         let original = evaluate(&formula, &world);
-        let rewritten = normal.evaluate(&world.system).unwrap();
+        let rewritten = evaluate(&normal, &world);
         assert!(rewritten.covers_same(&original), "{formula} vs {normal}");
         assert_eq!(rewritten.observed(), original.observed(), "{formula}");
     });

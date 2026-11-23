@@ -2,6 +2,8 @@
 
 ## Added
 
+- `StreamSystem::len` and `StreamSystem::is_empty`, the number of streams and
+  derived streams it holds.
 - `Report::evaluated`, the outputs of the processors a change evaluated again,
   whether or not their content changed.
 - `Extent`, the instants a sequence was observed over, as normalized spans.

@@ -1,7 +1,7 @@
 //! Extents, and how sequences and systems keep their data inside one.
 
 use chronoloom::{
-    Extent, SequenceSystem, TimeIntervalEvent, TimeIntervalSequence, TimePointEvent,
+    Extent, StreamSystem, TimeIntervalEvent, TimeIntervalSequence, TimePointEvent,
     TimePointSequence,
 };
 
@@ -176,20 +176,22 @@ fn a_transform_that_narrows_decides_inactive_beside_an_inactive_instant() {
 
 #[test]
 fn a_system_observe_narrows_every_member() {
-    let mut system = SequenceSystem::new();
-    system.insert("a", timeline(&[(0, 50)]));
-    system.insert(
-        "r",
-        TimePointSequence::from_events(
+    let mut system = StreamSystem::new();
+    system.insert_stream("a", timeline(&[(0, 50)])).unwrap();
+    system
+        .insert_stream(
             "r",
-            vec![
-                TimePointEvent::new(5, 1.0_f64),
-                TimePointEvent::new(30, 2.0),
-            ],
-        ),
-    );
+            TimePointSequence::from_events(
+                "r",
+                vec![
+                    TimePointEvent::new(5, 1.0_f64),
+                    TimePointEvent::new(30, 2.0),
+                ],
+            ),
+        )
+        .unwrap();
 
-    system.observe(&window(0, 20));
+    system.observe(&window(0, 20)).unwrap();
 
     let up = system.get("a").unwrap().as_time_interval().unwrap();
     assert_eq!(bounds(up), [(0, 20)]);
@@ -198,6 +200,6 @@ fn a_system_observe_narrows_every_member() {
     assert_eq!(system.get("r").unwrap().observed(), &window(0, 20));
 
     // Narrowing only ever narrows.
-    system.observe(&window(10, 100));
+    system.observe(&window(10, 100)).unwrap();
     assert_eq!(system.get("a").unwrap().observed(), &window(10, 20));
 }

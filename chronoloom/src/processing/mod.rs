@@ -34,14 +34,12 @@ pub use emission::{Emission, Emitted};
 pub use errors::ProcessError;
 pub use events::Events;
 pub use formula::{Formula, OpenEnd};
-#[cfg(feature = "serde")]
-pub(crate) use group::render as entity_name;
 pub use group::Group;
-pub(crate) use group::{is_under, EntityRecipe};
+pub(crate) use group::{entity_of, is_under, member_key, render, EntityId};
 pub use input::Input;
 pub use kind::Kind;
 pub use live::LiveProcessor;
 #[cfg(feature = "serde")]
 pub(crate) use live::{Checkpoint, Untyped};
-pub(crate) use processor::ProcessorSet;
 pub use processor::Recipe;
+pub(crate) use processor::{check_declared, ProcessorSet};

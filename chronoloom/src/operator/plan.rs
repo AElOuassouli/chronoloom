@@ -1,6 +1,7 @@
 //! The tree a formula compiles into.
 
-use crate::processing::{EntityRecipe, Events, Formula, ProcessError, Recipe};
+use crate::processing::{Events, Formula, ProcessError, Recipe};
+use crate::sequence_system::Key;
 use crate::sequence_system::{AnyPointSequence, Sequence, SequenceSystem};
 use crate::sequences::TimeIntervalSequence;
 
@@ -8,6 +9,7 @@ use super::and::And;
 use super::between::Between;
 use super::changes::Changes;
 use super::edges::Edges;
+use super::entities::{AnyEntity, CountEntities, Member, PerEntity};
 use super::matching::Matching;
 use super::not::Not;
 use super::occurs::Occurs;
@@ -52,15 +54,14 @@ enum PointsNode {
     Project(Project),
 }
 
-/// A compiled recipe: its timeline or points compiled, the entity outputs left
-/// to the evaluation they had before.
+/// A compiled recipe: its timeline, points or entities compiled.
 #[derive(Debug, Clone)]
 pub(crate) enum RecipePlan {
     Timeline(TimelinePlan),
     Points(PointsPlan),
-    /// `PerEntity`, `AnyEntity` and `CountEntities`, which the operators do not
-    /// own yet.
-    Entity(EntityRecipe),
+    PerEntity(PerEntity),
+    AnyEntity(AnyEntity),
+    CountEntities(CountEntities),
 }
 
 impl RecipePlan {
@@ -69,7 +70,25 @@ impl RecipePlan {
         match self {
             Self::Timeline(plan) => plan.batch(inputs).map(Sequence::from),
             Self::Points(plan) => plan.batch(inputs).map(Sequence::from),
-            Self::Entity(recipe) => recipe.evaluate(inputs),
+            Self::PerEntity(_) => Err(ProcessError::SeveralMembers),
+            Self::AnyEntity(operator) => operator.batch(inputs).map(Sequence::from),
+            Self::CountEntities(operator) => operator.batch(inputs).map(Sequence::from),
+        }
+    }
+
+    /// The members of the output filed under `output`: one, or one per entity.
+    pub(crate) fn members(
+        &self,
+        output: &Key,
+        inputs: &SequenceSystem,
+    ) -> Result<Vec<Member>, ProcessError> {
+        match self {
+            Self::PerEntity(operator) => operator.members(output, inputs),
+            _ => Ok(vec![Member {
+                key: output.clone(),
+                sequence: self.batch(inputs)?,
+                entity: None,
+            }]),
         }
     }
 }
@@ -79,17 +98,15 @@ pub(crate) fn compile_recipe(recipe: &Recipe) -> RecipePlan {
     match recipe {
         Recipe::Timeline(formula) => RecipePlan::Timeline(TimelinePlan::compile(formula)),
         Recipe::Points(events) => RecipePlan::Points(PointsPlan::compile(events)),
-        Recipe::PerEntity { .. } => RecipePlan::Entity(EntityRecipe::PerEntity),
-        Recipe::AnyEntity { by, formula } => RecipePlan::Entity(EntityRecipe::AnyEntity {
-            label: recipe.to_string(),
-            by: by.clone(),
-            formula: formula.clone(),
-        }),
-        Recipe::CountEntities { by, formula } => RecipePlan::Entity(EntityRecipe::CountEntities {
-            label: recipe.to_string(),
-            by: by.clone(),
-            formula: formula.clone(),
-        }),
+        Recipe::PerEntity { by, formula } => {
+            RecipePlan::PerEntity(PerEntity::new(by.clone(), formula))
+        }
+        Recipe::AnyEntity { by, formula } => {
+            RecipePlan::AnyEntity(AnyEntity::new(recipe.to_string(), by.clone(), formula))
+        }
+        Recipe::CountEntities { by, formula } => {
+            RecipePlan::CountEntities(CountEntities::new(recipe.to_string(), by.clone(), formula))
+        }
     }
 }
 

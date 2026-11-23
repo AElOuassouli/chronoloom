@@ -1053,7 +1053,7 @@ impl LiveProcessor {
 
         if state.aggregation != Aggregation::Count {
             return (
-                Sequence::from(group::any_of(label, &timelines, &observed)),
+                Sequence::from(crate::operator::any_of(label, &timelines, &observed)),
                 None,
             );
         }
@@ -1072,7 +1072,7 @@ impl LiveProcessor {
             })
             .max()
             .unwrap_or(Timestamp::MIN);
-        let counted = group::count_of(label.clone(), &timelines, &observed, cut);
+        let counted = crate::operator::count_of(label.clone(), &timelines, &observed, cut);
         let mut events: Vec<TimePointEvent<i64>> = counted.iter().copied().collect();
         let mut extent = counted.observed().clone();
         let starts_at_cut = extent

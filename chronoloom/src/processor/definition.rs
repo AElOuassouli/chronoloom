@@ -3,8 +3,9 @@
 use core::fmt;
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::operator::compile_recipe;
 use crate::processing::{self, Input, ProcessError, Recipe};
-use crate::sequence_system::Key;
+use crate::sequence_system::{Key, SequenceSystem};
 
 /// One recipe of a [`StreamSystem`]: the inputs it reads, a formula over them,
 /// and the key of the one output it produces.
@@ -137,13 +138,36 @@ impl Processor {
         &self.declared
     }
 
-    /// The same recipe as a set of one output, which is what the evaluation
-    /// takes.
+    /// The same recipe as a set of one output, which is what the live
+    /// processor and the validation take.
     pub(crate) fn as_set(&self) -> processing::ProcessorSet {
         self.declared.iter().fold(
             processing::ProcessorSet::new().with(self.output.clone(), self.recipe.clone()),
             |set, (key, input)| set.with_input(key.clone(), input.clone()),
         )
+    }
+
+    /// A new system holding the members of the output, each carrying the
+    /// recipe as its lineage, evaluated through the operators.
+    ///
+    /// # Errors
+    ///
+    /// The first declared input the system does not satisfy, in key order,
+    /// otherwise the first [`ProcessError`] the recipe meets.
+    pub(crate) fn run(&self, system: &SequenceSystem) -> Result<SequenceSystem, ProcessError> {
+        processing::check_declared(&self.declared, |key| key == &self.output, system)?;
+
+        let mut produced = SequenceSystem::new();
+        for member in compile_recipe(&self.recipe).members(&self.output, system)? {
+            produced.insert_derived(
+                member.key,
+                member.sequence,
+                self.recipe.clone(),
+                member.entity,
+            );
+        }
+
+        Ok(produced)
     }
 }
 

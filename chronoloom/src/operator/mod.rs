@@ -2,12 +2,13 @@
 //!
 //! A [`TimelinePlan`] or [`PointsPlan`] is a tree of nodes, one per node of the formula or events, each
 //! owning the algorithm that evaluates it over a whole system. The entity
-//! recipes still call the evaluation of the processing module.
+//! recipes compile to plans of their own.
 
 mod and;
 mod between;
 mod changes;
 mod edges;
+mod entities;
 mod matching;
 mod not;
 mod occurs;
@@ -19,5 +20,5 @@ mod shift;
 mod state;
 mod r#while;
 
+pub(crate) use entities::{any_of, count_of};
 pub(crate) use plan::{compile_recipe, PointsPlan, TimelinePlan};
-pub(crate) use reading::records;

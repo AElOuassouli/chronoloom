@@ -153,7 +153,6 @@ pub(super) fn evaluate(
         let output = processor.output();
         report.evaluated.insert(output.clone());
         let mut fresh = processor
-            .as_set()
             .run(members)
             .map_err(|error| UpdateError::Process {
                 processor: output.clone(),

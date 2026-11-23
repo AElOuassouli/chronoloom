@@ -268,7 +268,7 @@ fn check_entity(key: &Key, lineage: Option<&Recipe>, entity: Option<&Value>) -> 
         ));
     }
 
-    let name = crate::processing::entity_name(entity);
+    let name = crate::processing::render(entity);
     if key
         .as_str()
         .strip_suffix(name.as_str())

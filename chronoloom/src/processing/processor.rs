@@ -8,7 +8,7 @@ use crate::sequence_system::{Key, Sequence, SequenceSystem};
 use super::errors::ProcessError;
 use super::events::Events;
 use super::formula::Formula;
-use super::group::{self, Derived, Group};
+use super::group::{self, Group};
 use super::input::Input;
 use crate::operator::compile_recipe;
 
@@ -97,22 +97,6 @@ impl Recipe {
         compile_recipe(self).batch(system)
     }
 
-    /// The members of the output filed under `key`.
-    pub(crate) fn derive(
-        &self,
-        key: &Key,
-        system: &SequenceSystem,
-    ) -> Result<Vec<Derived>, ProcessError> {
-        match self {
-            Self::PerEntity { by, formula } => group::per_entity(key, by, formula, system),
-            _ => Ok(vec![Derived {
-                key: key.clone(),
-                sequence: self.evaluate(system)?,
-                entity: None,
-            }]),
-        }
-    }
-
     /// Every key the output reads, with repeats.
     pub(crate) fn read_keys<'a>(&'a self, keys: &mut Vec<&'a Key>) {
         match self {
@@ -152,8 +136,28 @@ impl fmt::Display for Recipe {
     }
 }
 
+/// The members of `system` are what the declared `inputs` say, none being an
+/// output.
+pub(crate) fn check_declared(
+    inputs: &BTreeMap<Key, Input>,
+    is_output: impl Fn(&Key) -> bool,
+    system: &SequenceSystem,
+) -> Result<(), ProcessError> {
+    for (key, input) in inputs {
+        if is_output(key) {
+            return Err(ProcessError::InputIsOutput { key: key.clone() });
+        }
+        let sequence = system
+            .get(key.as_str())
+            .ok_or_else(|| ProcessError::UnknownKey { key: key.clone() })?;
+        input.check(key, sequence)?;
+    }
+
+    Ok(())
+}
+
 /// Several processors as one set of outputs, each under its key, with the
-/// inputs they declare: the form the evaluation and the live processor take.
+/// inputs they declare: the form the live processor and the validation take.
 /// Internal: the public recipe is [`Processor`](crate::processor::Processor),
 /// one output each.
 ///
@@ -257,41 +261,6 @@ impl ProcessorSet {
         self.order().map(drop)
     }
 
-    /// A new system holding only the outputs, each under its key and carrying
-    /// it as its lineage.
-    ///
-    /// # Errors
-    ///
-    /// The first declared input the system does not satisfy, in key order (see
-    /// the set); [`ProcessError::Cycle`] if the outputs read each other
-    /// in a circle, otherwise the first [`ProcessError`] any output meets, in
-    /// evaluation order (key order where no output reads another).
-    pub fn run(&self, system: &SequenceSystem) -> Result<SequenceSystem, ProcessError> {
-        let mut produced = SequenceSystem::new();
-        for (output, derived) in self.evaluate(system)? {
-            for member in derived {
-                produced.insert_derived(member.key, member.sequence, output.clone(), member.entity);
-            }
-        }
-
-        Ok(produced)
-    }
-
-    /// The members of `system` are what the declared inputs say.
-    fn check_inputs(&self, system: &SequenceSystem) -> Result<(), ProcessError> {
-        for (key, input) in &self.inputs {
-            if self.outputs.contains_key(key) {
-                return Err(ProcessError::InputIsOutput { key: key.clone() });
-            }
-            let sequence = system
-                .get(key.as_str())
-                .ok_or_else(|| ProcessError::UnknownKey { key: key.clone() })?;
-            input.check(key, sequence)?;
-        }
-
-        Ok(())
-    }
-
     /// The keys of the other outputs each output reads.
     fn dependencies(&self) -> BTreeMap<&Key, BTreeSet<&Key>> {
         self.outputs
@@ -365,42 +334,5 @@ impl ProcessorSet {
         }
 
         Ok(order)
-    }
-
-    /// Every output evaluated, none inserted into `system`.
-    ///
-    /// Outputs that read no other output are evaluated against `system` as it
-    /// is. Otherwise each is evaluated, in dependency order, against a working
-    /// copy that holds the outputs evaluated so far under their keys, so a
-    /// formula that names an output sees the output, not a member of the same
-    /// key.
-    fn evaluate(
-        &self,
-        system: &SequenceSystem,
-    ) -> Result<Vec<(&Recipe, Vec<Derived>)>, ProcessError> {
-        let order = self.order()?;
-        self.check_inputs(system)?;
-        let chained = self.dependencies().values().any(|read| !read.is_empty());
-
-        let mut working = chained.then(|| system.clone());
-        let mut evaluated = Vec::with_capacity(order.len());
-        let mut filed: BTreeSet<Key> = BTreeSet::new();
-        for key in order {
-            let output = &self.outputs[key];
-            let derived = output.derive(key, working.as_ref().unwrap_or(system))?;
-            for member in &derived {
-                if !filed.insert(member.key.clone()) {
-                    return Err(ProcessError::DuplicateMember {
-                        key: member.key.clone(),
-                    });
-                }
-                if let Some(working) = &mut working {
-                    working.insert(member.key.clone(), member.sequence.clone());
-                }
-            }
-            evaluated.push((output, derived));
-        }
-
-        Ok(evaluated)
     }
 }

@@ -24,7 +24,19 @@ use super::{Batch, Mode};
 ///   processor that reads its output, so a derived stream never goes stale.
 ///   Recording into one is [`UpdateError::Derived`].
 ///
-/// Reading is the same for both: [`get`](StreamSystem::get),
+/// A processor may also rewrite a stream instead of deriving a new one: when
+/// its output key is a stream it reads, it is a **transform** of that stream
+/// (it cleans, filters or projects it). The stream then reads as its last
+/// version, [`raw`](StreamSystem::raw) gives the recorded data, and recording
+/// into it records into that data, after which the transforms run again.
+/// Transforms of one stream chain in the order they are added, each reading
+/// the version before it; every other processor reads the last version, so a
+/// transform is added before the processors that read its stream
+/// ([`UpdateError::Read`] otherwise). A transform keeps the shape of the
+/// stream, points as points and a timeline as a timeline, though the value
+/// type may change. [`transforms`](StreamSystem::transforms) lists the chain.
+///
+/// Reading is the same for all: [`get`](StreamSystem::get),
 /// [`points`](StreamSystem::points) and [`intervals`](StreamSystem::intervals)
 /// look a key up wherever it is, and [`is_derived`](StreamSystem::is_derived)
 /// and [`producer`](StreamSystem::producer) tell them apart.
@@ -99,11 +111,15 @@ use super::{Batch, Mode};
 ///
 /// [`Report`]: super::Report
 /// [`UpdateError::Derived`]: super::UpdateError::Derived
+/// [`UpdateError::Read`]: super::UpdateError::Read
 #[derive(Debug, Clone, PartialEq)]
 pub struct StreamSystem<M: Mode = Batch> {
     /// Streams and derived streams together, so that a processor reads both
     /// the same way.
     pub(super) members: SequenceSystem,
+    /// The recorded data of the streams that transforms rewrite: their
+    /// `members` entry holds the last version.
+    pub(super) raw: SequenceSystem,
     /// The processors, each after what it reads.
     pub(super) pipeline: Pipeline,
     pub(super) mode: M,

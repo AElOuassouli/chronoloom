@@ -1447,10 +1447,6 @@ fn between_matches_its_definition_at_every_instant() {
 
 // Chained outputs
 
-fn keys(names: &[&str]) -> Vec<Key> {
-    names.iter().map(|&name| Key::from(name)).collect()
-}
-
 #[test]
 fn point_outputs_can_read_point_outputs() {
     let mut system = StreamSystem::new();
@@ -1472,14 +1468,14 @@ fn point_outputs_can_read_point_outputs() {
 }
 
 #[test]
-fn a_formula_that_reads_its_own_output_is_a_cycle() {
+fn a_formula_that_reads_its_own_output_transforms_that_stream() {
     let processor = Processor::new("a", !Formula::state("a"));
-    let error = ProcessError::Cycle { keys: keys(&["a"]) };
 
-    assert_eq!(processor.check(), Err(error.clone()));
+    // Valid on its own, but it needs the stream to transform.
+    assert_eq!(processor.check(), Ok(()));
     assert_eq!(
         update::run(&StreamSystem::new(), &[processor]).map(drop),
-        Err(error)
+        Err(ProcessError::UnknownKey { key: "a".into() })
     );
 }
 

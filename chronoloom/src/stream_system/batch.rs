@@ -3,15 +3,15 @@
 
 use std::collections::BTreeSet;
 
-use crate::sequence_system::{Key, RecordError, Sequence, SequenceSystem};
+use crate::sequence_system::{Key, Metadata, RecordError, Sequence, SequenceSystem};
 use crate::sequences::Extent;
 use crate::values::Schema;
 
-use crate::processing::Recipe;
+use crate::processing::{ProcessError, Recipe};
 use crate::processor::Processor;
 
 use super::pipeline::{writes, Pipeline};
-use super::shared::evaluate;
+use super::shared::{evaluate, shelve, unshelve};
 use super::{Batch, Report, StreamSystem, Update, UpdateError};
 
 impl Default for StreamSystem<Batch> {
@@ -26,6 +26,7 @@ impl StreamSystem<Batch> {
     pub fn new() -> Self {
         Self {
             members: SequenceSystem::new(),
+            raw: SequenceSystem::new(),
             pipeline: Pipeline::default(),
             mode: Batch,
         }
@@ -46,8 +47,12 @@ impl StreamSystem<Batch> {
             return Err(UpdateError::Derived { key: key.clone() });
         }
 
-        self.change(Some(keys), |members| {
-            members.record_update(update)?;
+        // A transformed stream is recorded into as the recorded data, and its
+        // versions follow.
+        let (recorded, plain) = update.split(|key| self.raw.contains(key.as_str()));
+        self.change(Some(keys), |members, raw| {
+            members.record_update(plain)?;
+            raw.record_update(recorded)?;
             Ok(())
         })
     }
@@ -70,8 +75,16 @@ impl StreamSystem<Batch> {
         self.writable(&key)?;
 
         let sequence = sequence.into();
-        self.change(Some(BTreeSet::from([key.clone()])), |members| {
-            members.insert(key, sequence);
+        self.change(Some(BTreeSet::from([key.clone()])), |members, raw| {
+            if raw.contains(key.as_str()) {
+                // As for a plain stream, a replacement starts without metadata.
+                if let Some(metadata) = members.member_metadata_mut(key.as_str()) {
+                    *metadata = Metadata::new();
+                }
+                raw.insert(key, sequence);
+            } else {
+                members.insert(key, sequence);
+            }
             Ok(())
         })
     }
@@ -81,8 +94,8 @@ impl StreamSystem<Batch> {
     /// # Errors
     ///
     /// [`UpdateError::Derived`] if `key` is a derived stream, and
-    /// [`UpdateError::Read`] if a processor reads it. Nothing changes in
-    /// either case.
+    /// [`UpdateError::Read`] if a processor reads it, a transform of the
+    /// stream included. Nothing changes in either case.
     pub fn remove_stream(&mut self, key: &str) -> Result<Option<Sequence>, UpdateError> {
         let key = Key::from(key);
         self.writable(&key)?;
@@ -98,56 +111,116 @@ impl StreamSystem<Batch> {
 
     /// Add a processor at the end of the list and evaluate its output.
     ///
+    /// A processor whose output key is a stream it reads is a transform of
+    /// that stream: it rewrites it, and the stream keeps its recorded data
+    /// apart (see [`raw`](StreamSystem::raw)). Transforms of one stream chain
+    /// in the order they are added, each reading the version before it.
+    ///
     /// # Errors
     ///
-    /// [`UpdateError::Taken`] if its output key is already a stream, a derived
-    /// stream or another processor's output, if it lies under the per-entity
-    /// output of another processor, or if it is a per-entity output over keys
-    /// the system already holds, and [`UpdateError::Process`] if
-    /// it fails: it reads a key the system does not hold (its own output
-    /// included), or a member of another shape or value type than its formula
-    /// or its declarations say. Nothing changes in any case.
+    /// [`UpdateError::Taken`] if its output key is already a stream it does
+    /// not read, a derived stream or another processor's output, if it lies
+    /// under the per-entity output of another processor, or if it is a
+    /// per-entity output over keys the system already holds,
+    /// [`UpdateError::Read`] if it transforms a stream another processor
+    /// reads (that one would not read the last version), and
+    /// [`UpdateError::Process`] if it fails: it reads a key the system does
+    /// not hold (its own output included, unless it is a stream to transform),
+    /// a member of another shape or value type than its formula or its
+    /// declarations say, or, as a transform, it produces another shape than the
+    /// stream has ([`ProcessError::TransformShape`]). Nothing changes in any
+    /// case.
+    ///
+    /// [`ProcessError::TransformShape`]: crate::processing::ProcessError::TransformShape
     pub fn add_processor(&mut self, processor: Processor) -> Result<Report, UpdateError> {
         let output = processor.output();
-        let under = matches!(processor.recipe(), Recipe::PerEntity { .. })
-            && self.members.keys().any(|key| writes(&processor, key));
-        if self.members.contains(output.as_str()) || under {
-            return Err(UpdateError::Taken {
-                key: output.clone(),
-            });
+        let transform = processor.is_transform();
+        if transform {
+            if !self.members.contains(output.as_str()) {
+                return Err(UpdateError::Process {
+                    processor: output.clone(),
+                    error: ProcessError::UnknownKey {
+                        key: output.clone(),
+                    },
+                });
+            }
+            if self.is_derived(output.as_str()) {
+                return Err(UpdateError::Taken {
+                    key: output.clone(),
+                });
+            }
+        } else {
+            let under = matches!(processor.recipe(), Recipe::PerEntity { .. })
+                && self.members.keys().any(|key| writes(&processor, key));
+            if self.members.contains(output.as_str()) || under {
+                return Err(UpdateError::Taken {
+                    key: output.clone(),
+                });
+            }
         }
 
-        // Nothing reads the new output yet, so it is the only one to evaluate.
+        // Nothing reads the new output yet, so it is the only one to evaluate,
+        // with the rest of its chain if it is a transform.
         let mut pipeline = self.pipeline.clone();
         pipeline.push(processor)?;
         let mut members = self.members.clone();
+        let mut raw = self.raw.clone();
         let last = pipeline.processors().len() - 1;
-        let report = evaluate(&pipeline, &[last], &mut members)?;
+        let indices = if transform {
+            let key = pipeline.processors()[last].output().clone();
+            if !raw.contains(key.as_str()) {
+                shelve(&members, &mut raw, &key);
+            }
+            pipeline.chain(&key)
+        } else {
+            vec![last]
+        };
+        let report = evaluate(&pipeline, &indices, &mut members, &raw)?;
 
         self.members = members;
+        self.raw = raw;
         self.pipeline = pipeline;
         Ok(report)
     }
 
     /// Take the processor producing `output` out of the list, and its derived
-    /// streams with it.
+    /// streams with it. For a transformed stream that is its last transform,
+    /// and the stream goes back to the version before it.
     ///
     /// # Errors
     ///
     /// [`UpdateError::UnknownProcessor`] if no processor produces `output`,
-    /// and [`UpdateError::Read`] if another processor reads what it produces.
-    /// Nothing changes in either case.
+    /// and [`UpdateError::Read`] if another processor reads what it produces:
+    /// for a transform, any processor that is not an earlier transform of the
+    /// stream. Nothing changes in either case.
     pub fn remove_processor(&mut self, output: &str) -> Result<Processor, UpdateError> {
-        let processor = self.pipeline.remove(output)?;
-        let written: Vec<Key> = self
-            .members
-            .keys()
-            .filter(|key| writes(&processor, key) && self.members.lineage(key.as_str()).is_some())
-            .cloned()
-            .collect();
-        for key in &written {
-            self.members.remove(key.as_str());
+        let mut pipeline = self.pipeline.clone();
+        let processor = pipeline.remove(output)?;
+        let mut members = self.members.clone();
+        let mut raw = self.raw.clone();
+
+        if processor.is_transform() {
+            let key = processor.output();
+            let chain = pipeline.chain(key);
+            if chain.is_empty() {
+                unshelve(&mut members, &mut raw, key);
+            } else {
+                evaluate(&pipeline, &chain, &mut members, &raw)?;
+            }
+        } else {
+            let written: Vec<Key> = members
+                .keys()
+                .filter(|key| writes(&processor, key) && members.lineage(key.as_str()).is_some())
+                .cloned()
+                .collect();
+            for key in &written {
+                members.remove(key.as_str());
+            }
         }
+
+        self.members = members;
+        self.raw = raw;
+        self.pipeline = pipeline;
         Ok(processor)
     }
 
@@ -158,8 +231,16 @@ impl StreamSystem<Batch> {
     /// [`UpdateError::Derived`] for a derived stream, whose label is its
     /// formula, and [`UpdateError::Record`] for an unknown key.
     pub fn relabel(&mut self, key: &str, attribute: impl Into<String>) -> Result<(), UpdateError> {
-        self.writable(&Key::from(key))?;
-        Ok(self.members.relabel(key, attribute)?)
+        let key = Key::from(key);
+        self.writable(&key)?;
+        if self.raw.contains(key.as_str()) {
+            let attribute = attribute.into();
+            self.change(Some(BTreeSet::from([key.clone()])), |_, raw| {
+                raw.relabel(key.as_str(), attribute)
+            })?;
+            return Ok(());
+        }
+        Ok(self.members.relabel(key.as_str(), attribute)?)
     }
 
     /// Give the stream under `key` a schema, which its records and every later
@@ -170,8 +251,15 @@ impl StreamSystem<Batch> {
     /// [`UpdateError::Derived`] for a derived stream, and
     /// [`UpdateError::Record`] as [`SequenceSystem::set_schema`] says.
     pub fn set_schema(&mut self, key: &str, schema: Schema) -> Result<(), UpdateError> {
-        self.writable(&Key::from(key))?;
-        Ok(self.members.set_schema(key, schema)?)
+        let key = Key::from(key);
+        self.writable(&key)?;
+        if self.raw.contains(key.as_str()) {
+            self.change(Some(BTreeSet::from([key.clone()])), |_, raw| {
+                raw.set_schema(key.as_str(), schema)
+            })?;
+            return Ok(());
+        }
+        Ok(self.members.set_schema(key.as_str(), schema)?)
     }
 
     /// Narrow every stream to `extent`, then evaluate every processor again.
@@ -180,8 +268,9 @@ impl StreamSystem<Batch> {
     ///
     /// [`UpdateError::Process`] if a processor fails. Nothing changes then.
     pub fn observe(&mut self, extent: &Extent) -> Result<Report, UpdateError> {
-        self.change(None, |members| {
+        self.change(None, |members, raw| {
             members.observe(extent);
+            raw.observe(extent);
             Ok(())
         })
     }
@@ -199,17 +288,19 @@ impl StreamSystem<Batch> {
     fn change(
         &mut self,
         changed: Option<BTreeSet<Key>>,
-        edit: impl FnOnce(&mut SequenceSystem) -> Result<(), RecordError>,
+        edit: impl FnOnce(&mut SequenceSystem, &mut SequenceSystem) -> Result<(), RecordError>,
     ) -> Result<Report, UpdateError> {
         let mut members = self.members.clone();
-        edit(&mut members)?;
+        let mut raw = self.raw.clone();
+        edit(&mut members, &mut raw)?;
         let indices = changed.map_or_else(
             || (0..self.pipeline.processors().len()).collect(),
             |changed| self.pipeline.affected(&changed),
         );
-        let report = evaluate(&self.pipeline, &indices, &mut members)?;
+        let report = evaluate(&self.pipeline, &indices, &mut members, &raw)?;
 
         self.members = members;
+        self.raw = raw;
         Ok(report)
     }
 }

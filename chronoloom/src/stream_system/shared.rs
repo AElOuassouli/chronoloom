@@ -1,7 +1,7 @@
 //! What every mode of a stream system shares: reading, metadata, the list of
 //! processors, and evaluating the processors a change affects.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ops::RangeBounds;
 
 use crate::primitives::Timestamp;
@@ -9,13 +9,15 @@ use crate::sequence_system::{Key, Metadata, Sequence, SequenceSystem};
 use crate::sequences::{TimeIntervalSequence, TimePointSequence};
 use crate::values::Schema;
 
+use crate::processing::ProcessError;
 use crate::processor::Processor;
 
 use super::pipeline::{writes, Pipeline};
 use super::{Batch, Mode, Report, StreamSystem, UpdateError};
 
 impl<M: Mode> StreamSystem<M> {
-    /// The stream or derived stream under `key`.
+    /// The stream or derived stream under `key`; for a transformed stream, its
+    /// last version. [`raw`](StreamSystem::raw) gives the recorded data.
     #[must_use]
     pub fn get(&self, key: &str) -> Option<&Sequence> {
         self.members.get(key)
@@ -31,6 +33,17 @@ impl<M: Mode> StreamSystem<M> {
     #[must_use]
     pub fn intervals(&self, key: &str) -> Option<&TimeIntervalSequence> {
         self.members.intervals(key)
+    }
+
+    /// The data recorded into the stream under `key`, before any transform:
+    /// what [`get`](StreamSystem::get) gives for a stream nothing transforms.
+    /// `None` for a derived stream, which has no recorded data, and for a key
+    /// the system does not hold.
+    #[must_use]
+    pub fn raw(&self, key: &str) -> Option<&Sequence> {
+        self.raw
+            .get(key)
+            .or_else(|| self.members.get(key).filter(|_| !self.is_derived(key)))
     }
 
     /// Whether the system holds a stream or a derived stream under `key`.
@@ -77,11 +90,35 @@ impl<M: Mode> StreamSystem<M> {
         self.members.lineage(key.as_str()).is_some() && self.pipeline.producer(&key).is_some()
     }
 
-    /// The processor that produces the derived stream under `key`.
+    /// The processor that produces the derived stream under `key`; for a
+    /// transformed stream, the last of its transforms, the one that gives its
+    /// last version.
     #[must_use]
     pub fn producer(&self, key: &str) -> Option<&Processor> {
+        if self.raw.contains(key) {
+            return self.transforms(key).pop();
+        }
         self.members.lineage(key)?;
         self.pipeline.producer(&Key::from(key))
+    }
+
+    /// The processors that transform the stream under `key`, in the order they
+    /// apply: each reads the version the one before it gives. Empty for a
+    /// stream nothing transforms, and for a derived stream.
+    #[must_use]
+    pub fn transforms(&self, key: &str) -> Vec<&Processor> {
+        let processors = self.pipeline.processors();
+        self.pipeline
+            .chain(&Key::from(key))
+            .into_iter()
+            .map(|index| &processors[index])
+            .collect()
+    }
+
+    /// Whether the stream under `key` is rewritten by at least one transform.
+    #[must_use]
+    pub fn is_transformed(&self, key: &str) -> bool {
+        self.raw.contains(key)
     }
 
     /// The entity the derived stream under `key` is about, for a member of a
@@ -125,10 +162,11 @@ impl<M: Mode> StreamSystem<M> {
         self.members.member_metadata_mut(key)
     }
 
-    /// The schema of the stream under `key`, if it has one.
+    /// The schema of the stream under `key`, if it has one. A transformed
+    /// stream has the schema of its recorded data.
     #[must_use]
     pub fn schema(&self, key: &str) -> Option<&Schema> {
-        self.members.schema(key)
+        self.raw.schema(key).or_else(|| self.members.schema(key))
     }
 
     /// The system cut to `range`, in batch mode: every stream and every
@@ -140,8 +178,10 @@ impl<M: Mode> StreamSystem<M> {
     /// a later change to the slice evaluates them over its own streams.
     #[must_use]
     pub fn slice(&self, range: impl RangeBounds<Timestamp>) -> StreamSystem<Batch> {
+        let bounds = (range.start_bound().cloned(), range.end_bound().cloned());
         StreamSystem {
-            members: self.members.slice(range),
+            members: self.members.slice(bounds),
+            raw: self.raw.slice(bounds),
             pipeline: self.pipeline.clone(),
             mode: Batch,
         }
@@ -153,28 +193,115 @@ impl<M: Mode> StreamSystem<M> {
     }
 }
 
+/// Put `sequence` under `key` in `members`, as a version of a stream: the
+/// member keeps its metadata and has no lineage.
+fn put_version(members: &mut SequenceSystem, key: &Key, sequence: Sequence) {
+    let metadata = members.member_metadata(key.as_str()).cloned();
+    members.insert(key.clone(), sequence);
+    if let (Some(metadata), Some(kept)) = (metadata, members.member_metadata_mut(key.as_str())) {
+        *kept = metadata;
+    }
+}
+
+/// The name of a sequence's shape, for [`ProcessError::TransformShape`].
+const fn shape(sequence: &Sequence) -> &'static str {
+    match sequence {
+        Sequence::TimePoint(_) => "points",
+        Sequence::TimeInterval(_) => "timeline",
+    }
+}
+
+/// Move the stream under `key` out of `members` into `raw`, where its recorded
+/// data stays while transforms rewrite the member.
+pub(super) fn shelve(members: &SequenceSystem, raw: &mut SequenceSystem, key: &Key) {
+    let sequence = members
+        .get(key.as_str())
+        .expect("a stream is held before it is transformed")
+        .clone();
+    raw.insert(key.clone(), sequence);
+    if let Some(schema) = members.schema(key.as_str()) {
+        raw.set_schema(key.as_str(), schema.clone())
+            .expect("the data already fits its schema");
+    }
+}
+
+/// Take the stream under `key` back out of `raw` into `members`, once nothing
+/// transforms it.
+pub(super) fn unshelve(members: &mut SequenceSystem, raw: &mut SequenceSystem, key: &Key) {
+    let schema = raw.schema(key.as_str()).cloned();
+    let sequence = raw
+        .remove(key.as_str())
+        .expect("a transformed stream has recorded data");
+    put_version(members, key, sequence);
+    if let Some(schema) = schema {
+        members
+            .set_schema(key.as_str(), schema)
+            .expect("the data already fits its schema");
+    }
+}
+
 /// Evaluate again the processors of `pipeline` at `indices`, in list order.
 /// Each processor's members in `members` replace the ones it wrote before,
-/// keeping their metadata. Returns the derived streams whose content changed.
+/// keeping their metadata. A transform reads the version before it: the first
+/// of a chain starts from the recorded data in `raw`, and `indices` holds a
+/// whole chain or none of it. Returns the derived and transformed streams whose
+/// content changed.
 ///
 /// On an error, `members` may be half updated: callers work on a copy.
 pub(super) fn evaluate(
     pipeline: &Pipeline,
     indices: &[usize],
     members: &mut SequenceSystem,
+    raw: &SequenceSystem,
 ) -> Result<Report, UpdateError> {
     let mut report = Report::default();
+    let mut previous: BTreeMap<Key, Option<Sequence>> = BTreeMap::new();
+    let chains = pipeline.chains();
 
     for &index in indices {
         let processor = &pipeline.processors()[index];
         let output = processor.output();
         report.evaluated.insert(output.clone());
-        let mut fresh = processor
-            .run(members)
-            .map_err(|error| UpdateError::Process {
-                processor: output.clone(),
-                error,
-            })?;
+        let failed = |error| UpdateError::Process {
+            processor: output.clone(),
+            error,
+        };
+
+        if processor.is_transform() {
+            if chains[output].first() == Some(&index) {
+                previous.insert(output.clone(), members.get(output.as_str()).cloned());
+                let recorded = raw
+                    .get(output.as_str())
+                    .expect("a transformed stream has recorded data")
+                    .clone();
+                put_version(members, output, recorded);
+            }
+
+            let mut fresh = processor.run(members).map_err(failed)?;
+            let version = fresh
+                .remove(output.as_str())
+                .expect("a transform produces its own stream");
+            let kept = members
+                .get(output.as_str())
+                .expect("a transformed stream is held");
+            if shape(kept) != shape(&version) {
+                return Err(failed(ProcessError::TransformShape {
+                    key: output.clone(),
+                    expected: shape(kept),
+                    found: shape(&version),
+                }));
+            }
+            put_version(members, output, version);
+
+            if chains[output].last() == Some(&index)
+                && previous.get(output).and_then(Option::as_ref) != members.get(output.as_str())
+            {
+                report.changed.insert(output.clone());
+            }
+            continue;
+        }
+
+        let mut fresh = processor.run(members).map_err(failed)?;
 
         let before: BTreeSet<Key> = members
             .keys()

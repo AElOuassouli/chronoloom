@@ -132,6 +132,18 @@ pub enum ProcessError {
         key: Key,
     },
 
+    /// A processor that transforms the stream `key` produced a sequence of
+    /// another shape: a transform keeps points as points and a timeline as a
+    /// timeline.
+    TransformShape {
+        /// The stream the processor transforms.
+        key: Key,
+        /// The shape the stream has: `points` or `timeline`.
+        expected: &'static str,
+        /// The shape the processor produced.
+        found: &'static str,
+    },
+
     /// `error` was found in the output filed under `output`; what
     /// [`Processor::validate`] returns, so that every error names its output.
     ///
@@ -239,6 +251,14 @@ impl fmt::Display for ProcessError {
             Self::InputIsOutput { key } => {
                 write!(f, "`{key}` is declared as an input and is also an output")
             }
+            Self::TransformShape {
+                key,
+                expected,
+                found,
+            } => write!(
+                f,
+                "a transform of `{key}` must keep its shape, {expected}, but produced {found}"
+            ),
             Self::InOutput { output, error } => write!(f, "in the output `{output}`: {error}"),
             Self::Finished => f.write_str("the live processor was finished"),
         }

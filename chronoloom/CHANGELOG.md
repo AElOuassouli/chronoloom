@@ -2,10 +2,20 @@
 
 ## Added
 
+- Transformed streams in a `StreamSystem`: a processor whose output key is a
+  stream it reads rewrites that stream, and several chain in the order they are
+  added. `get` gives the last version and every other processor reads it;
+  `StreamSystem::raw` gives the recorded data, which updates record into;
+  `transforms` lists the chain and `is_transformed` tells. A transform that
+  changes the shape of its stream is `ProcessError::TransformShape`, and one
+  added after a processor reads the stream is `UpdateError::Read`.
+  `remove_processor` takes the last transform of a stream away.
 - `Processor::evaluate`, the output of a processor over a `StreamSystem`, once:
   nothing is stored and the system is not changed. It refuses what
-  `add_processor` would refuse on its own (a formula reading its own output) and
-  holds the system to the declared inputs.
+  `add_processor` would refuse on its own (a per-entity output reading a member
+  under it), evaluates a transform over the last version of its stream, and
+  holds the system to the declared inputs. `Processor::validate` and `check`
+  accept a transform.
 - `StreamSystem::len` and `StreamSystem::is_empty`, the number of streams and
   derived streams it holds.
 - `Report::evaluated`, the outputs of the processors a change evaluated again,

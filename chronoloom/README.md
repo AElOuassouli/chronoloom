@@ -468,9 +468,9 @@ assert_eq!(spans, [(10, 15), (30, 33)]);
 
 A formula may name the key of the output of another processor, and then reads
 that output. A processor reads only what the system already holds, so the
-processors are added in the order they depend on each other, and a formula
-reading its own output is `ProcessError::Cycle`, which `Processor::check`
-reports without a system.
+processors are added in the order they depend on each other. A formula reading
+its own output transforms that stream (see "Transforming a stream" below), and
+a per-entity output reading its own members is `ProcessError::Cycle`.
 
 ```rust
 use chronoloom::{Processor, StreamSystem};
@@ -497,9 +497,10 @@ room.add_processor(Processor::new(
 )).unwrap();
 assert_eq!(room.intervals("occupied").unwrap().len(), 2);
 
-// A formula reading its own output is a cycle.
-let looping = Processor::new("loop", Formula::state("loop"));
-assert!(looping.check().is_err());
+// A formula reading its own output transforms that stream, so it needs one.
+let rewriting = Processor::new("loop", Formula::state("loop"));
+assert!(rewriting.check().is_ok());
+assert!(StreamSystem::new().add_processor(rewriting).is_err());
 ```
 
 ### Step values
@@ -963,6 +964,40 @@ let report = room.update(update).unwrap();
 assert_eq!(report.changed().len(), 2);
 assert_eq!(room.intervals("occupied").unwrap().len(), 2);
 assert!(room.is_derived("presence"));
+```
+
+### Transforming a stream
+
+A processor whose output key is a stream it reads rewrites that stream, instead
+of deriving a new one: it cleans, filters or projects it. The stream reads as
+its last version (`get`, `points`, `intervals`) while `raw` gives the recorded
+data, and recording into it records into that data, after which the transforms
+run again. Several transforms of one stream chain in the order they are added,
+each reading the version before it, and every other processor reads the last
+version, so a transform is added before the processors that read its stream.
+A transform keeps the shape of the stream, points as points and a timeline as a
+timeline (the value type may change, as a projection does); anything else is
+`ProcessError::TransformShape`. `transforms(key)` lists the chain, and
+`remove_processor` takes the last transform of a stream away, as long as no
+processor reads the stream.
+
+```rust
+use chronoloom::{Condition, Events, Pattern, Processor, StreamSystem};
+use chronoloom::{TimePointEvent, TimePointSequence, Update};
+
+let mut room = StreamSystem::new();
+room.insert_stream("motion", TimePointSequence::<&str>::new("motion")).unwrap();
+room.add_processor(Processor::new(
+    "motion",
+    Events::Matching(Pattern::new("motion", Condition::NotEquals("noise"))),
+)).unwrap();
+
+let mut update = Update::new();
+update.points("motion", [TimePointEvent::new(1, "noise"), TimePointEvent::new(2, "start")]);
+room.update(update).unwrap();
+
+assert_eq!(room.points::<&str>("motion").unwrap().len(), 1);
+assert_eq!(room.raw("motion").unwrap().len(), 2);
 ```
 
 The mode of a stream system is a type parameter, so what every mode shares is

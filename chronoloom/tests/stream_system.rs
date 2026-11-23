@@ -11,8 +11,8 @@ mod update;
 use chronoloom::processor::Processor;
 use chronoloom::stream_system::{StreamSystem, Update, UpdateError};
 use chronoloom::{
-    Condition, Extent, Formula, Group, Pattern, ProcessError, Recipe, Schema, SequenceSystem,
-    TimeIntervalSequence, TimePointEvent, TimePointSequence, Value,
+    Condition, Events, Extent, Formula, Group, Pattern, ProcessError, Recipe, Schema,
+    SequenceSystem, TimeIntervalSequence, TimePointEvent, TimePointSequence, Value,
 };
 
 use common::{bounds, for_each_seed, span, Random};
@@ -255,7 +255,7 @@ fn a_processor_reads_only_what_exists_and_takes_a_free_key() {
     assert!(matches!(
         room.add_processor(Processor::new("loop", Formula::state("loop"))),
         Err(UpdateError::Process {
-            error: ProcessError::Cycle { .. },
+            error: ProcessError::UnknownKey { .. },
             ..
         })
     ));
@@ -264,9 +264,9 @@ fn a_processor_reads_only_what_exists_and_takes_a_free_key() {
         Err(UpdateError::Process { .. })
     ));
     // An output key already in use, by a stream or another processor.
-    for taken in ["door", "presence"] {
+    for (taken, read) in [("door", "presence"), ("presence", "door")] {
         assert_eq!(
-            room.add_processor(Processor::new(taken, Formula::state("door"))),
+            room.add_processor(Processor::new(taken, Formula::state(read))),
             Err(UpdateError::Taken { key: taken.into() })
         );
     }
@@ -516,4 +516,529 @@ fn derived_streams_always_equal_the_processors_run_from_scratch() {
             }
         }
     });
+}
+
+/// Motion readings, with noise, cleaned by a transform of the stream itself,
+/// and presence derived from the cleaned stream.
+fn cleaned_room() -> StreamSystem {
+    let mut room = StreamSystem::new();
+    room.insert_stream("motion", TimePointSequence::<&str>::new("motion"))
+        .unwrap();
+    room.add_processor(Processor::new("motion", drop_noise()))
+        .unwrap();
+    room.add_processor(Processor::new("presence", presence()))
+        .unwrap();
+    room
+}
+
+fn drop_noise() -> Events {
+    Events::Matching(Pattern::new("motion", Condition::NotEquals("noise")))
+}
+
+/// The timestamps of the points of `key`.
+fn instants(system: &StreamSystem, key: &str) -> Vec<i64> {
+    system
+        .points::<&str>(key)
+        .unwrap()
+        .iter()
+        .map(|event| event.timestamp())
+        .collect()
+}
+
+#[test]
+fn a_transform_rewrites_its_stream_and_every_reader_sees_the_last_version() {
+    let mut room = cleaned_room();
+    let report = room
+        .update(motion(&[
+            (5, "noise"),
+            (10, "start"),
+            (15, "noise"),
+            (25, "end"),
+        ]))
+        .unwrap();
+
+    // The stream reads as its cleaned version, the recorded data is kept.
+    assert_eq!(instants(&room, "motion"), [10, 25]);
+    let raw = room.raw("motion").unwrap().as_time_point::<&str>().unwrap();
+    assert_eq!(raw.len(), 4);
+    assert_eq!(room.intervals("presence").unwrap()[0].bounds(), (10, 25));
+    assert!(report.changed().contains("motion") && report.changed().contains("presence"));
+
+    // It is still a stream, not a derived one.
+    assert!(!room.is_derived("motion") && room.is_transformed("motion"));
+    assert_eq!(room.streams().count(), 1);
+    assert_eq!(room.derived().count(), 1);
+    assert_eq!(room.transforms("motion").len(), 1);
+    assert_eq!(
+        room.producer("motion")
+            .map(|processor| processor.output().as_str()),
+        Some("motion")
+    );
+    assert!(room.raw("presence").is_none());
+    assert!(room.transforms("presence").is_empty());
+
+    // More recorded data runs the chain again; noise alone changes nothing.
+    let report = room.update(motion(&[(30, "noise")])).unwrap();
+    assert!(report.changed().is_empty());
+    assert_eq!(room.raw("motion").unwrap().len(), 5);
+    assert_eq!(instants(&room, "motion"), [10, 25]);
+}
+
+#[test]
+fn a_stream_nothing_transforms_has_its_recorded_data_as_raw() {
+    let room = room();
+    assert_eq!(room.raw("motion"), room.get("motion"));
+    assert_eq!(room.raw("presence"), None);
+    assert_eq!(room.raw("nothing"), None);
+    assert!(!room.is_transformed("motion"));
+}
+
+#[test]
+fn transforms_of_one_stream_chain_in_the_order_they_are_added() {
+    let mut room = StreamSystem::new();
+    room.insert_stream("motion", TimePointSequence::<&str>::new("motion"))
+        .unwrap();
+    room.add_processor(Processor::new("motion", drop_noise()))
+        .unwrap();
+    room.add_processor(Processor::new("motion", Events::changes("motion")))
+        .unwrap();
+    room.add_processor(Processor::new("presence", presence()))
+        .unwrap();
+
+    room.update(motion(&[
+        (1, "start"),
+        (2, "noise"),
+        (3, "start"),
+        (4, "end"),
+        (5, "end"),
+    ]))
+    .unwrap();
+
+    // Noise dropped, then the repeats of what is left.
+    assert_eq!(instants(&room, "motion"), [1, 4]);
+    assert_eq!(room.raw("motion").unwrap().len(), 5);
+    assert_eq!(room.intervals("presence").unwrap()[0].bounds(), (1, 4));
+    assert_eq!(room.transforms("motion").len(), 2);
+
+    // Removing from the end brings back the version before.
+    room.remove_processor("presence").unwrap();
+    room.remove_processor("motion").unwrap();
+    assert_eq!(instants(&room, "motion"), [1, 3, 4, 5]);
+    assert_eq!(room.transforms("motion").len(), 1);
+    room.remove_processor("motion").unwrap();
+    assert!(!room.is_transformed("motion"));
+    assert_eq!(room.get("motion"), room.raw("motion"));
+    assert_eq!(room.get("motion").unwrap().len(), 5);
+    assert!(room.remove_stream("motion").unwrap().is_some());
+}
+
+#[test]
+fn a_transform_refuses_what_would_leave_the_system_inconsistent() {
+    let mut room = cleaned_room();
+    room.update(motion(&[(10, "start"), (25, "end")])).unwrap();
+    let before = room.clone();
+
+    // A transform that changes the shape of the stream.
+    assert!(matches!(
+        room.add_processor(Processor::new(
+            "door",
+            Events::Edges(Formula::state("door"))
+        )),
+        Err(UpdateError::Process { .. })
+    ));
+    let mut door = StreamSystem::new();
+    door.insert_stream(
+        "door",
+        TimeIntervalSequence::from_spans("door", vec![span(1, 2)]),
+    )
+    .unwrap();
+    let before_door = door.clone();
+    assert!(matches!(
+        door.add_processor(Processor::new(
+            "door",
+            Events::Edges(Formula::state("door"))
+        )),
+        Err(UpdateError::Process {
+            error: ProcessError::TransformShape { .. },
+            ..
+        })
+    ));
+    assert_eq!(door, before_door);
+
+    // A reader of the stream already reads a version: no more transforms.
+    assert_eq!(
+        room.add_processor(Processor::new("motion", Events::changes("motion"))),
+        Err(UpdateError::Read {
+            key: "motion".into(),
+            by: "presence".into()
+        })
+    );
+    // A derived stream is not rewritten, and a missing one is no stream.
+    assert!(matches!(
+        room.add_processor(Processor::new("presence", Formula::state("presence"))),
+        Err(UpdateError::Taken { .. })
+    ));
+    assert!(matches!(
+        room.add_processor(Processor::new("missing", Formula::state("missing"))),
+        Err(UpdateError::Process {
+            error: ProcessError::UnknownKey { .. },
+            ..
+        })
+    ));
+    // What a reader reads cannot be taken out, the transform included.
+    assert_eq!(
+        room.remove_processor("motion"),
+        Err(UpdateError::Read {
+            key: "motion".into(),
+            by: "presence".into()
+        })
+    );
+    assert!(matches!(
+        room.remove_stream("motion"),
+        Err(UpdateError::Read { .. })
+    ));
+    assert_eq!(room, before);
+
+    // A chain of two cannot lose its first transform while the second reads it.
+    let mut chain = StreamSystem::new();
+    chain
+        .insert_stream("motion", TimePointSequence::<&str>::new("motion"))
+        .unwrap();
+    chain
+        .add_processor(Processor::new("motion", drop_noise()))
+        .unwrap();
+    chain
+        .add_processor(Processor::new("motion", Events::changes("motion")))
+        .unwrap();
+    chain.update(motion(&[(1, "start"), (2, "start")])).unwrap();
+    let kept = chain.clone();
+    // Removal by key takes the last transform, never one in the middle.
+    let removed = chain.remove_processor("motion").unwrap();
+    assert_eq!(removed, Processor::new("motion", Events::changes("motion")));
+    assert_eq!(chain.transforms("motion").len(), 1);
+    assert_ne!(chain, kept);
+}
+
+#[test]
+fn recording_into_a_transformed_stream_records_into_the_recorded_data() {
+    let mut room = cleaned_room();
+    room.set_schema("motion", Schema::Integer).unwrap_err();
+
+    let mut wrong = Update::new();
+    wrong.points("motion", [TimePointEvent::new(1, 7_i64)]);
+    let before = room.clone();
+    assert!(matches!(room.update(wrong), Err(UpdateError::Record(_))));
+    assert_eq!(room, before);
+
+    room.relabel("motion", "movement").unwrap();
+    assert_eq!(room.raw("motion").unwrap().label(), "movement");
+    room.insert_stream(
+        "motion",
+        TimePointSequence::from_events(
+            "motion",
+            vec![
+                TimePointEvent::new(3, "noise"),
+                TimePointEvent::new(4, "start"),
+            ],
+        ),
+    )
+    .unwrap();
+    assert_eq!(instants(&room, "motion"), [4]);
+    assert_eq!(room.raw("motion").unwrap().len(), 2);
+}
+
+/// One transform of a stream, by what it reads and what it keeps.
+#[derive(Clone, Copy, Debug)]
+enum Transform {
+    /// Points below a number.
+    Below(i64),
+    /// Points above a number.
+    Above(i64),
+    /// Points that differ from the one before.
+    Changes,
+    /// A timeline moved by a number.
+    Shifted(i64),
+    /// A timeline joined with another timeline.
+    Joined,
+    /// A timeline restricted to the other timeline.
+    Restricted,
+}
+
+impl Transform {
+    fn processor(self, output: &str, source: &str) -> Processor {
+        match self {
+            Self::Below(bound) => Processor::new(
+                output,
+                Events::Matching(Pattern::new(source, Condition::Less(bound))),
+            ),
+            Self::Above(bound) => Processor::new(
+                output,
+                Events::Matching(Pattern::new(source, Condition::Greater(bound))),
+            ),
+            Self::Changes => Processor::new(output, Events::changes(source)),
+            Self::Shifted(by) => Processor::new(output, Formula::state(source).shift(by, by)),
+            Self::Joined => Processor::new(output, Formula::state(source).or(Formula::state("t"))),
+            Self::Restricted => {
+                Processor::new(output, Formula::state(source).and(Formula::state("t")))
+            }
+        }
+    }
+}
+
+/// A random chain of transforms for the stream of points `p` or the timeline `s`.
+fn chain(random: &mut Random, points: bool) -> Vec<Transform> {
+    (0..1 + random.below(3))
+        .map(|_| match (points, random.below(3)) {
+            (true, 0) => Transform::Below(random.between(1, 6)),
+            (true, 1) => Transform::Above(random.between(-1, 4)),
+            (true, _) => Transform::Changes,
+            (false, 0) => Transform::Shifted(random.between(-3, 4)),
+            (false, 1) => Transform::Joined,
+            (false, _) => Transform::Restricted,
+        })
+        .collect()
+}
+
+/// The streams `p`, `s` and `t`, empty.
+fn plain_streams() -> StreamSystem {
+    let mut system = StreamSystem::new();
+    system
+        .insert_stream("p", TimePointSequence::<i64>::new("p"))
+        .unwrap();
+    system
+        .insert_stream("s", TimeIntervalSequence::new("s"))
+        .unwrap();
+    system
+        .insert_stream("t", TimeIntervalSequence::new("t"))
+        .unwrap();
+    system
+}
+
+/// What a stream holds, without its label: the points as pairs, a timeline as
+/// its bounds.
+fn content(system: &StreamSystem, key: &str) -> Vec<(i64, i64)> {
+    system.points::<i64>(key).map_or_else(
+        || bounds(system.intervals(key).unwrap()),
+        |points| {
+            points
+                .iter()
+                .map(|event| (event.timestamp(), *event.value()))
+                .collect()
+        },
+    )
+}
+
+/// What every reader reads: the last version of each stream.
+fn readers(source_p: &str, source_s: &str) -> [Processor; 2] {
+    [
+        Processor::new(
+            "seen",
+            Formula::occurs(Pattern::new(source_p, Condition::<i64>::Any)),
+        ),
+        Processor::new("open", Formula::state(source_s).or(Formula::state("t"))),
+    ]
+}
+
+#[test]
+fn transformed_streams_always_equal_the_chain_run_from_scratch() {
+    for_each_seed(300, |random, _| {
+        let for_p = chain(random, true);
+        let for_s = chain(random, false);
+
+        // The system rewrites `p` and `s` in place.
+        let mut system = plain_streams();
+        for transform in &for_p {
+            system.add_processor(transform.processor("p", "p")).unwrap();
+        }
+        for transform in &for_s {
+            system.add_processor(transform.processor("s", "s")).unwrap();
+        }
+        for reader in readers("p", "s") {
+            system.add_processor(reader).unwrap();
+        }
+
+        // The oracle names every version: `p1` reads `p`, `p2` reads `p1`.
+        let mut oracle = plain_streams();
+        let (mut last_p, mut last_s) = ("p".to_owned(), "s".to_owned());
+        for (stem, list, last) in [("p", &for_p, &mut last_p), ("s", &for_s, &mut last_s)] {
+            for (position, transform) in list.iter().enumerate() {
+                let name = format!("{stem}{}", position + 1);
+                oracle
+                    .add_processor(transform.processor(&name, last))
+                    .unwrap();
+                *last = name;
+            }
+        }
+        for reader in readers(&last_p, &last_s) {
+            oracle.add_processor(reader).unwrap();
+        }
+
+        for _ in 0..1 + random.below(5) {
+            let mut for_system = Update::new();
+            let mut for_oracle = Update::new();
+            for _ in 0..random.below(5) {
+                let event = TimePointEvent::new(random.between(0, 60), random.between(0, 6));
+                for_system.points("p", [event]);
+                for_oracle.points("p", [event]);
+            }
+            for key in ["s", "t"] {
+                if random.chance(2, 3) {
+                    let start = random.between(0, 60);
+                    let end = start + random.between(1, 10);
+                    for_system.spans(key, [span(start, end)]);
+                    for_oracle.spans(key, [span(start, end)]);
+                }
+            }
+            system.update(for_system).unwrap();
+            oracle.update(for_oracle).unwrap();
+
+            assert_eq!(
+                content(&system, "p"),
+                content(&oracle, &last_p),
+                "{for_p:?}"
+            );
+            assert_eq!(
+                content(&system, "s"),
+                content(&oracle, &last_s),
+                "{for_s:?}"
+            );
+            assert_eq!(system.raw("p"), oracle.get("p"));
+            assert_eq!(system.raw("s"), oracle.get("s"));
+            assert_eq!(
+                content(&system, "seen"),
+                content(&oracle, "seen"),
+                "{for_p:?}"
+            );
+            assert_eq!(
+                content(&system, "open"),
+                content(&oracle, "open"),
+                "{for_s:?}"
+            );
+        }
+    });
+}
+
+#[test]
+fn a_slice_and_an_observation_keep_the_recorded_data_and_the_versions_apart() {
+    let mut room = cleaned_room();
+    room.update(motion(&[(5, "noise"), (10, "start"), (25, "end")]))
+        .unwrap();
+
+    let window = room.slice(8..30);
+    assert!(window.is_transformed("motion"));
+    assert_eq!(instants(&window, "motion"), [10, 25]);
+    assert_eq!(window.raw("motion").unwrap().len(), 2);
+    assert_eq!(window.transforms("motion").len(), 1);
+
+    // Observing narrows the recorded data and the versions follow.
+    room.observe(&Extent::from_spans(vec![span(8, 30)]))
+        .unwrap();
+    assert_eq!(room.raw("motion").unwrap().len(), 2);
+    assert_eq!(instants(&room, "motion"), [10, 25]);
+    assert_eq!(room.intervals("presence").unwrap()[0].bounds(), (10, 25));
+}
+
+#[test]
+fn a_reader_of_an_earlier_version_refuses_a_later_transform_and_a_removal() {
+    let mut room = StreamSystem::new();
+    room.insert_stream("motion", TimePointSequence::<&str>::new("motion"))
+        .unwrap();
+    room.add_processor(Processor::new("motion", drop_noise()))
+        .unwrap();
+    room.add_processor(Processor::new("motion", Events::changes("motion")))
+        .unwrap();
+    room.add_processor(Processor::new("presence", presence()))
+        .unwrap();
+    let before = room.clone();
+
+    // Neither the last transform nor the stream can go while a reader reads it.
+    assert!(matches!(
+        room.remove_processor("motion"),
+        Err(UpdateError::Read { .. })
+    ));
+    assert!(matches!(
+        room.remove_stream("motion"),
+        Err(UpdateError::Read { .. })
+    ));
+    assert_eq!(room, before);
+
+    // Without the reader, the chain unwinds to the recorded data.
+    room.remove_processor("presence").unwrap();
+    room.remove_processor("motion").unwrap();
+    room.remove_processor("motion").unwrap();
+    assert!(room.remove_processor("motion").is_err());
+    assert!(room.transforms("motion").is_empty());
+}
+
+#[test]
+fn evaluating_a_transform_once_reads_the_last_version_and_changes_nothing() {
+    let mut room = cleaned_room();
+    room.update(motion(&[(5, "noise"), (10, "start"), (25, "end")]))
+        .unwrap();
+    let before = room.clone();
+
+    // Another transform, not added: it reads the cleaned version, not the recorded data.
+    let changes = Processor::new("motion", Events::changes("motion"));
+    let evaluated = changes.evaluate(&room).unwrap();
+    assert_eq!(evaluated.len(), 2);
+
+    // The transform already in the chain, run once more, reads the last version.
+    let again = Processor::new("motion", drop_noise())
+        .evaluate(&room)
+        .unwrap();
+    assert_eq!(again.len(), 2);
+    assert_eq!(room, before);
+
+    // Over a stream nothing transforms, it reads the stream itself.
+    let mut plain = StreamSystem::new();
+    plain
+        .insert_stream("motion", TimePointSequence::<&str>::new("motion"))
+        .unwrap();
+    plain
+        .update(motion(&[(5, "noise"), (10, "start")]))
+        .unwrap();
+    assert_eq!(
+        Processor::new("motion", drop_noise())
+            .evaluate(&plain)
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn replacing_a_transformed_stream_resets_its_metadata_as_for_a_plain_stream() {
+    let mut room = cleaned_room();
+    room.member_metadata_mut("motion")
+        .unwrap()
+        .insert("unit".into(), "events".into());
+    room.update(motion(&[(10, "start")])).unwrap();
+    // Following a change keeps it.
+    assert!(room
+        .member_metadata("motion")
+        .and_then(|metadata| metadata.get("unit"))
+        .is_some());
+
+    room.insert_stream("motion", TimePointSequence::<&str>::new("motion"))
+        .unwrap();
+    assert!(room
+        .member_metadata("motion")
+        .is_none_or(|metadata| metadata.get("unit").is_none()));
+    assert!(room.is_transformed("motion"));
+    assert_eq!(room.raw("motion").unwrap().len(), 0);
+
+    let mut plain = StreamSystem::new();
+    plain
+        .insert_stream("motion", TimePointSequence::<&str>::new("motion"))
+        .unwrap();
+    plain
+        .member_metadata_mut("motion")
+        .unwrap()
+        .insert("unit".into(), "events".into());
+    plain
+        .insert_stream("motion", TimePointSequence::<&str>::new("motion"))
+        .unwrap();
+    assert!(plain
+        .member_metadata("motion")
+        .is_none_or(|metadata| metadata.get("unit").is_none()));
 }

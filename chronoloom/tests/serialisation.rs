@@ -904,9 +904,9 @@ fn processor_of(output: &str, formula: Json) -> Json {
 }
 
 #[test]
-fn a_processor_that_reads_its_own_output_is_refused() {
-    let cycle = refusal::<Processor>(&processor_of("a", json!({"state": {"state": "a"}})));
-    assert!(cycle.contains("circle"), "{cycle}");
+fn a_processor_that_reads_its_own_output_is_a_transform_and_loads() {
+    let transform: Processor = load(&processor_of("a", json!({"state": {"state": "a"}}))).unwrap();
+    assert!(transform.check().is_ok());
 
     let chain: Processor = load(&processor_of("a", json!({"state": {"state": "b"}}))).unwrap();
     assert!(chain.check().is_ok());

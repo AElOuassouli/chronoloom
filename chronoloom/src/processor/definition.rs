@@ -30,7 +30,7 @@ use crate::stream_system::{writes, Mode, StreamSystem};
 ///
 /// - [`validate`](Processor::validate) checks the processor against its own
 ///   declarations without a system, and lists every problem rather than the
-///   first: a formula reading its own output ([`ProcessError::Cycle`]), then
+///   first: a per-entity output reading a member under it ([`ProcessError::Cycle`]), then
 ///   its problems in the order the formula reads them (the group of a
 ///   per-entity output first, then the tree from left to right), each wrapped
 ///   in [`ProcessError::InOutput`] naming the output. Once any input is
@@ -119,7 +119,7 @@ impl Processor {
     ///
     /// Every problem found, never an empty list.
     pub fn validate(&self) -> Result<(), Vec<ProcessError>> {
-        self.as_set().problems(false)
+        self.as_set().problems(false, self.is_transform())
     }
 
     /// The first problem [`validate`](Processor::validate) would report, if
@@ -130,30 +130,48 @@ impl Processor {
     /// That problem.
     pub fn check(&self) -> Result<(), ProcessError> {
         self.as_set()
-            .problems(true)
+            .problems(true, self.is_transform())
             .map_err(|mut problems| problems.swap_remove(0))
     }
 
     /// The sequence the recipe denotes over the members of `system`, once:
-    /// nothing is stored, and the system is not changed.
+    /// nothing is stored, and the system is not changed. A transform is
+    /// evaluated over the last version of the stream it rewrites.
     ///
     /// # Errors
     ///
     /// The first declared input the system does not satisfy, in key order;
-    /// [`ProcessError::Cycle`] for a processor reading its own output, or a
-    /// member under it, as adding it to a stream system would refuse;
+    /// [`ProcessError::Cycle`] for a per-entity processor reading a member
+    /// under its output, as adding it to a stream system would refuse;
     /// otherwise the first [`ProcessError`] the recipe meets. For a per-entity
     /// output that is
     /// [`ProcessError::SeveralMembers`], as it has no single sequence (add its
     /// processor to a stream system).
     pub fn evaluate<M: Mode>(&self, system: &StreamSystem<M>) -> Result<Sequence, ProcessError> {
-        processing::check_declared(&self.declared, |key| key == &self.output, system.members())?;
-        if self.inputs().into_iter().any(|key| writes(self, key)) {
+        let transform = self.is_transform();
+        processing::check_declared(
+            &self.declared,
+            |key| !transform && key == &self.output,
+            system.members(),
+        )?;
+        if !transform && self.inputs().into_iter().any(|key| writes(self, key)) {
             return Err(ProcessError::Cycle {
                 keys: vec![self.output.clone()],
             });
         }
         self.recipe.evaluate(system.members())
+    }
+
+    /// Whether the processor transforms the stream under its output key: its
+    /// recipe reads that key (declaring it alone does not) and it is not a
+    /// per-entity output, which is a family of members and not one stream.
+    pub(crate) fn is_transform(&self) -> bool {
+        if matches!(self.recipe, Recipe::PerEntity { .. }) {
+            return false;
+        }
+        let mut read = Vec::new();
+        self.recipe.read_keys(&mut read);
+        read.contains(&&self.output)
     }
 
     /// The inputs whose shape was declared.
@@ -178,7 +196,12 @@ impl Processor {
     /// The first declared input the system does not satisfy, in key order,
     /// otherwise the first [`ProcessError`] the recipe meets.
     pub(crate) fn run(&self, system: &SequenceSystem) -> Result<SequenceSystem, ProcessError> {
-        processing::check_declared(&self.declared, |key| key == &self.output, system)?;
+        let transform = self.is_transform();
+        processing::check_declared(
+            &self.declared,
+            |key| !transform && key == &self.output,
+            system,
+        )?;
 
         let mut produced = SequenceSystem::new();
         for member in compile_recipe(&self.recipe).members(&self.output, system)? {

@@ -79,6 +79,13 @@ impl Update {
         self
     }
 
+    /// The update cut in two by key: the pushes for the keys `is_first` holds
+    /// for, then the others, each in push order.
+    pub(crate) fn split(self, is_first: impl Fn(&Key) -> bool) -> (Self, Self) {
+        let (first, second) = self.chunks.into_iter().partition(|(key, _)| is_first(key));
+        (Self { chunks: first }, Self { chunks: second })
+    }
+
     /// How many events and spans the update carries, across every key.
     #[must_use]
     pub fn len(&self) -> usize {

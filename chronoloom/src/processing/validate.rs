@@ -253,21 +253,27 @@ impl ProcessorSet {
     /// Every problem the processor has on its own, without a system, in a
     /// stable order (see [`Processor`](crate::processor::Processor) for what is
     /// checked and in what order), or only the first when `stop_at_first` is
-    /// set.
+    /// set. A `transform` reads its own output on purpose: that is neither a
+    /// cycle nor a dead declaration, and a read of it is checked as any input.
     ///
     /// # Errors
     ///
     /// The problems found, never an empty list.
-    pub(crate) fn problems(&self, stop_at_first: bool) -> Result<(), Vec<ProcessError>> {
+    pub(crate) fn problems(
+        &self,
+        stop_at_first: bool,
+        transform: bool,
+    ) -> Result<(), Vec<ProcessError>> {
         let mut problems = Vec::new();
-        if let Err(cycle) = self.check() {
+        let cycle = if transform { Ok(()) } else { self.check() };
+        if let Err(cycle) = cycle {
             problems.push(cycle);
             if stop_at_first {
                 return Err(problems);
             }
         }
         for key in self.inputs().keys() {
-            if self.outputs().contains_key(key) {
+            if !transform && self.outputs().contains_key(key) {
                 problems.push(ProcessError::InputIsOutput { key: key.clone() });
                 if stop_at_first {
                     return Err(problems);
@@ -279,7 +285,7 @@ impl ProcessorSet {
             for read in output_reads(output) {
                 let key = read.key();
                 let own = self.outputs().iter().any(|(owner, other)| {
-                    owner == key
+                    (!transform && owner == key)
                         || (matches!(other, Recipe::PerEntity { .. })
                             && group::is_under(key, owner))
                 });

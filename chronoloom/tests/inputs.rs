@@ -184,19 +184,29 @@ fn validate_lists_every_problem_of_a_processor_in_formula_order() {
 }
 
 #[test]
-fn validate_agrees_with_check_on_a_formula_that_reads_its_own_output() {
-    let processor = declared("a", Formula::state("a").or(Formula::state("nowhere")));
+fn a_transform_is_a_valid_processor() {
+    // Reading its own output, declared or not, is what a transform does.
+    let plain = Processor::new("a", Formula::state("a"));
+    assert_eq!(plain.validate(), Ok(()));
+    assert_eq!(plain.check(), Ok(()));
 
+    let with_declaration = declared("a", Formula::state("a")).with_input("a", Input::Timeline);
+    assert_eq!(with_declaration.validate(), Ok(()));
+    assert_eq!(with_declaration.check(), Ok(()));
+
+    // Its other reads are still checked, and agree with `check`.
+    let processor = declared("a", Formula::state("a").or(Formula::state("nowhere")));
     let problems = processor.validate().unwrap_err();
     assert_eq!(Err(problems[0].clone()), processor.check());
-    assert!(matches!(problems[0], ProcessError::Cycle { .. }));
-    assert_eq!(problems.len(), 2, "{problems:?}");
+    assert!(problems
+        .iter()
+        .all(|problem| !matches!(problem, ProcessError::Cycle { .. })));
 }
 
 #[test]
 fn check_reports_the_first_problem_validate_lists() {
     let processors = [
-        declared("a", Formula::state("a").or(Formula::state("nowhere"))),
+        declared("a", Formula::state("nowhere").or(Formula::state("missing"))),
         declared("door", Formula::state("nowhere")),
     ];
     for processor in processors {
@@ -420,18 +430,12 @@ fn evaluating_a_processor_once_names_a_missing_or_shadowed_input() {
 
     let shadowed =
         Processor::new("door", Formula::state("door")).with_input("door", Input::Timeline);
-    assert_eq!(
-        shadowed.evaluate(&system),
-        Err(ProcessError::InputIsOutput { key: "door".into() })
-    );
+    assert!(shadowed.evaluate(&system).is_ok());
 
-    // Reading its own output is refused without any declaration, as adding it is.
-    assert_eq!(
-        Processor::new("door", Formula::state("door")).evaluate(&system),
-        Err(ProcessError::Cycle {
-            keys: vec!["door".into()]
-        })
-    );
+    // Reading its own output is a transform: evaluated over the stream.
+    assert!(Processor::new("door", Formula::state("door"))
+        .evaluate(&system)
+        .is_ok());
 
     // Without declarations the recipe alone is evaluated, and an unread key is an error of the recipe.
     assert!(Processor::new("open", Formula::state("door"))

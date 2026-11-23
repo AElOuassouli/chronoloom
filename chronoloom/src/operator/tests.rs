@@ -10,12 +10,16 @@
 use std::collections::BTreeMap;
 
 use crate::primitives::{TimeIntervalEvent, TimePointEvent, Timestamp};
-use crate::processing::{Condition, Formula, OpenEnd, Pattern, ProcessError};
+use crate::processing::{Condition, Events, Formula, Kind, OpenEnd, Pattern, ProcessError};
 use crate::sequence_system::{Key, Sequence, SequenceSystem};
 use crate::sequences::{Extent, TimeIntervalSequence, TimePointSequence};
+use crate::values::Value;
+use crate::AnyPointSequence;
 
 use super::chunk::{Chunk, Inputs};
-use super::TimelinePlan;
+use super::online::OnlineNode;
+use super::online_points::OnlinePoints;
+use super::{PointsPlan, TimelinePlan};
 
 /// First instant generated inputs use.
 const DOMAIN_START: i64 = 0;
@@ -94,12 +98,29 @@ fn points(random: &mut Random, label: &str) -> TimePointSequence<i64> {
     TimePointSequence::from_events(label, events).with_observed(extent(random))
 }
 
+fn records(random: &mut Random, label: &str) -> TimePointSequence<Value> {
+    let events = (0..random.below(12))
+        .map(|_| {
+            let mut fields = vec![("n", Value::from(random.between(0, 4)))];
+            if random.chance(3, 4) {
+                fields.push(("flag", Value::from(random.chance(1, 2))));
+            }
+            TimePointEvent::new(
+                random.between(DOMAIN_START, DOMAIN_END),
+                Value::record(fields),
+            )
+        })
+        .collect();
+    TimePointSequence::from_events(label, events).with_observed(extent(random))
+}
+
 fn system(random: &mut Random) -> SequenceSystem {
     let mut system = SequenceSystem::new();
     system.insert("a", timeline(random, "a"));
     system.insert("b", timeline(random, "b"));
     system.insert("p", points(random, "p"));
     system.insert("q", points(random, "q"));
+    system.insert("r", records(random, "r"));
     system
 }
 
@@ -126,6 +147,12 @@ fn formula(random: &mut Random, depth: u32) -> Formula {
     } else {
         kind
     };
+    // A seventh of the inner nodes is a shift.
+    let kind = if depth > 0 && random.chance(1, 7) {
+        7
+    } else {
+        kind
+    };
     match kind {
         0 => Formula::state(if random.chance(1, 2) { "a" } else { "b" }),
         1 => Formula::Occurs(pattern(random)),
@@ -148,6 +175,11 @@ fn formula(random: &mut Random, depth: u32) -> Formula {
             pattern: pattern(random),
             // A timeout must be positive.
             timeout: random.chance(1, 2).then(|| random.between(1, 12)),
+        },
+        7 => Formula::Shift {
+            formula: Box::new(formula(random, depth - 1)),
+            alpha: random.between(-6, 7),
+            beta: random.between(-6, 7),
         },
         _ => Formula::Or(
             (0..random.below(4))
@@ -195,7 +227,7 @@ fn read_keys(formula: &Formula, keys: &mut Vec<Key>) {
                 read_keys(part, keys);
             }
         }
-        Formula::Shift { .. } => unreachable!("the generator draws no shift"),
+        Formula::Shift { formula, .. } => read_keys(formula, keys),
     }
 }
 
@@ -207,6 +239,32 @@ fn reached(stops: &[Timestamp], to: Timestamp) -> Timestamp {
         .take_while(|&stop| stop <= to)
         .last()
         .unwrap_or(Timestamp::MIN)
+}
+
+/// A node stepped by the driver, whichever shape its chunks have.
+trait Stepper {
+    fn step(&mut self, inputs: &Inputs, to: Timestamp) -> Result<Chunk, ProcessError>;
+    fn frontier(&self) -> Timestamp;
+}
+
+impl Stepper for OnlineNode {
+    fn step(&mut self, inputs: &Inputs, to: Timestamp) -> Result<Chunk, ProcessError> {
+        Self::step(self, inputs, to)
+    }
+
+    fn frontier(&self) -> Timestamp {
+        Self::frontier(self)
+    }
+}
+
+impl Stepper for OnlinePoints {
+    fn step(&mut self, inputs: &Inputs, to: Timestamp) -> Result<Chunk, ProcessError> {
+        Self::step(self, inputs, to)
+    }
+
+    fn frontier(&self) -> Timestamp {
+        Self::frontier(self)
+    }
 }
 
 /// Step the plan over `system`, each member advancing along its own `stops`,
@@ -221,7 +279,16 @@ fn run_online(
     read: &[Key],
     stops: &BTreeMap<Key, Vec<Timestamp>>,
 ) -> Result<Chunk, ProcessError> {
-    let mut node = plan.online().expect("every node of the formula is online");
+    drive(plan.online(), system, read, stops)
+}
+
+/// Step `node` over `system` as [`run_online`] does, and join the chunks.
+fn drive(
+    mut node: impl Stepper,
+    system: &SequenceSystem,
+    read: &[Key],
+    stops: &BTreeMap<Key, Vec<Timestamp>>,
+) -> Result<Chunk, ProcessError> {
     let mut joined: Option<Chunk> = None;
     let mut frontiers: BTreeMap<Key, Timestamp> = system
         .keys()
@@ -365,6 +432,110 @@ fn joined_online_chunks_of_between_and_while_equal_batch() {
     }
 }
 
+fn events(random: &mut Random) -> Events {
+    match random.below(4) {
+        0 => Events::Edges(formula(random, 2)),
+        1 => Events::Matching(pattern(random)),
+        2 => Events::changes(if random.chance(1, 2) { "p" } else { "q" }),
+        _ => match random.below(3) {
+            0 => Events::project("r", "n", Kind::Integer),
+            1 => Events::project("r", "flag", Kind::Bool),
+            _ => Events::project("r", "n", Kind::Value),
+        },
+    }
+}
+
+fn events_keys(events: &Events) -> Vec<Key> {
+    let mut keys = Vec::new();
+    match events {
+        Events::Edges(formula) => read_keys(formula, &mut keys),
+        Events::Matching(pattern) => keys.push(pattern.key.clone()),
+        Events::Changes { key } | Events::Project { key, .. } => keys.push(key.clone()),
+    }
+    keys
+}
+
+#[test]
+fn joined_online_points_equal_batch() {
+    for seed in 0..SEEDS {
+        let mut random = Random::new(seed ^ 0xE7);
+        let system = system(&mut random);
+        let events = events(&mut random);
+        let stops = stops_of(&mut random, &system);
+        let read = events_keys(&events);
+
+        let plan = PointsPlan::compile(&events);
+        let expected = plan.batch(&system).expect("the events read known keys");
+        let joined =
+            drive(plan.online(), &system, &read, &stops).expect("the events read known keys");
+
+        assert_eq!(joined.from(), Timestamp::MIN, "seed {seed}: {events}");
+        assert_eq!(joined.to(), Timestamp::MAX, "seed {seed}: {events}");
+        let Sequence::TimePoint(online) = joined.sequence() else {
+            panic!("seed {seed}: {events} gives points");
+        };
+        assert_eq!(online, &expected, "seed {seed}: {events}");
+    }
+}
+
+/// A `Shift` of its own over a random formula, so that every seed puts one to
+/// the test.
+fn shifted(random: &mut Random) -> Formula {
+    Formula::Shift {
+        formula: Box::new(formula(random, 2)),
+        alpha: random.between(-8, 9),
+        beta: random.between(-8, 9),
+    }
+}
+
+#[test]
+fn joined_online_chunks_of_shift_equal_batch() {
+    for seed in 0..SEEDS {
+        let mut random = Random::new(seed ^ 0x5F);
+        let system = system(&mut random);
+        let formula = shifted(&mut random);
+        let stops = stops_of(&mut random, &system);
+        let mut read = Vec::new();
+        read_keys(&formula, &mut read);
+
+        let plan = TimelinePlan::compile(&formula);
+        let expected = plan.batch(&system).expect("the formula reads known keys");
+        let joined =
+            run_online(&plan, &system, &read, &stops).expect("the formula reads known keys");
+
+        assert_eq!(joined.from(), Timestamp::MIN, "seed {seed}: {formula}");
+        assert_eq!(joined.to(), Timestamp::MAX, "seed {seed}: {formula}");
+        let online = joined.timeline().expect("a timeline");
+        assert_eq!(bounds(online), bounds(&expected), "seed {seed}: {formula}");
+        assert_eq!(
+            online.observed(),
+            expected.observed(),
+            "seed {seed}: {formula}"
+        );
+    }
+}
+
+#[test]
+fn a_look_ahead_shift_lags_its_input() {
+    let mut system = SequenceSystem::new();
+    system.insert(
+        "a",
+        TimeIntervalSequence::from_spans("a", vec![TimeIntervalEvent::raw(10, 20)]),
+    );
+    let plan = TimelinePlan::compile(&Formula::state("a").shift(-5, -3));
+    let mut node = plan.online();
+
+    let mut inputs = Inputs::new();
+    let timeline = system.get("a").expect("`a` is known");
+    inputs.insert("a".into(), Chunk::of(timeline, Timestamp::MIN, 30));
+    let chunk = node.step(&inputs, 30).expect("`a` is known");
+
+    // An instant reads the input up to five after it.
+    assert_eq!(node.frontier(), 25);
+    assert_eq!(chunk.to(), 25);
+    assert_eq!(bounds(chunk.timeline().expect("a timeline")), [(5, 17)]);
+}
+
 fn between_system() -> SequenceSystem {
     let mut system = SequenceSystem::new();
     let events = vec![
@@ -406,7 +577,7 @@ fn a_span_open_across_chunks_closes_at_its_end() {
 fn a_head_that_has_not_moved_holds_the_output_back() {
     let system = between_system();
     let plan = TimelinePlan::compile(&between_formula(OpenEnd::Head));
-    let mut node = plan.online().expect("`between` is online");
+    let mut node = plan.online();
 
     let mut inputs = Inputs::new();
     let points = system.get("p").expect("`p` is known");
@@ -475,12 +646,6 @@ fn a_missing_or_misshapen_member_is_refused() {
     ));
 }
 
-#[test]
-fn kinds_without_an_online_form_say_so() {
-    let plan = TimelinePlan::compile(&Formula::state("up").shift(1, 2));
-    assert!(plan.online().is_none());
-}
-
 fn point_chunk(from: i64, to: i64, events: Vec<(i64, i64)>) -> Chunk {
     let events = events
         .into_iter()
@@ -536,4 +701,83 @@ fn slicing_a_chunk_stays_inside_its_range() {
     let empty = chunk.slice(20, 30);
     assert!(empty.to() >= empty.from());
     assert_eq!(empty.sequence().len(), 0);
+}
+
+fn extent_of(start: i64, end: i64) -> Extent {
+    Extent::from_spans(vec![TimeIntervalEvent::raw(start, end)])
+}
+
+#[test]
+fn appending_points_sets_the_extent_to_the_union_of_both() {
+    let first = TimePointSequence::from_events("p", vec![TimePointEvent::new(2, 1_i64)])
+        .with_observed(extent_of(0, 5));
+    // A gap separates the two extents: it stays unobserved.
+    let second = TimePointSequence::from_events("p", vec![TimePointEvent::new(9, 2_i64)])
+        .with_observed(extent_of(8, 10));
+
+    let mut joined = AnyPointSequence::from(first);
+    assert!(joined.append(&AnyPointSequence::from(second)));
+
+    assert_eq!(
+        joined.observed(),
+        &Extent::from_spans(vec![
+            TimeIntervalEvent::raw(0, 5),
+            TimeIntervalEvent::raw(8, 10)
+        ])
+    );
+    assert_eq!(joined.len(), 2);
+}
+
+#[test]
+fn appending_points_of_another_value_type_changes_nothing() {
+    let first = TimePointSequence::from_events("p", vec![TimePointEvent::new(2, 1_i64)])
+        .with_observed(extent_of(0, 5));
+    let other = TimePointSequence::from_events("p", vec![TimePointEvent::new(7, true)])
+        .with_observed(extent_of(5, 10));
+
+    let mut joined = AnyPointSequence::from(first);
+    let before = joined.clone();
+    assert!(!joined.append(&AnyPointSequence::from(other)));
+    assert_eq!(joined.observed(), before.observed());
+    assert_eq!(joined.len(), 1);
+}
+
+#[test]
+fn edges_stepped_in_chunks_have_no_edge_at_a_cut_and_forget_a_closed_span() {
+    let mut system = SequenceSystem::new();
+    system.insert(
+        "a",
+        TimeIntervalSequence::from_spans(
+            "a",
+            vec![
+                TimeIntervalEvent::raw(10, 20),
+                TimeIntervalEvent::raw(40, 50),
+            ],
+        ),
+    );
+    let plan = PointsPlan::compile(&Events::Edges(Formula::state("a")));
+    let mut node = plan.online();
+    let timeline = system.get("a").expect("`a` is known");
+
+    let mut stamps = Vec::new();
+    // Cut inside the first span, after it, inside the second, after it.
+    for to in [15, 30, 45, 60] {
+        let mut inputs = Inputs::new();
+        inputs.insert("a".into(), Chunk::of(timeline, Timestamp::MIN, to));
+        let chunk = node.step(&inputs, to).expect("`a` is known");
+        let Sequence::TimePoint(points) = chunk.sequence() else {
+            panic!("edges give points");
+        };
+        let points = points
+            .downcast_ref::<crate::processing::Edge>()
+            .expect("edges");
+        stamps.extend(
+            points
+                .iter()
+                .map(|event| (event.timestamp(), *event.value())),
+        );
+    }
+
+    use crate::processing::Edge::{End, Start};
+    assert_eq!(stamps, [(10, Start), (20, End), (40, Start), (50, End)]);
 }

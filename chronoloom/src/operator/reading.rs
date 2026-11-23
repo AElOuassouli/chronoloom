@@ -22,7 +22,15 @@ pub(crate) fn records<'a>(
     key: &Key,
     system: &'a SequenceSystem,
 ) -> Result<&'a TimePointSequence<Value>, ProcessError> {
-    match system.get(key.as_str()) {
+    records_of(key, system.get(key.as_str()))
+}
+
+/// The record points of `sequence`, the member `key` or a chunk of it.
+pub(super) fn records_of<'a>(
+    key: &Key,
+    sequence: Option<&'a Sequence>,
+) -> Result<&'a TimePointSequence<Value>, ProcessError> {
+    match sequence {
         Some(Sequence::TimePoint(points)) => {
             points
                 .downcast_ref::<Value>()

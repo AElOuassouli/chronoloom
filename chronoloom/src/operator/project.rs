@@ -1,13 +1,15 @@
 //! `Project`: one field of the record values of a member, as points of a type.
 
-use crate::primitives::TimePointEvent;
+use crate::primitives::{TimePointEvent, Timestamp};
 use crate::processing::{Kind, ProcessError};
-use crate::sequence_system::{AnyPointSequence, Key, PointValue, SequenceSystem};
+use crate::sequence_system::{AnyPointSequence, Key, PointValue, Sequence, SequenceSystem};
 use crate::sequences::attribute::Attribute;
 use crate::sequences::TimePointSequence;
 use crate::values::Value;
 
-use super::reading::records;
+use super::chunk::{Chunk, Inputs};
+use super::online_points::OnlinePoints;
+use super::reading::{records, records_of};
 
 #[derive(Debug, Clone)]
 pub(super) struct Project {
@@ -27,9 +29,19 @@ impl Project {
         }
     }
 
-    pub(super) fn batch(&self, inputs: &SequenceSystem) -> Result<AnyPointSequence, ProcessError> {
-        let records = records(&self.key, inputs)?;
+    pub(super) fn online(&self) -> OnlinePoints {
+        OnlinePoints::Project(OnlineProject {
+            project: self.clone(),
+            frontier: Timestamp::MIN,
+        })
+    }
 
+    pub(super) fn batch(&self, inputs: &SequenceSystem) -> Result<AnyPointSequence, ProcessError> {
+        self.read(records(&self.key, inputs)?)
+    }
+
+    /// The field of `records` as points of the type asked for.
+    fn read(&self, records: &TimePointSequence<Value>) -> Result<AnyPointSequence, ProcessError> {
         match self.into {
             Kind::Bool => self.collect(records, Value::as_bool),
             Kind::Integer => self.collect(records, Value::as_integer),
@@ -66,5 +78,37 @@ impl Project {
             events,
             records.observed().clone(),
         )))
+    }
+}
+
+/// The running state of [`Project`]: each chunk of records read on its own.
+#[derive(Debug, Clone)]
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) struct OnlineProject {
+    project: Project,
+    frontier: Timestamp,
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+impl OnlineProject {
+    pub(super) fn step(&mut self, inputs: &Inputs, to: Timestamp) -> Result<Chunk, ProcessError> {
+        let key = &self.project.key;
+        let chunk = inputs
+            .get(key)
+            .ok_or_else(|| ProcessError::UnknownKey { key: key.clone() })?
+            .slice(self.frontier, to);
+        let records = records_of(key, Some(chunk.sequence()))?;
+        let projected = self.project.read(records)?;
+
+        self.frontier = chunk.to();
+        Ok(Chunk::new(
+            chunk.from(),
+            chunk.to(),
+            Sequence::TimePoint(projected),
+        ))
+    }
+
+    pub(super) const fn frontier(&self) -> Timestamp {
+        self.frontier
     }
 }

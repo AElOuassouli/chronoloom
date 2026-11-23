@@ -20,19 +20,15 @@ impl Or {
         Self { parts }
     }
 
-    /// The running state, or `None` while a part has no online form yet.
-    pub(super) fn online(&self) -> Option<OnlineNode> {
-        let parts = self
-            .parts
-            .iter()
-            .map(Node::online)
-            .collect::<Option<Vec<_>>>()?;
+    /// The running state.
+    pub(super) fn online(&self) -> OnlineNode {
+        let parts = self.parts.iter().map(Node::online).collect();
 
-        Some(OnlineNode::Or(OnlineOr(Combination::new(
+        OnlineNode::Or(OnlineOr(Combination::new(
             parts,
             TimeIntervalSequence::new("⊥"),
             TimeIntervalSequence::union,
-        ))))
+        )))
     }
 
     pub(super) fn batch(

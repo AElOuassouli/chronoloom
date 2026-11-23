@@ -122,10 +122,15 @@ impl<T: PointValue> ErasedPoints for TimePointSequence<T> {
             return false;
         };
 
+        // An event may lie outside its sequence's extent (as at the excluded
+        // end of an observed span); inserting would grow the extent over it,
+        // so the extent is the two extents put together.
+        let mut observed = self.observed().clone();
+        observed.grow(next.observed().as_slice());
         for event in next.iter() {
             self.insert(event.clone());
         }
-        self.observed_mut().grow(next.observed().as_slice());
+        *self.observed_mut() = observed;
         true
     }
 
@@ -434,8 +439,9 @@ impl AnyPointSequence {
         self.0.instants_in(start, end)
     }
 
-    /// Append `next`, the points that follow, and grow the extent by its own;
-    /// false and unchanged when the two carry different value types.
+    /// Append `next`, the points that follow. The extent becomes the union of
+    /// both extents; unlike `insert`, an event outside it does not grow it.
+    /// False and unchanged when the two carry different value types.
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn append(&mut self, next: &Self) -> bool {
         self.0.append(&*next.0)

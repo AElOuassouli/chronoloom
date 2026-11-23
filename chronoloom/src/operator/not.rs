@@ -21,11 +21,11 @@ impl Not {
         }
     }
 
-    /// The running state, or `None` while an input has no online form yet.
-    pub(super) fn online(&self) -> Option<OnlineNode> {
-        Some(OnlineNode::Not(OnlineNot {
-            input: Box::new(self.input.online()?),
-        }))
+    /// The running state.
+    pub(super) fn online(&self) -> OnlineNode {
+        OnlineNode::Not(OnlineNot {
+            input: Box::new(self.input.online()),
+        })
     }
 
     pub(super) fn batch(

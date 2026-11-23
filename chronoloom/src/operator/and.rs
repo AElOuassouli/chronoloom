@@ -20,22 +20,18 @@ impl And {
         Self { parts }
     }
 
-    /// The running state, or `None` while a part has no online form yet.
-    pub(super) fn online(&self) -> Option<OnlineNode> {
-        let parts = self
-            .parts
-            .iter()
-            .map(Node::online)
-            .collect::<Option<Vec<_>>>()?;
+    /// The running state.
+    pub(super) fn online(&self) -> OnlineNode {
+        let parts = self.parts.iter().map(Node::online).collect();
 
-        Some(OnlineNode::And(OnlineAnd(Combination::new(
+        OnlineNode::And(OnlineAnd(Combination::new(
             parts,
             TimeIntervalSequence::from_spans(
                 "⊤",
                 vec![TimeIntervalEvent::raw(Timestamp::MIN, Timestamp::MAX)],
             ),
             TimeIntervalSequence::intersection,
-        ))))
+        )))
     }
 
     pub(super) fn batch(

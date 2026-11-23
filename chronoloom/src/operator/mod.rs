@@ -21,6 +21,7 @@ mod matching;
 mod not;
 mod occurs;
 mod online;
+mod online_points;
 mod or;
 mod plan;
 mod project;

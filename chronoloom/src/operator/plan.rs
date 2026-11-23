@@ -14,6 +14,7 @@ use super::matching::Matching;
 use super::not::Not;
 use super::occurs::Occurs;
 use super::online::OnlineNode;
+use super::online_points::OnlinePoints;
 use super::or::Or;
 use super::project::Project;
 use super::r#while::While;
@@ -120,9 +121,9 @@ impl TimelinePlan {
         }
     }
 
-    /// The running state of the plan, or `None` while a node of it has no online form.
+    /// The running state of the plan.
     #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) fn online(&self) -> Option<OnlineNode> {
+    pub(crate) fn online(&self) -> OnlineNode {
         self.root.online()
     }
 
@@ -155,6 +156,12 @@ impl PointsPlan {
         Self { root }
     }
 
+    /// The running state of the plan.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn online(&self) -> OnlinePoints {
+        self.root.online()
+    }
+
     /// The labelled points of the plan over the whole `inputs`.
     pub(crate) fn batch(&self, inputs: &SequenceSystem) -> Result<AnyPointSequence, ProcessError> {
         self.root.batch(inputs)
@@ -162,6 +169,15 @@ impl PointsPlan {
 }
 
 impl PointsNode {
+    fn online(&self) -> OnlinePoints {
+        match self {
+            Self::Edges(operator) => operator.online(),
+            Self::Matching(operator) => operator.online(),
+            Self::Changes(operator) => operator.online(),
+            Self::Project(operator) => operator.online(),
+        }
+    }
+
     fn batch(&self, inputs: &SequenceSystem) -> Result<AnyPointSequence, ProcessError> {
         match self {
             Self::Edges(operator) => operator.batch(inputs),
@@ -198,17 +214,17 @@ impl Node {
         }
     }
 
-    /// The running state of the node, or `None` for a kind with no online form yet.
-    pub(super) fn online(&self) -> Option<OnlineNode> {
+    /// The running state of the node.
+    pub(super) fn online(&self) -> OnlineNode {
         match self {
-            Self::State(operator) => Some(operator.online()),
-            Self::Occurs(operator) => Some(operator.online()),
+            Self::State(operator) => operator.online(),
+            Self::Occurs(operator) => operator.online(),
             Self::Not(operator) => operator.online(),
             Self::And(operator) => operator.online(),
             Self::Or(operator) => operator.online(),
-            Self::Between(operator) => Some(operator.online()),
-            Self::While(operator) => Some(operator.online()),
-            Self::Shift(_) => None,
+            Self::Between(operator) => operator.online(),
+            Self::While(operator) => operator.online(),
+            Self::Shift(operator) => operator.online(),
         }
     }
 

@@ -16,6 +16,9 @@ use crate::sequences::{Extent, TimeIntervalSequence};
 /// [`join`](Chunk::join) of consecutive chunks is the sequence over the
 /// whole range. A span cut at a chunk boundary merges back on `join`, as
 /// touching spans do in any timeline, so no edge is left at the boundary.
+///
+/// One exception: a chunk that ends at the end of time may hold points at
+/// `Timestamp::MAX`, such as the end of a span that never ends.
 #[derive(Debug, Clone)]
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) struct Chunk {

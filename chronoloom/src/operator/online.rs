@@ -16,6 +16,7 @@ use super::not::OnlineNot;
 use super::occurs::OnlineOccurs;
 use super::or::OnlineOr;
 use super::r#while::OnlineWhile;
+use super::shift::OnlineShift;
 use super::state::OnlineState;
 
 /// The running state of one node whose result is a timeline.
@@ -29,6 +30,7 @@ pub(crate) enum OnlineNode {
     Or(OnlineOr),
     Between(OnlineBetween),
     While(OnlineWhile),
+    Shift(OnlineShift),
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -49,6 +51,7 @@ impl OnlineNode {
             Self::Or(node) => node.step(inputs, to),
             Self::Between(node) => node.step(inputs, to),
             Self::While(node) => node.step(inputs, to),
+            Self::Shift(node) => node.step(inputs, to),
         }
     }
 
@@ -63,6 +66,7 @@ impl OnlineNode {
             Self::Or(node) => node.frontier(),
             Self::Between(node) => node.frontier(),
             Self::While(node) => node.frontier(),
+            Self::Shift(node) => node.frontier(),
         }
     }
 }

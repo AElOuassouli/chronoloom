@@ -206,7 +206,9 @@ impl Node {
             Self::Not(operator) => operator.online(),
             Self::And(operator) => operator.online(),
             Self::Or(operator) => operator.online(),
-            Self::Between(_) | Self::While(_) | Self::Shift(_) => None,
+            Self::Between(operator) => Some(operator.online()),
+            Self::While(operator) => Some(operator.online()),
+            Self::Shift(_) => None,
         }
     }
 

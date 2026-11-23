@@ -10,10 +10,12 @@ use crate::primitives::Timestamp;
 use crate::processing::ProcessError;
 
 use super::and::OnlineAnd;
+use super::between::OnlineBetween;
 use super::chunk::{Chunk, Inputs};
 use super::not::OnlineNot;
 use super::occurs::OnlineOccurs;
 use super::or::OnlineOr;
+use super::r#while::OnlineWhile;
 use super::state::OnlineState;
 
 /// The running state of one node whose result is a timeline.
@@ -25,6 +27,8 @@ pub(crate) enum OnlineNode {
     Not(OnlineNot),
     And(OnlineAnd),
     Or(OnlineOr),
+    Between(OnlineBetween),
+    While(OnlineWhile),
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -43,6 +47,8 @@ impl OnlineNode {
             Self::Not(node) => node.step(inputs, to),
             Self::And(node) => node.step(inputs, to),
             Self::Or(node) => node.step(inputs, to),
+            Self::Between(node) => node.step(inputs, to),
+            Self::While(node) => node.step(inputs, to),
         }
     }
 
@@ -55,6 +61,8 @@ impl OnlineNode {
             Self::Not(node) => node.frontier(),
             Self::And(node) => node.frontier(),
             Self::Or(node) => node.frontier(),
+            Self::Between(node) => node.frontier(),
+            Self::While(node) => node.frontier(),
         }
     }
 }

@@ -10,8 +10,8 @@
 use std::collections::BTreeMap;
 
 use crate::primitives::{TimeIntervalEvent, TimePointEvent, Timestamp};
-use crate::processing::{Condition, Formula, Pattern, ProcessError};
-use crate::sequence_system::{Key, SequenceSystem};
+use crate::processing::{Condition, Formula, OpenEnd, Pattern, ProcessError};
+use crate::sequence_system::{Key, Sequence, SequenceSystem};
 use crate::sequences::{Extent, TimeIntervalSequence, TimePointSequence};
 
 use super::chunk::{Chunk, Inputs};
@@ -120,6 +120,12 @@ fn formula(random: &mut Random, depth: u32) -> Formula {
     } else {
         random.below(5)
     };
+    // Half the leaves are a `Between` or a `While`.
+    let kind = if kind < 2 && random.chance(1, 2) {
+        5 + random.below(2)
+    } else {
+        kind
+    };
     match kind {
         0 => Formula::state(if random.chance(1, 2) { "a" } else { "b" }),
         1 => Formula::Occurs(pattern(random)),
@@ -129,6 +135,20 @@ fn formula(random: &mut Random, depth: u32) -> Formula {
                 .map(|_| formula(random, depth - 1))
                 .collect(),
         ),
+        5 => Formula::Between {
+            start: pattern(random),
+            end: pattern(random),
+            open: if random.chance(1, 2) {
+                OpenEnd::Extent
+            } else {
+                OpenEnd::Head
+            },
+        },
+        6 => Formula::While {
+            pattern: pattern(random),
+            // A timeout must be positive.
+            timeout: random.chance(1, 2).then(|| random.between(1, 12)),
+        },
         _ => Formula::Or(
             (0..random.below(4))
                 .map(|_| formula(random, depth - 1))
@@ -139,9 +159,20 @@ fn formula(random: &mut Random, depth: u32) -> Formula {
 
 /// Where one member's chunks stop: random instants of the domain, some
 /// repeated, then the end of time.
-fn boundaries(random: &mut Random) -> Vec<Timestamp> {
+///
+/// Half of them are drawn from `landmarks`, the instants of the points and the
+/// instants just after them, where a start, an end or a timeout can fall.
+fn boundaries(random: &mut Random, landmarks: &[Timestamp]) -> Vec<Timestamp> {
     let mut stops: Vec<Timestamp> = (0..random.below(8))
-        .map(|_| random.between(DOMAIN_START - 4, DOMAIN_END + 4))
+        .map(|_| {
+            if !landmarks.is_empty() && random.chance(1, 2) {
+                let index = usize::try_from(random.below(landmarks.len() as u64))
+                    .expect("the list is small");
+                landmarks[index] + random.between(0, 14)
+            } else {
+                random.between(DOMAIN_START - 4, DOMAIN_END + 4)
+            }
+        })
         .collect();
     stops.sort_unstable();
     stops.push(Timestamp::MAX);
@@ -153,13 +184,18 @@ fn read_keys(formula: &Formula, keys: &mut Vec<Key>) {
     match formula {
         Formula::State(key) => keys.push(key.clone()),
         Formula::Occurs(pattern) => keys.push(pattern.key.clone()),
+        Formula::Between { start, end, .. } => {
+            keys.push(start.key.clone());
+            keys.push(end.key.clone());
+        }
+        Formula::While { pattern, .. } => keys.push(pattern.key.clone()),
         Formula::Not(inner) => read_keys(inner, keys),
         Formula::And(parts) | Formula::Or(parts) => {
             for part in parts {
                 read_keys(part, keys);
             }
         }
-        _ => unreachable!("the generator draws no other kind"),
+        Formula::Shift { .. } => unreachable!("the generator draws no shift"),
     }
 }
 
@@ -243,9 +279,19 @@ fn run_together(
 
 /// Every member of `system` with its own stops.
 fn stops_of(random: &mut Random, system: &SequenceSystem) -> BTreeMap<Key, Vec<Timestamp>> {
+    let landmarks: Vec<Timestamp> = system
+        .keys()
+        .filter_map(|key| match system.get(key.as_str()) {
+            Some(Sequence::TimePoint(points)) => {
+                Some(points.instants_in(Timestamp::MIN, Timestamp::MAX))
+            }
+            _ => None,
+        })
+        .flatten()
+        .collect();
     system
         .keys()
-        .map(|key| (key.clone(), boundaries(random)))
+        .map(|key| (key.clone(), boundaries(random, &landmarks)))
         .collect()
 }
 
@@ -279,6 +325,114 @@ fn joined_online_chunks_equal_batch() {
             expected.observed(),
             "seed {seed}: {formula}"
         );
+    }
+}
+
+/// A `Between` or `While` of its own, so that every seed puts one to the test.
+fn opening_node(random: &mut Random) -> Formula {
+    loop {
+        let candidate = formula(random, 1);
+        if matches!(candidate, Formula::Between { .. } | Formula::While { .. }) {
+            return candidate;
+        }
+    }
+}
+
+#[test]
+fn joined_online_chunks_of_between_and_while_equal_batch() {
+    for seed in 0..SEEDS {
+        let mut random = Random::new(seed ^ 0xB7);
+        let system = system(&mut random);
+        let formula = opening_node(&mut random);
+        let stops = stops_of(&mut random, &system);
+        let mut read = Vec::new();
+        read_keys(&formula, &mut read);
+
+        let plan = TimelinePlan::compile(&formula);
+        let expected = plan.batch(&system).expect("the formula reads known keys");
+        let joined =
+            run_online(&plan, &system, &read, &stops).expect("the formula reads known keys");
+
+        assert_eq!(joined.from(), Timestamp::MIN, "seed {seed}: {formula}");
+        assert_eq!(joined.to(), Timestamp::MAX, "seed {seed}: {formula}");
+        let online = joined.timeline().expect("a timeline");
+        assert_eq!(bounds(online), bounds(&expected), "seed {seed}: {formula}");
+        assert_eq!(
+            online.observed(),
+            expected.observed(),
+            "seed {seed}: {formula}"
+        );
+    }
+}
+
+fn between_system() -> SequenceSystem {
+    let mut system = SequenceSystem::new();
+    let events = vec![
+        TimePointEvent::new(2, 1),
+        TimePointEvent::new(5, 2),
+        TimePointEvent::new(9, 1),
+    ];
+    system.insert("p", TimePointSequence::from_events("p", events));
+    system
+}
+
+fn between_formula(open: OpenEnd) -> Formula {
+    Formula::Between {
+        start: Pattern::new("p", Condition::Equals(1)),
+        end: Pattern::new("p", Condition::Equals(2)),
+        open,
+    }
+}
+
+#[test]
+fn a_span_open_across_chunks_closes_at_its_end() {
+    let system = between_system();
+    for open in [OpenEnd::Extent, OpenEnd::Head] {
+        let plan = TimelinePlan::compile(&between_formula(open));
+        let expected = plan.batch(&system).expect("`p` is known");
+        // Cuts exactly at the start, at the end and just after.
+        for stops in [vec![2, 5, 6, 9, 10], vec![3, 4, 5], vec![9]] {
+            let mut stops = stops;
+            stops.push(Timestamp::MAX);
+            let joined = run_together(&plan, &system, &stops).expect("`p` is known");
+            let online = joined.timeline().expect("a timeline");
+            assert_eq!(bounds(online), bounds(&expected), "{open:?} {stops:?}");
+            assert_eq!(online.observed(), expected.observed(), "{open:?} {stops:?}");
+        }
+    }
+}
+
+#[test]
+fn a_head_that_has_not_moved_holds_the_output_back() {
+    let system = between_system();
+    let plan = TimelinePlan::compile(&between_formula(OpenEnd::Head));
+    let mut node = plan.online().expect("`between` is online");
+
+    let mut inputs = Inputs::new();
+    let points = system.get("p").expect("`p` is known");
+    inputs.insert("p".into(), Chunk::of(points, Timestamp::MIN, 20));
+    node.step(&inputs, 20).expect("`p` is known");
+
+    // The last point is at 9, so what lies after 10 may still be observed.
+    assert_eq!(node.frontier(), 10);
+}
+
+#[test]
+fn a_timeout_cut_at_a_chunk_boundary_is_kept() {
+    let system = between_system();
+    let plan = TimelinePlan::compile(&Formula::While {
+        pattern: Pattern::new("p", Condition::Equals(1)),
+        timeout: Some(3),
+    });
+    let expected = plan.batch(&system).expect("`p` is known");
+    // The sample at 2 times out at 5, the one at 9 at 12.
+    for stops in [vec![5], vec![4, 5, 6], vec![12, 13], vec![3, 11]] {
+        let mut stops = stops;
+        stops.push(Timestamp::MAX);
+        let joined = run_together(&plan, &system, &stops).expect("`p` is known");
+        let online = joined.timeline().expect("a timeline");
+        assert_eq!(bounds(online), bounds(&expected), "{stops:?}");
+        assert_eq!(online.observed(), expected.observed(), "{stops:?}");
     }
 }
 

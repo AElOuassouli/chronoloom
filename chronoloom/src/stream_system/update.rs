@@ -31,25 +31,69 @@ use crate::sequence_system::{ErasedPoints, Key, PointValue};
 /// # Ok::<(), chronoloom::IntervalError>(())
 /// ```
 ///
+/// An update may also carry **watermarks**, which move the frontiers of a live
+/// system: [`advance`](Update::advance) for one stream,
+/// [`advance_all`](Update::advance_all) for every stream. A frontier says
+/// everything before it is final, so recording an event before it is
+/// [`UpdateError::Late`]. A batch system has no frontier and refuses an update
+/// that carries a watermark, as [`UpdateError::Watermark`].
+///
 /// Pushing is never checked against a system, because an update does not know
 /// which system it is for. Every check happens when it is recorded, and the
 /// update is recorded whole or not at all. Pushing to one key twice is fine:
 /// both sets of events are recorded.
 ///
 /// [`StreamSystem`]: super::StreamSystem
+/// [`UpdateError::Late`]: super::UpdateError::Late
+/// [`UpdateError::Watermark`]: super::UpdateError::Watermark
 #[derive(Debug, Default)]
 pub struct Update {
     /// In push order. Kept as pushed rather than grouped by key, so a second
     /// push to one key never has to reconcile its value type with the first —
     /// the system checks each against the sequence it is for.
     pub(crate) chunks: Vec<(Key, Pending)>,
+    /// The frontiers to move, in push order, after the events are recorded.
+    pub(crate) watermarks: Vec<Watermark>,
+}
+
+/// A frontier an update moves.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Watermark {
+    /// The frontier of one stream.
+    Stream(Key, Timestamp),
+    /// The frontier of every stream.
+    All(Timestamp),
 }
 
 impl Update {
     /// Create an empty update.
     #[must_use]
     pub const fn new() -> Self {
-        Self { chunks: Vec::new() }
+        Self {
+            chunks: Vec::new(),
+            watermarks: Vec::new(),
+        }
+    }
+
+    /// Move the frontier of the stream for `key` to `watermark`: everything
+    /// before it is final. A watermark at or before the frontier changes
+    /// nothing.
+    ///
+    /// Only a live system takes watermarks; a batch system refuses the update.
+    /// The frontier moves after the events of the update are recorded.
+    pub fn advance(&mut self, key: impl Into<Key>, watermark: Timestamp) -> &mut Self {
+        self.watermarks
+            .push(Watermark::Stream(key.into(), watermark));
+
+        self
+    }
+
+    /// Move the frontier of every stream to `watermark`, as
+    /// [`advance`](Update::advance) does for one.
+    pub fn advance_all(&mut self, watermark: Timestamp) -> &mut Self {
+        self.watermarks.push(Watermark::All(watermark));
+
+        self
     }
 
     /// Add point events for the sequence for `key`.
@@ -83,19 +127,30 @@ impl Update {
     /// for, then the others, each in push order.
     pub(crate) fn split(self, is_first: impl Fn(&Key) -> bool) -> (Self, Self) {
         let (first, second) = self.chunks.into_iter().partition(|(key, _)| is_first(key));
-        (Self { chunks: first }, Self { chunks: second })
+        (
+            Self {
+                chunks: first,
+                watermarks: Vec::new(),
+            },
+            Self {
+                chunks: second,
+                watermarks: Vec::new(),
+            },
+        )
     }
 
     /// How many events and spans the update carries, across every key.
+    /// Watermarks are not counted.
     #[must_use]
     pub fn len(&self) -> usize {
         self.chunks.iter().map(|(_, pending)| pending.len()).sum()
     }
 
-    /// Whether the update carries no events or spans at all.
+    /// Whether the update carries nothing at all: no events, no spans and no
+    /// watermark.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.len() == 0
+        self.len() == 0 && self.watermarks.is_empty()
     }
 }
 

@@ -147,7 +147,6 @@ impl Between {
 /// written up to that end and continues in the next chunk while the run of the
 /// extent does.
 #[derive(Debug, Clone)]
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) struct OnlineBetween {
     start: Pattern,
     end: Pattern,
@@ -160,7 +159,6 @@ pub(crate) struct OnlineBetween {
     opened: Option<Timestamp>,
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 impl OnlineBetween {
     pub(super) fn step(&mut self, inputs: &Inputs, to: Timestamp) -> Result<Chunk, ProcessError> {
         let same = self.start.key == self.end.key;

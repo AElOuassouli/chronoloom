@@ -1,14 +1,17 @@
 //! What an online operator reads and writes: a sequence over a range of time.
 
 use std::collections::BTreeMap;
+use std::ops::Range;
 
-use crate::primitives::Timestamp;
+use crate::primitives::{TimePointEvent, Timestamp};
+use crate::processing::Edge;
 use crate::sequence_system::{Key, Sequence};
 use crate::sequences::interval::operations::union_spans;
 use crate::sequences::{Extent, TimeIntervalSequence};
 
 /// A timeline or points over the range `[from, to)`, with its extent over
-/// that range.
+/// that range: the part of an output that became final in one step of a live
+/// [`StreamSystem`].
 ///
 /// Everything the sequence holds lies inside the range, and so does its
 /// extent: an instant of the range outside the extent is unknown, as in a
@@ -19,16 +22,57 @@ use crate::sequences::{Extent, TimeIntervalSequence};
 ///
 /// One exception: a chunk that ends at the end of time may hold points at
 /// `Timestamp::MAX`, such as the end of a span that never ends.
-#[derive(Debug, Clone)]
-#[cfg_attr(not(test), allow(dead_code))]
-pub(crate) struct Chunk {
+///
+/// [`StreamSystem`]: crate::stream_system::StreamSystem
+#[derive(Debug, Clone, PartialEq)]
+pub struct Chunk {
     from: Timestamp,
     to: Timestamp,
     sequence: Sequence,
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 impl Chunk {
+    /// The range of time the chunk covers: from its first instant to the first
+    /// instant past it. Empty when the output made no progress.
+    #[must_use]
+    pub const fn range(&self) -> Range<Timestamp> {
+        self.from..self.to
+    }
+
+    /// The timeline or points that became final over the range.
+    #[must_use]
+    pub const fn sequence(&self) -> &Sequence {
+        &self.sequence
+    }
+
+    /// The starts and ends of the spans of a timeline chunk, as
+    /// [`Events::Edges`](crate::Events::Edges) reads them, in time order;
+    /// `None` for a chunk of points.
+    ///
+    /// The edges are those of the chunk on its own: a span the range cut has
+    /// an edge at the cut, which the next chunk continues. Chunks of one
+    /// output joined end to end have only the edges of the whole timeline.
+    #[must_use]
+    pub fn edges(&self) -> Option<Vec<TimePointEvent<Edge>>> {
+        let timeline = self.timeline()?;
+        Some(
+            timeline
+                .iter()
+                .flat_map(|span| {
+                    [
+                        TimePointEvent::new(span.start(), Edge::Start),
+                        TimePointEvent::new(span.end(), Edge::End),
+                    ]
+                })
+                .collect(),
+        )
+    }
+
+    /// The sequence over the range, taken out of the chunk.
+    pub(crate) fn into_sequence(self) -> Sequence {
+        self.sequence
+    }
+
     /// A chunk over `[from, to)`; the sequence must lie inside the range.
     pub(crate) const fn new(from: Timestamp, to: Timestamp, sequence: Sequence) -> Self {
         Self { from, to, sequence }
@@ -48,11 +92,6 @@ impl Chunk {
     /// The first instant past the range.
     pub(crate) const fn to(&self) -> Timestamp {
         self.to
-    }
-
-    /// The sequence over the range.
-    pub(crate) const fn sequence(&self) -> &Sequence {
-        &self.sequence
     }
 
     /// The timeline over the range, if the chunk holds one.
@@ -106,12 +145,10 @@ impl Chunk {
 
 /// The new chunk of each member an operator reads, by key.
 #[derive(Debug, Clone, Default)]
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) struct Inputs {
     chunks: BTreeMap<Key, Chunk>,
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 impl Inputs {
     /// No input yet.
     pub(crate) const fn new() -> Self {

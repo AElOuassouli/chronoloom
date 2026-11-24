@@ -187,6 +187,14 @@ impl<M: Mode> StreamSystem<M> {
         }
     }
 
+    /// Refuse to write into `key` if it is derived or a processor's output.
+    pub(super) fn writable(&self, key: &Key) -> Result<(), UpdateError> {
+        if self.pipeline.producer(key).is_some() || self.is_derived(key.as_str()) {
+            return Err(UpdateError::Derived { key: key.clone() });
+        }
+        Ok(())
+    }
+
     /// The output key of a processor that reads `key`, if any does.
     pub(super) fn reader_of(&self, key: &Key) -> Option<&Key> {
         self.pipeline.reader_of(key)

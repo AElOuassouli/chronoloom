@@ -67,6 +67,10 @@ pub enum RecordError {
         /// The member that has no frontier.
         key: String,
     },
+
+    /// The update carries watermarks, which a sequence system has no use for:
+    /// they move the frontiers of a live stream system.
+    Watermark,
 }
 
 impl fmt::Display for RecordError {
@@ -97,6 +101,7 @@ impl fmt::Display for RecordError {
                 write!(f, "a value does not have the schema of `{key}`, {error}")
             }
             Self::NotLive { key } => write!(f, "the sequence for `{key}` is not a live member"),
+            Self::Watermark => write!(f, "a sequence system has no frontier to move"),
         }
     }
 }

@@ -80,7 +80,6 @@ impl RecipePlan {
     }
 
     /// The running state of the recipe, whose members are filed under `output`.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn online(&self, output: &Key) -> OnlineRecipe {
         match self {
             Self::Timeline(plan) => OnlineRecipe::Timeline(plan.online()),
@@ -140,7 +139,6 @@ impl TimelinePlan {
     }
 
     /// The running state of the plan.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn online(&self) -> OnlineNode {
         self.root.online()
     }
@@ -175,7 +173,6 @@ impl PointsPlan {
     }
 
     /// The running state of the plan.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn online(&self) -> OnlinePoints {
         self.root.online()
     }

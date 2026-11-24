@@ -7,9 +7,7 @@
 //!
 //! Each node also has an online form, an [`OnlineNode`] that steps over the
 //! chunks of its inputs as they become final, and whose chunks joined end to
-//! end equal the batch result. Live mode will run them; until it does, only
-//! the tests do, so the items that nothing else reaches allow dead code
-//! outside tests.
+//! end equal the batch result. Live mode runs them.
 
 mod and;
 mod between;
@@ -35,5 +33,8 @@ mod state;
 mod tests;
 mod r#while;
 
+pub use chunk::Chunk;
+pub(crate) use chunk::Inputs;
 pub(crate) use entities::{any_of, count_of};
+pub(crate) use online_recipe::OnlineRecipe;
 pub(crate) use plan::{compile_recipe, TimelinePlan};

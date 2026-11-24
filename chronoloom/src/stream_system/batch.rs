@@ -37,11 +37,15 @@ impl StreamSystem<Batch> {
     ///
     /// # Errors
     ///
-    /// [`UpdateError::Derived`] if it records into a derived stream,
-    /// [`UpdateError::Record`] if recording fails (an unknown key, another
-    /// shape or value type, a schema mismatch), and [`UpdateError::Process`]
+    /// [`UpdateError::Watermark`] if it carries a watermark, which a batch
+    /// system has no frontier for, [`UpdateError::Derived`] if it records into
+    /// a derived stream, [`UpdateError::Record`] if recording fails (an
+    /// unknown key, another shape or value type, a schema mismatch), and [`UpdateError::Process`]
     /// if a processor it affects fails. Nothing changes in any case.
     pub fn update(&mut self, update: Update) -> Result<Report, UpdateError> {
+        if !update.watermarks.is_empty() {
+            return Err(UpdateError::Watermark);
+        }
         let keys: BTreeSet<Key> = update.chunks.iter().map(|(key, _)| key.clone()).collect();
         if let Some(key) = keys.iter().find(|key| self.is_derived(key.as_str())) {
             return Err(UpdateError::Derived { key: key.clone() });
@@ -273,14 +277,6 @@ impl StreamSystem<Batch> {
             raw.observe(extent);
             Ok(())
         })
-    }
-
-    /// Refuse to write into `key` if it is derived or a processor's output.
-    fn writable(&self, key: &Key) -> Result<(), UpdateError> {
-        if self.pipeline.producer(key).is_some() || self.is_derived(key.as_str()) {
-            return Err(UpdateError::Derived { key: key.clone() });
-        }
-        Ok(())
     }
 
     /// Apply `edit` to a copy of the members, evaluate the processors it

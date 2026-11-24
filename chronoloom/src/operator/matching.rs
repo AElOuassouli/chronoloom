@@ -42,14 +42,12 @@ impl Matching {
 
 /// The running state of [`Matching`]: each chunk of points read on its own.
 #[derive(Debug, Clone)]
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) struct OnlineMatching {
     pattern: Pattern,
     label: String,
     frontier: Timestamp,
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 impl OnlineMatching {
     pub(super) fn step(&mut self, inputs: &Inputs, to: Timestamp) -> Result<Chunk, ProcessError> {
         let key = &self.pattern.key;

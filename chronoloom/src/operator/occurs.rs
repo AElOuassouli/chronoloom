@@ -52,13 +52,11 @@ impl Occurs {
 
 /// The running state of [`Occurs`]: each chunk of points read on its own.
 #[derive(Debug, Clone)]
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) struct OnlineOccurs {
     pattern: Pattern,
     frontier: Timestamp,
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 impl OnlineOccurs {
     pub(super) fn step(&mut self, inputs: &Inputs, to: Timestamp) -> Result<Chunk, ProcessError> {
         let key = &self.pattern.key;

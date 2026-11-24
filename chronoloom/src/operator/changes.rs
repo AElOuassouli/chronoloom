@@ -44,7 +44,6 @@ impl Changes {
 /// sample, and the extent that says whether the run it belongs to goes on into
 /// the next chunk.
 #[derive(Debug, Clone)]
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) struct OnlineChanges {
     key: Key,
     label: String,
@@ -52,7 +51,6 @@ pub(crate) struct OnlineChanges {
     last_sample: Option<Chunk>,
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 impl OnlineChanges {
     pub(super) fn step(&mut self, inputs: &Inputs, to: Timestamp) -> Result<Chunk, ProcessError> {
         let chunk = inputs

@@ -2,6 +2,19 @@
 
 ## Added
 
+- `StreamSystem<Live>`, made by `StreamSystem::live(from)`: a system with a
+  frontier per stream whose processors run incrementally over what became
+  final, on the data held once in the system. `insert_stream`, `add_processor`
+  (which runs the processor over what is final already), `update`, `advance`,
+  `advance_all` and `frontier` work on it; it does not run transforms yet
+  (`UpdateError::LiveTransform`). `Update::advance` and `Update::advance_all`
+  carry watermarks: a batch system refuses them (`UpdateError::Watermark`), and
+  a live one refuses an event before the frontier of its stream with nothing
+  recorded (`UpdateError::Late`). Its `update` returns a `LiveReport`, the
+  newly final `Chunk` of each derived stream that made progress (`range`,
+  `sequence`, `edges`) and the frontier of every derived stream.
+  `SequenceSystem::record_update` refuses an update that carries watermarks
+  (`RecordError::Watermark`).
 - Transformed streams in a `StreamSystem`: a processor whose output key is a
   stream it reads rewrites that stream, and several chain in the order they are
   added. `get` gives the last version and every other processor reads it;

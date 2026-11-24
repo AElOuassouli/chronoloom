@@ -55,10 +55,8 @@ impl And {
 
 /// The running state of [`And`]: the intersection of its parts' chunks.
 #[derive(Debug, Clone)]
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) struct OnlineAnd(Combination);
 
-#[cfg_attr(not(test), allow(dead_code))]
 impl OnlineAnd {
     pub(super) fn step(&mut self, inputs: &Inputs, to: Timestamp) -> Result<Chunk, ProcessError> {
         self.0.step(inputs, to)

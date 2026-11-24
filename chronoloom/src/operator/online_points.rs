@@ -13,7 +13,6 @@ use super::project::OnlineProject;
 
 /// The running state of events.
 #[derive(Debug, Clone)]
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) enum OnlinePoints {
     Edges(OnlineEdges),
     Matching(OnlineMatching),
@@ -21,7 +20,6 @@ pub(crate) enum OnlinePoints {
     Project(OnlineProject),
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 impl OnlinePoints {
     /// The points over `[frontier, new frontier)`, the new frontier being at
     /// most `to`. Chunks of `inputs` start at the frontier of the member.

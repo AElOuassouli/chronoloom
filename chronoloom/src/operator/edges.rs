@@ -62,14 +62,12 @@ fn edges_of(timeline: &TimeIntervalSequence, label: &str) -> AnyPointSequence {
 /// end nor a start there. `open` is that span, as a chunk of the timeline from
 /// its start to the frontier, or `None` when no span reaches the frontier.
 #[derive(Debug, Clone)]
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) struct OnlineEdges {
     inner: Box<OnlineNode>,
     label: String,
     open: Option<Chunk>,
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 impl OnlineEdges {
     /// # Panics
     ///

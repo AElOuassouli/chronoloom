@@ -43,13 +43,11 @@ impl State {
 
 /// The running state of [`State`]: the member's chunks, as they come.
 #[derive(Debug, Clone)]
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) struct OnlineState {
     key: Key,
     frontier: Timestamp,
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 impl OnlineState {
     pub(super) fn step(&mut self, inputs: &Inputs, to: Timestamp) -> Result<Chunk, ProcessError> {
         let chunk = inputs

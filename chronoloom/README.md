@@ -1001,8 +1001,51 @@ assert_eq!(room.raw("motion").unwrap().len(), 2);
 ```
 
 The mode of a stream system is a type parameter, so what every mode shares is
-written once. Batch mode, a dataset held whole, is here; a live mode, where an
-update also moves frontiers and the processors run incrementally, is to come.
+written once. Batch mode is a dataset held whole; live mode, where an update
+also moves frontiers and the processors run incrementally, follows this section.
+
+## A stream system in live mode
+
+`StreamSystem::live(from)` makes a `StreamSystem<Live>`: the streams and
+processors of the batch mode, with a frontier per stream before which everything
+is final, and processors that run incrementally. An `Update` carries events and
+watermarks (`advance(key, watermark)`, `advance_all(watermark)`); `update`
+records the events, moves the frontiers, and runs the processors that read a
+stream whose frontier moved over the range that became final. An event before
+the frontier of its stream is `UpdateError::Late`, and a batch system refuses an
+update that carries a watermark. The `LiveReport` it returns has, for each
+derived stream that made progress, the new `Chunk` (its `range()`, its
+`sequence()` and its `edges()`), and the frontier of every derived stream.
+Joined end to end, the chunks are the batch result, which is what the live mode
+is tested against. Live mode does not run transforms yet.
+
+```rust
+use chronoloom::stream_system::{Live, StreamSystem, Update};
+use chronoloom::{Condition, Formula, Pattern, Processor};
+use chronoloom::{TimePointEvent, TimePointSequence};
+
+let mut room: StreamSystem<Live> = StreamSystem::live(0);
+room.insert_stream("motion", TimePointSequence::<&str>::new("motion")).unwrap();
+room.add_processor(Processor::new("presence", Formula::between(
+    Pattern::new("motion", Condition::Equals("start")),
+    Pattern::new("motion", Condition::Equals("end")),
+))).unwrap();
+
+let mut update = Update::new();
+update
+    .points("motion", [TimePointEvent::new(10, "start"), TimePointEvent::new(25, "end")])
+    .advance("motion", 30);
+let report = room.update(update).unwrap();
+
+assert_eq!(report.chunks()["presence"].range(), 0..30);
+assert_eq!(report.frontiers()["presence"], 30);
+assert_eq!(room.intervals("presence").unwrap()[0].bounds(), (10, 25));
+
+// Everything before 30 is final, so an event there is late.
+let mut late = Update::new();
+late.points("motion", [TimePointEvent::new(29, "start")]);
+assert!(room.update(late).is_err());
+```
 
 ## Saving and loading
 
@@ -1121,8 +1164,8 @@ assert!(schema["properties"]["inputs"].is_object());
 
 What is open:
 
-- A `StreamSystem` has a batch mode only: its live mode, and saving and loading
-  it, are to come.
+- A `StreamSystem` in live mode does not run transforms, and saving and loading
+  a `StreamSystem` is not here yet.
 - Record values have no lists, and a projection copies the values rather than
   viewing them in place.
 - A live processor keeps every entity of a per-entity output it has seen. A way

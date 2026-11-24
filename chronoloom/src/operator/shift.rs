@@ -58,7 +58,6 @@ impl Shift {
 /// timeline from `max(alpha, beta)` before the output frontier on, which is all
 /// a later instant can read.
 #[derive(Debug, Clone)]
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) struct OnlineShift {
     inner: Box<OnlineNode>,
     alpha: Timestamp,
@@ -67,7 +66,6 @@ pub(crate) struct OnlineShift {
     held: Option<Chunk>,
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 impl OnlineShift {
     /// # Panics
     ///

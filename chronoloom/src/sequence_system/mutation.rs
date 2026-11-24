@@ -258,8 +258,10 @@ impl SequenceSystem {
     ///
     /// # Errors
     ///
-    /// The first push, in push order, that [`record_point`] or [`record_span`]
-    /// would have refused, with the same error.
+    /// [`RecordError::Watermark`] if the update carries watermarks, which only a
+    /// live stream system moves frontiers with. Otherwise the first push, in
+    /// push order, that [`record_point`] or [`record_span`] would have refused,
+    /// with the same error.
     ///
     /// ```
     /// use chronoloom::primitives::TimePointEvent;
@@ -284,6 +286,9 @@ impl SequenceSystem {
     /// [`record_point`]: SequenceSystem::record_point
     /// [`record_span`]: SequenceSystem::record_span
     pub fn record_update(&mut self, update: Update) -> Result<(), RecordError> {
+        if !update.watermarks.is_empty() {
+            return Err(RecordError::Watermark);
+        }
         for (key, pending) in &update.chunks {
             self.check(key.as_str(), pending)?;
             self.reject_late(key.as_str(), pending.earliest())?;
@@ -306,6 +311,36 @@ impl SequenceSystem {
         }
 
         Ok(())
+    }
+
+    /// Append `next`, the sequence over the range that follows what the
+    /// derived member under `key` holds, in place: its spans or points are
+    /// added, and its extent grows over the extent of `next`. The member keeps
+    /// its metadata and lineage.
+    ///
+    /// # Panics
+    ///
+    /// If no member is under `key`, or `next` is of another shape or value type
+    /// than the member: a live processor gives chunks of one shape.
+    pub(crate) fn append_derived(&mut self, key: &str, next: &Sequence) {
+        let held = self
+            .member_mut(key)
+            .expect("a derived member is held before it is appended to");
+        match (held, next) {
+            (Sequence::TimeInterval(held), Sequence::TimeInterval(next)) => {
+                for span in next.iter() {
+                    held.insert(*span);
+                }
+                held.observed_mut().grow(next.observed().as_slice());
+            }
+            (Sequence::TimePoint(held), Sequence::TimePoint(next)) => {
+                assert!(
+                    held.append(next),
+                    "chunks of one output carry one value type"
+                );
+            }
+            _ => panic!("chunks of one output have one shape"),
+        }
     }
 
     /// Whether `pending` could be recorded into the sequence for `key`.

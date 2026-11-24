@@ -1666,6 +1666,7 @@ fn refused(error: RecordError, key: &str, span: bool) -> ProcessError {
             timestamp,
             frontier,
         },
+        RecordError::Watermark => unreachable!("a live processor records events one by one"),
     }
 }
 

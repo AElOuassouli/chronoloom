@@ -39,12 +39,10 @@ impl Not {
 /// The running state of [`Not`]: the complement of each chunk within its
 /// extent.
 #[derive(Debug, Clone)]
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) struct OnlineNot {
     input: Box<OnlineNode>,
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 impl OnlineNot {
     /// # Panics
     ///

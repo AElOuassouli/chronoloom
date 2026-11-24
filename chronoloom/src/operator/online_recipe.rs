@@ -13,7 +13,6 @@ use super::online_points::OnlinePoints;
 /// The chunk of one member of a recipe's output, and the entity it is about
 /// for a per-entity output.
 #[derive(Debug, Clone)]
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) struct MemberChunk {
     pub(crate) entity: Option<Value>,
     pub(crate) chunk: Chunk,
@@ -21,7 +20,6 @@ pub(crate) struct MemberChunk {
 
 /// The running state of a recipe.
 #[derive(Debug, Clone)]
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) enum OnlineRecipe {
     Timeline(OnlineNode),
     Points(OnlinePoints),
@@ -30,7 +28,6 @@ pub(crate) enum OnlineRecipe {
     CountEntities(OnlineCountEntities),
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 impl OnlineRecipe {
     /// The chunk of every member over the newly final range, the new frontier
     /// being at most `to`.

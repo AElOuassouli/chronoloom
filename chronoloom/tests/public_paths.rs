@@ -18,7 +18,9 @@ use chronoloom::sequence_system::{
 use chronoloom::sequences::attribute::{Attribute, SetOperation};
 use chronoloom::sequences::interval::TimeIntervalSequence;
 use chronoloom::sequences::time_point::TimePointSequence;
-use chronoloom::stream_system::{Batch, Mode, Report, Update, UpdateError};
+use chronoloom::stream_system::{
+    Batch, Chunk, Live, LiveReport, Mode, Report, Update, UpdateError,
+};
 use chronoloom::{
     AnyPointSequence as RootAnyPointSequence, Attribute as RootAttribute,
     IntervalError as RootError, Key as RootKey, PointValue as RootPointValue,
@@ -28,8 +30,9 @@ use chronoloom::{
     TimePointSequence as RootPointSequence, Timestamp as RootTimestamp,
 };
 use chronoloom::{
-    Batch as RootBatch, Condition as RootCondition, Edge as RootEdge, Events as RootEvents,
-    Formula as RootFormula, Mode as RootMode, OpenEnd as RootOpenEnd, Pattern as RootPattern,
+    Batch as RootBatch, Chunk as RootChunk, Condition as RootCondition, Edge as RootEdge,
+    Events as RootEvents, Formula as RootFormula, Live as RootLive, LiveReport as RootLiveReport,
+    Mode as RootMode, OpenEnd as RootOpenEnd, Pattern as RootPattern,
     ProcessError as RootProcessError, Processor as RootProcessor, Recipe as RootRecipe,
     Report as RootReport, StreamSystem as RootStreamSystem, Update as RootUpdate,
     UpdateError as RootUpdateError,

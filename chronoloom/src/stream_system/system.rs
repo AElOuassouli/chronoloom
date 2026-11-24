@@ -63,8 +63,39 @@ use super::{Batch, Mode};
 ///   points and evaluates again the processors that read what changed,
 ///   directly or through another processor's output, and no others. The
 ///   [`Report`] it returns names the derived streams whose content changed.
-/// - A live mode, where an update moves frontiers and the processors run
-///   incrementally, is the next step and not here yet.
+/// - [`Live`]: data arrives in time order. Each stream has a frontier, before
+///   which everything is final, that watermarks in an [`Update`] move. An update
+///   refuses events before the frontier of their stream, records the rest,
+///   moves the frontiers, and runs the processors that read a stream whose
+///   frontier moved, directly or through another's output, over the range that
+///   became final only: each keeps a small running state instead of reading
+///   its inputs again. What they give is appended to the derived streams, and
+///   the [`LiveReport`] returns it as one [`Chunk`] per derived stream, with the
+///   frontier of each. The chunks joined end to end are what batch mode gives
+///   over the same data, below the frontiers. A live system does not run
+///   transforms yet, and starts at an instant, [`StreamSystem::live`].
+///
+/// ```
+/// use chronoloom::processor::Processor;
+/// use chronoloom::stream_system::{Live, StreamSystem, Update};
+/// use chronoloom::{Condition, Formula, Pattern, TimePointEvent, TimePointSequence};
+///
+/// let mut room: StreamSystem<Live> = StreamSystem::live(0);
+/// room.insert_stream("motion", TimePointSequence::<&str>::new("motion"))?;
+/// room.add_processor(Processor::new("presence", Formula::between(
+///     Pattern::new("motion", Condition::Equals("start")),
+///     Pattern::new("motion", Condition::Equals("end")),
+/// )))?;
+///
+/// let mut update = Update::new();
+/// update.points("motion", [TimePointEvent::new(10, "start"), TimePointEvent::new(25, "end")]);
+/// update.advance("motion", 30);
+/// let report = room.update(update)?;
+///
+/// assert_eq!(report.chunks()["presence"].range(), 0..30);
+/// assert_eq!(room.frontier("presence"), Some(30));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 ///
 /// Every change is all or nothing: if recording, or evaluating any processor
 /// it affects, fails, the system is left as it was. In this first version that
@@ -109,7 +140,11 @@ use super::{Batch, Mode};
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 ///
+/// [`Chunk`]: super::Chunk
+/// [`Live`]: super::Live
+/// [`LiveReport`]: super::LiveReport
 /// [`Report`]: super::Report
+/// [`Update`]: super::Update
 /// [`UpdateError::Derived`]: super::UpdateError::Derived
 /// [`UpdateError::Read`]: super::UpdateError::Read
 #[derive(Debug, Clone, PartialEq)]

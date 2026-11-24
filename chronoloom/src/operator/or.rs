@@ -51,10 +51,8 @@ impl Or {
 
 /// The running state of [`Or`]: the union of its parts' chunks.
 #[derive(Debug, Clone)]
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) struct OnlineOr(Combination);
 
-#[cfg_attr(not(test), allow(dead_code))]
 impl OnlineOr {
     pub(super) fn step(&mut self, inputs: &Inputs, to: Timestamp) -> Result<Chunk, ProcessError> {
         self.0.step(inputs, to)

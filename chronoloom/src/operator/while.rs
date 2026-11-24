@@ -92,7 +92,6 @@ impl While {
 /// The running state of [`While`]: the last sample, which holds into the next
 /// chunk when the run of the extent does and its timeout has not passed.
 #[derive(Debug, Clone)]
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) struct OnlineWhile {
     pattern: Pattern,
     timeout: Option<Timestamp>,
@@ -101,7 +100,6 @@ pub(crate) struct OnlineWhile {
     sample: Option<(Timestamp, bool)>,
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 impl OnlineWhile {
     pub(super) fn step(&mut self, inputs: &Inputs, to: Timestamp) -> Result<Chunk, ProcessError> {
         let key = &self.pattern.key;

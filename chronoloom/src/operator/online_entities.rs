@@ -213,7 +213,6 @@ impl Population {
 
 /// One timeline per entity, as the chunks of the entities.
 #[derive(Debug, Clone)]
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) struct OnlinePerEntity {
     label: String,
     population: Population,
@@ -222,13 +221,11 @@ pub(crate) struct OnlinePerEntity {
 /// The chunk of the timeline of an entity, from the start of time on for an
 /// entity that first appeared in the step.
 #[derive(Debug, Clone)]
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) struct EntityChunk {
     pub(crate) entity: Value,
     pub(crate) chunk: Chunk,
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 impl OnlinePerEntity {
     pub(super) fn new(label: String, output: Key, by: Group, prototype: OnlineNode) -> Self {
         Self {
@@ -283,13 +280,11 @@ impl OnlinePerEntity {
 
 /// Active wherever some entity is.
 #[derive(Debug, Clone)]
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) struct OnlineAnyEntity {
     label: String,
     population: Population,
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 impl OnlineAnyEntity {
     pub(super) fn new(label: String, by: Group, prototype: OnlineNode) -> Self {
         Self {
@@ -317,7 +312,6 @@ impl OnlineAnyEntity {
 
 /// The number of entities active, as its changes.
 #[derive(Debug, Clone)]
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) struct OnlineCountEntities {
     label: String,
     population: Population,
@@ -326,7 +320,6 @@ pub(crate) struct OnlineCountEntities {
     carried: Option<i64>,
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 impl OnlineCountEntities {
     pub(super) fn new(label: String, by: Group, prototype: OnlineNode) -> Self {
         Self {

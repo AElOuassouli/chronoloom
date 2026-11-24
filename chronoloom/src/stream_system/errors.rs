@@ -2,6 +2,7 @@
 
 use core::fmt;
 
+use crate::primitives::Timestamp;
 use crate::processing::ProcessError;
 use crate::sequence_system::{Key, RecordError};
 
@@ -43,6 +44,26 @@ pub enum UpdateError {
         /// The key asked for.
         key: Key,
     },
+    /// The update carries watermarks, which only a live system moves
+    /// frontiers with. A batch system has no frontier, so this signals a
+    /// mistake.
+    Watermark,
+    /// A point or span of a live system starts before the frontier of its
+    /// stream, where everything is final already.
+    Late {
+        /// The key of the stream.
+        key: Key,
+        /// The instant the event starts at.
+        at: Timestamp,
+        /// The frontier of the stream.
+        frontier: Timestamp,
+    },
+    /// A live system does not run transforms: a processor that rewrites a
+    /// stream it reads.
+    LiveTransform {
+        /// The output key of the processor, the stream it would rewrite.
+        key: Key,
+    },
 }
 
 impl fmt::Display for UpdateError {
@@ -60,6 +81,14 @@ impl fmt::Display for UpdateError {
                 write!(f, "`{key}` is read by the processor of `{by}`")
             }
             Self::UnknownProcessor { key } => write!(f, "no processor produces `{key}`"),
+            Self::Watermark => write!(f, "a batch system has no frontier to move"),
+            Self::Late { key, at, frontier } => write!(
+                f,
+                "an event of `{key}` starts at {at}, before its frontier {frontier}"
+            ),
+            Self::LiveTransform { key } => {
+                write!(f, "a live system does not transform the stream `{key}`")
+            }
         }
     }
 }

@@ -14,7 +14,6 @@ use super::online::OnlineNode;
 /// A part that is ahead of the others waits in `pending` until the slowest
 /// catches up, so the frontier is the minimum of the parts'.
 #[derive(Debug, Clone)]
-#[cfg_attr(not(test), allow(dead_code))]
 pub(super) struct Combination {
     parts: Vec<OnlineNode>,
     /// What each part produced beyond the frontier, from the frontier on.
@@ -25,7 +24,6 @@ pub(super) struct Combination {
     combine: fn(&TimeIntervalSequence, &TimeIntervalSequence) -> TimeIntervalSequence,
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 impl Combination {
     pub(super) fn new(
         parts: Vec<OnlineNode>,

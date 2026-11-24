@@ -157,7 +157,9 @@
 //! output. Its derived streams are read-only and follow every change: an
 //! [`update`](StreamSystem::update) records into the streams and evaluates
 //! again the processors that read what changed, and no others. It has a mode
-//! as a type parameter; batch mode is here, and a live mode is to come.
+//! as a type parameter: [`Batch`] holds a dataset whole, and [`Live`], made by
+//! [`StreamSystem::live`], moves a frontier per stream with watermarks and runs
+//! the processors over what became final, reporting a [`LiveReport`] of chunks.
 //!
 //! # Saving and loading
 //!
@@ -233,5 +235,7 @@ pub use sequence_system::{
     AnyPointSequence, AnyValue, Key, Metadata, PointValue, RecordError, Sequence, SequenceSystem,
 };
 pub use sequences::{Attribute, Extent, SetOperation, TimeIntervalSequence, TimePointSequence};
-pub use stream_system::{Batch, Mode, Report, StreamSystem, Update, UpdateError};
+pub use stream_system::{
+    Batch, Chunk, Live, LiveReport, Mode, Report, StreamSystem, Update, UpdateError,
+};
 pub use values::{Schema, SchemaError, Value};

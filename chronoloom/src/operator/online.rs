@@ -21,7 +21,6 @@ use super::state::OnlineState;
 
 /// The running state of one node whose result is a timeline.
 #[derive(Debug, Clone)]
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) enum OnlineNode {
     State(OnlineState),
     Occurs(OnlineOccurs),
@@ -33,7 +32,6 @@ pub(crate) enum OnlineNode {
     Shift(OnlineShift),
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 impl OnlineNode {
     /// The output over `[frontier, new frontier)`, the new frontier being at
     /// most `to`. Chunks of `inputs` start at the frontier of the member.

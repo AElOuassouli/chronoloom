@@ -83,13 +83,11 @@ impl Project {
 
 /// The running state of [`Project`]: each chunk of records read on its own.
 #[derive(Debug, Clone)]
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) struct OnlineProject {
     project: Project,
     frontier: Timestamp,
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 impl OnlineProject {
     pub(super) fn step(&mut self, inputs: &Inputs, to: Timestamp) -> Result<Chunk, ProcessError> {
         let key = &self.project.key;

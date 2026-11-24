@@ -442,7 +442,6 @@ impl AnyPointSequence {
     /// Append `next`, the points that follow. The extent becomes the union of
     /// both extents; unlike `insert`, an event outside it does not grow it.
     /// False and unchanged when the two carry different value types.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn append(&mut self, next: &Self) -> bool {
         self.0.append(&*next.0)
     }

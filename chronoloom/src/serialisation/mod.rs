@@ -5,25 +5,30 @@
 //! `Deserialize`, so any self-describing format works; JSON is the one the
 //! tests and the examples use. Four types are documents on their own and
 //! start with a format version, `{ "format": 1, .. }`: [`TimePointSequence`],
-//! [`TimeIntervalSequence`], [`SequenceSystem`] and [`Processor`]. Everything
+//! [`TimeIntervalSequence`], [`StreamSystem`] (in batch mode) and [`Processor`]. Everything
 //! nested inside them (extents, events, attributes, formulas, values) carries
 //! no version of its own, so the version belongs to the document and a nested
 //! value is the same in every document.
 //!
 //! ```
 //! use chronoloom::{
-//!     Condition, Formula, Pattern, Processor, SequenceSystem, TimePointEvent, TimePointSequence,
+//!     Condition, Formula, Pattern, Processor, StreamSystem, TimePointEvent, TimePointSequence,
 //! };
 //!
-//! let mut system = SequenceSystem::new();
-//! system.insert("count", TimePointSequence::from_events("count", vec![
+//! let mut system = StreamSystem::new();
+//! system.insert_stream("count", TimePointSequence::from_events("count", vec![
 //!     TimePointEvent::new(3, 4_i64),
 //!     TimePointEvent::new(9, 8_i64),
-//! ]));
+//! ]))?;
+//! system.add_processor(Processor::new(
+//!     "busy",
+//!     Formula::occurs(Pattern::new("count", Condition::Greater(5_i64))),
+//! ))?;
 //! system.metadata_mut().insert("unit".to_owned(), "seconds".to_owned());
 //!
-//! let saved = serde_json::to_string(&system).unwrap();
-//! let loaded: SequenceSystem = serde_json::from_str(&saved).unwrap();
+//! // The derived stream is not saved: loading evaluates the processor again.
+//! let saved = serde_json::to_string(&system)?;
+//! let loaded: StreamSystem = serde_json::from_str(&saved)?;
 //! assert_eq!(loaded, system);
 //!
 //! // A processor is a document of its own, and a loaded one has been checked.
@@ -31,13 +36,14 @@
 //!     "busy",
 //!     Formula::occurs(Pattern::new("count", Condition::Greater(5_i64))),
 //! );
-//! let rules = serde_json::to_string(&processor).unwrap();
-//! let rules: Processor = serde_json::from_str(&rules).unwrap();
+//! let rules = serde_json::to_string(&processor)?;
+//! let rules: Processor = serde_json::from_str(&rules)?;
 //! assert_eq!(rules, processor);
 //!
 //! // A reader refuses any format version it does not know.
 //! let future = saved.replacen(r#""format":1"#, r#""format":2"#, 1);
-//! assert!(serde_json::from_str::<SequenceSystem>(&future).is_err());
+//! assert!(serde_json::from_str::<StreamSystem>(&future).is_err());
+//! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
 //! A timeline, as the format writes it:
@@ -67,20 +73,19 @@
 //! - Point events are sorted by timestamp, events at one instant keeping the
 //!   order they were stored in.
 //! - Data lies inside the extent it was observed over, and a document that
-//!   places a span or an event outside it is refused, bar the two documented
-//!   exceptions: a point stamped `i64::MAX` (see [`Extent`]), and the data of a
-//!   live member of a system at or past its frontier, which is not final and
-//!   lies outside the extent (see [`SequenceSystem`]). Before the frontier, a
-//!   live member's data lies inside its extent like any other. The extent of a
-//!   live member must stop at its frontier.
-//! - A member of a system whose schema is stored must hold `Value` points that
-//!   all have the shape of the schema, and a member's lineage and entity must
-//!   agree with each other, with its key and with its frontier.
+//!   places a span or an event outside it is refused, bar one documented
+//!   exception: a point stamped `i64::MAX` (see [`Extent`]).
+//! - A stream of a system whose schema is stored must hold `Value` points that
+//!   all have the shape of the schema.
 //! - A processor passes [`Processor::check`], and no key appears twice in a
 //!   system or among the inputs a processor declares. A `While` timeout is positive.
+//! - A system is loaded as it is built in code: the streams are inserted, then
+//!   the processors added in order. A processor the system refuses or that
+//!   fails over the streams, a key a processor writes that a stream already
+//!   holds, say, is the error of the load, naming its output.
 //!
 //! A refusal is the error of the format in use, and its message says what was
-//! wrong and, for a member of a system, under which key.
+//! wrong and, for a stream of a system, under which key.
 //!
 //! # The closed set of value types
 //!
@@ -114,10 +119,19 @@
 //!   as `Value::Integer(5)` and `5.0` as `Value::Float(5.0)`, although the two
 //!   compare equal. It needs a self-describing format, and a float that is not
 //!   finite is refused when saving, since JSON has no form for it.
-//! - A system lists its members in key order, each with its key, its tagged
-//!   sequence, its metadata, and, when it has them, its frontier, lineage,
-//!   entity and schema. A processor is its `output` key, its `formula` and, when
-//!   it declares any, its `inputs`.
+//! - A system in batch mode is `{ "format": 1, "mode": "batch", .. }` with its
+//!   `metadata`, its `streams` in key order and its `processors` in the order
+//!   they are evaluated in. A stream is its key, its tagged `sequence` as it was
+//!   recorded (before any transform), its `metadata` and, when it has one, its
+//!   `schema`. The derived streams are not stored, nor is their metadata: they
+//!   are computed again on load, over the saved streams. A system whose derived
+//!   streams are not what its processors give over its own streams, a
+//!   [`slice`](crate::StreamSystem::slice) or the part a live system
+//!   [drained](crate::StreamSystem::drain), loads with the derived streams the
+//!   processors give over the saved ones, so it does not round trip. A
+//!   processor in a system is the body of its own document, without the format
+//!   number: its `output` key, its `formula` and, when it declares any, its
+//!   `inputs`. A system in live mode has no document.
 //!
 //! # JSON Schema
 //!
@@ -164,7 +178,7 @@
 //!
 //! | format | change |
 //! |---|---|
-//! | 1 | the first version; a processor is one recipe (`output`, `formula`) and lists its declared `inputs`, left out when there are none |
+//! | 1 | the first version; a processor is one recipe (`output`, `formula`) and lists its declared `inputs`, left out when there are none; a system is its streams and processors, in batch mode |
 //!
 //!
 //! [`Edge`]: crate::Edge
@@ -172,7 +186,7 @@
 //! [`Pattern`]: crate::Pattern
 //! [`Processor`]: crate::Processor
 //! [`Processor::check`]: crate::Processor::check
-//! [`SequenceSystem`]: crate::SequenceSystem
+//! [`StreamSystem`]: crate::StreamSystem
 //! [`TimeIntervalSequence`]: crate::TimeIntervalSequence
 //! [`TimeIntervalSequence::from_spans`]: crate::TimeIntervalSequence::from_spans
 //! [`TimePointSequence`]: crate::TimePointSequence
@@ -189,7 +203,7 @@ mod processor;
 #[cfg(feature = "json-schema")]
 mod schema;
 mod sequences;
-mod system;
+mod stream_system;
 mod value;
 
 pub(crate) use extent::spans;
@@ -244,7 +258,7 @@ pub(crate) fn positive_timeout<'de, D: Deserializer<'de>>(
     }
 }
 
-/// A message for an error that names a member of a system.
-pub(crate) fn member_error(key: impl fmt::Display, problem: impl fmt::Display) -> String {
-    format!("member `{key}`: {problem}")
+/// A message for an error that names a stream of a system.
+pub(crate) fn stream_error(key: impl fmt::Display, problem: impl fmt::Display) -> String {
+    format!("stream `{key}`: {problem}")
 }

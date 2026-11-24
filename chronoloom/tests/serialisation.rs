@@ -12,11 +12,11 @@ mod validator;
 use serde_json::{json, Value as Json};
 
 use chronoloom::serialisation::FORMAT_VERSION;
-use chronoloom::stream_system::StreamSystem;
+use chronoloom::stream_system::{StreamSystem, Update};
 use chronoloom::{
-    Condition, Edge, Extent, Formula, Group, Input, Kind, OpenEnd, Pattern, Processor, Recipe,
-    Schema, Sequence, SequenceSystem, TimeIntervalEvent, TimeIntervalSequence, TimePointEvent,
-    TimePointSequence, Value,
+    Condition, Edge, Events, Extent, Formula, Group, Input, Kind, OpenEnd, Pattern, Processor,
+    Recipe, Schema, Sequence, SequenceSystem, TimeIntervalEvent, TimeIntervalSequence,
+    TimePointEvent, TimePointSequence, Value,
 };
 
 use common::{bounds, extent, for_each_seed, span, spans, Random, DOMAIN_END, DOMAIN_START};
@@ -249,7 +249,10 @@ fn every_document_refuses_another_format_version() {
             json!({"format": 0, "attribute": {"name": "p"}, "events": []}),
             "point",
         ),
-        (json!({"format": 7, "members": []}), "system"),
+        (
+            json!({"format": 7, "mode": "batch", "streams": []}),
+            "system",
+        ),
         (json!({"format": 2, "outputs": []}), "processor"),
     ];
 
@@ -257,7 +260,7 @@ fn every_document_refuses_another_format_version() {
         let message = match kind {
             "interval" => refusal::<TimeIntervalSequence>(&document),
             "point" => refusal::<TimePointSequence<i64>>(&document),
-            "system" => refusal::<SequenceSystem>(&document),
+            "system" => refusal::<StreamSystem>(&document),
             _ => refusal::<Processor>(&document),
         };
         assert!(
@@ -266,15 +269,15 @@ fn every_document_refuses_another_format_version() {
         );
     }
 
-    let missing = refusal::<SequenceSystem>(&json!({"members": []}));
+    let missing = refusal::<StreamSystem>(&json!({"mode": "batch", "streams": []}));
     assert!(missing.contains("format"), "{missing}");
 }
 
 // --------------------------------------------------------------- systems
 
-fn metadata_of(random: &mut Random, system: &mut SequenceSystem, key: &str) {
+fn metadata_of(random: &mut Random, system: &mut StreamSystem, key: &str) {
     if random.chance(1, 2) {
-        let metadata = system.member_metadata_mut(key).expect("a member");
+        let metadata = system.member_metadata_mut(key).expect("a stream");
         metadata.insert("unit".to_owned(), format!("tick{}", random.below(3)));
         metadata.insert("origin".to_owned(), "start of the day".to_owned());
     }
@@ -292,34 +295,43 @@ fn record(random: &mut Random) -> Value {
     Value::record(fields)
 }
 
-/// A system with a member of every shape and value type, metadata, a schema
-/// and live members.
-fn full_system(random: &mut Random) -> SequenceSystem {
-    let mut system = SequenceSystem::new();
+/// A system with a stream of every shape and value type, metadata, a schema,
+/// and processors of every kind: a transform, derived streams and a family
+/// per entity.
+fn full_system(random: &mut Random) -> StreamSystem {
+    let mut system = StreamSystem::new();
     let at = |random: &mut Random| random.between(DOMAIN_START, DOMAIN_END);
 
     let count = (0..random.below(6)).map(|_| TimePointEvent::new(at(random), random.between(0, 4)));
-    system.insert(
-        "count",
-        TimePointSequence::from_events("count", count.collect()).with_observed(extent(random)),
-    );
+    system
+        .insert_stream(
+            "count",
+            TimePointSequence::from_events("count", count.collect()).with_observed(extent(random)),
+        )
+        .unwrap();
     let temperature = (0..random.below(5))
         .map(|_| TimePointEvent::new(at(random), random.between(-20, 20) as f64 / 4.0));
-    system.insert(
-        "temperature",
-        TimePointSequence::from_events("temperature", temperature.collect()),
-    );
+    system
+        .insert_stream(
+            "temperature",
+            TimePointSequence::from_events("temperature", temperature.collect()),
+        )
+        .unwrap();
     let flags = (0..random.below(5)).map(|_| TimePointEvent::new(at(random), random.chance(1, 2)));
-    system.insert(
-        "flag",
-        TimePointSequence::from_events("flag", flags.collect()),
-    );
+    system
+        .insert_stream(
+            "flag",
+            TimePointSequence::from_events("flag", flags.collect()),
+        )
+        .unwrap();
     let lines = (0..random.below(4))
         .map(|_| TimePointEvent::new(at(random), format!("line {}", random.below(9))));
-    system.insert(
-        "log",
-        TimePointSequence::from_events("log", lines.collect()),
-    );
+    system
+        .insert_stream(
+            "log",
+            TimePointSequence::from_events("log", lines.collect()),
+        )
+        .unwrap();
     let edges = (0..random.below(4)).map(|_| {
         let edge = if random.chance(1, 2) {
             Edge::Start
@@ -328,103 +340,95 @@ fn full_system(random: &mut Random) -> SequenceSystem {
         };
         TimePointEvent::new(at(random), edge)
     });
-    system.insert(
-        "edges",
-        TimePointSequence::from_events("edges", edges.collect()),
-    );
-    system.insert(
-        "up",
-        TimeIntervalSequence::from_spans("up", spans(random, 5)).with_observed(extent(random)),
-    );
-    system.insert(
-        "shifted",
-        TimeIntervalSequence::from_spans("raw", spans(random, 5))
-            .transform(-1, 2)
-            .unwrap(),
-    );
+    system
+        .insert_stream(
+            "edges",
+            TimePointSequence::from_events("edges", edges.collect()),
+        )
+        .unwrap();
+    system
+        .insert_stream(
+            "up",
+            TimeIntervalSequence::from_spans("up", spans(random, 5)).with_observed(extent(random)),
+        )
+        .unwrap();
+    system
+        .insert_stream(
+            "shifted",
+            TimeIntervalSequence::from_spans("raw", spans(random, 5))
+                .transform(-1, 2)
+                .unwrap(),
+        )
+        .unwrap();
 
     let records = (0..random.below(7)).map(|_| TimePointEvent::new(at(random), record(random)));
-    system.insert(
-        "record",
-        TimePointSequence::from_events("record", records.collect()),
-    );
-    if random.chance(2, 3) {
-        let schema = Schema::record([
-            ("n", Schema::Integer),
-            ("x", Schema::optional(Schema::Float)),
-            ("note", Schema::optional(Schema::Text)),
-        ]);
+    system
+        .insert_stream(
+            "record",
+            TimePointSequence::from_events("record", records.collect()),
+        )
+        .unwrap();
+    let schema = Schema::record([
+        ("n", Schema::Integer),
+        ("x", Schema::optional(Schema::Float)),
+        ("note", Schema::optional(Schema::Text)),
+    ]);
+    // The schema is set before or after a transform of the stream, which
+    // keeps it with the recorded data.
+    let schema_first = random.chance(1, 2);
+    let with_schema = random.chance(2, 3);
+    if with_schema && schema_first {
+        system.set_schema("record", schema.clone()).unwrap();
+    }
+    if random.chance(1, 2) {
+        let kept = Events::Matching(Pattern::field(
+            "record",
+            "n",
+            Condition::NotEquals(Value::Integer(99)),
+        ));
+        system
+            .add_processor(Processor::new("record", kept))
+            .unwrap();
+    }
+    if with_schema && !schema_first {
         system.set_schema("record", schema).unwrap();
     }
 
-    system = with_derived_members(random, &system);
-
-    system.insert_live("live", TimePointSequence::<i64>::new("live"), 10);
-    system.insert_live("live up", TimeIntervalSequence::new("live up"), 10);
-    for tick in 0..random.below(4) {
+    // The processors read what is above, a transform before its readers.
+    if random.chance(2, 3) {
+        let kept = Events::Matching(Pattern::new("count", Condition::Less(3_i64)));
+        system.add_processor(Processor::new("count", kept)).unwrap();
+    }
+    if random.chance(2, 3) {
+        let busy = Formula::state("up").or(Formula::state("shifted"));
+        system.add_processor(Processor::new("busy", busy)).unwrap();
+    }
+    if random.chance(2, 3) {
+        let busy = Formula::occurs(Pattern::new("count", Condition::Greater(1_i64)));
+        system.add_processor(Processor::new("high", busy)).unwrap();
+    }
+    if random.chance(2, 3) {
+        let inside = Formula::between(
+            Pattern::field("record", "n", Condition::Equals(Value::Integer(1))),
+            Pattern::field("record", "n", Condition::Equals(Value::Integer(2))),
+        );
         system
-            .record_point("live", TimePointEvent::new(10 + tick as i64, tick as i64))
+            .add_processor(Processor::new(
+                "present",
+                Recipe::per_entity(Group::new("record", "n"), inside),
+            ))
             .unwrap();
     }
-    system.record_span("live up", span(12, 40)).unwrap();
-    system
-        .record_point("live", TimePointEvent::new(30, -1_i64))
-        .unwrap();
-    system.advance("live", 10 + random.between(0, 12)).unwrap();
-    system.advance_unobserved("live up", 14).unwrap();
 
     system
         .metadata_mut()
         .insert("subject".to_owned(), "machine 7".to_owned());
-    let keys: Vec<String> = system.iter().map(|(key, _)| key.to_string()).collect();
+    let keys: Vec<String> = system.streams().map(ToString::to_string).collect();
     for key in keys {
         metadata_of(random, &mut system, &key);
     }
 
     system
-}
-
-/// `system` with members that carry the output they came from, and the entity
-/// of a per-entity output, which only a document can file beside a member.
-fn with_derived_members(random: &mut Random, system: &SequenceSystem) -> SequenceSystem {
-    let mut derived = SequenceSystem::new();
-    derived.insert(
-        "busy",
-        TimeIntervalSequence::from_spans("busy", spans(random, 4)),
-    );
-    let entities = 1 + random.below(2) as i64;
-    for entity in 0..entities {
-        let key = format!("present/{entity}");
-        let events = (0..random.below(3))
-            .map(|_| TimePointEvent::new(random.between(DOMAIN_START, DOMAIN_END), 1_i64))
-            .collect();
-        derived.insert(
-            key.as_str(),
-            TimePointSequence::from_events(key.as_str(), events),
-        );
-    }
-
-    let mut document = serde_json::to_value(system).unwrap();
-    let mut added = serde_json::to_value(&derived).unwrap();
-    for member in added["members"].as_array_mut().unwrap() {
-        if member["key"] == "busy" {
-            member["lineage"] = json!({"state": {"state": "up"}});
-        } else {
-            member["lineage"] = json!({"per_entity": {
-                "by": {"key": "record", "path": "n"}, "formula": {"state": "up"}
-            }});
-            let entity: i64 = member["key"].as_str().unwrap()["present/".len()..]
-                .parse()
-                .unwrap();
-            member["entity"] = json!(entity);
-        }
-    }
-    document["members"]
-        .as_array_mut()
-        .unwrap()
-        .extend(added["members"].as_array().unwrap().iter().cloned());
-
-    load(&document).expect("the document loads")
 }
 
 #[test]
@@ -433,22 +437,17 @@ fn random_systems_round_trip_losslessly() {
         let system = full_system(random);
 
         let text = serde_json::to_string(&system).unwrap();
-        let loaded: SequenceSystem = serde_json::from_str(&text).unwrap();
+        let loaded: StreamSystem = serde_json::from_str(&text).unwrap();
 
         assert_eq!(loaded, system);
         assert_eq!(loaded.metadata(), system.metadata());
-
-        // The derived members keep the output and the entity filed beside them.
-        let saved: Json = serde_json::from_str(&text).unwrap();
-        let members = saved["members"].as_array().unwrap();
-        let find = |key: &str| members.iter().find(|member| member["key"] == key).unwrap();
-        assert_eq!(find("busy")["lineage"], json!({"state": {"state": "up"}}));
-        assert_eq!(find("present/0")["entity"], json!(0));
-        assert!(find("present/0")["lineage"].get("per_entity").is_some());
-        for (key, _) in &system {
+        for key in system.keys() {
             let key = key.as_str();
-            assert_eq!(loaded.frontier_of(key), system.frontier_of(key), "{key}");
+            assert_eq!(loaded.get(key), system.get(key), "{key}");
+            assert_eq!(loaded.raw(key), system.raw(key), "{key}");
             assert_eq!(loaded.schema(key), system.schema(key), "{key}");
+            assert_eq!(loaded.entity(key), system.entity(key), "{key}");
+            assert_eq!(loaded.is_derived(key), system.is_derived(key), "{key}");
             assert_eq!(
                 loaded.member_metadata(key),
                 system.member_metadata(key),
@@ -460,7 +459,62 @@ fn random_systems_round_trip_losslessly() {
             text,
             "writing is stable"
         );
+
+        // Derived streams are not stored, only the recorded data and the rules.
+        let saved: Json = serde_json::from_str(&text).unwrap();
+        let stored: Vec<&str> = saved["streams"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|stream| stream["key"].as_str().unwrap())
+            .collect();
+        let streams: Vec<String> = system.streams().map(ToString::to_string).collect();
+        assert_eq!(stored, streams);
+        assert_eq!(
+            saved["processors"].as_array().unwrap().len(),
+            system.processors().len()
+        );
     });
+}
+
+#[test]
+fn a_slice_loads_with_the_derived_streams_of_its_own_streams() {
+    let mut system = StreamSystem::new();
+    system
+        .insert_stream(
+            "motion",
+            TimePointSequence::from_events(
+                "motion",
+                vec![
+                    TimePointEvent::new(0, "start".to_owned()),
+                    TimePointEvent::new(20, "end".to_owned()),
+                ],
+            ),
+        )
+        .unwrap();
+    system
+        .add_processor(Processor::new(
+            "presence",
+            Formula::between(
+                Pattern::new("motion", Condition::Equals("start".to_owned())),
+                Pattern::new("motion", Condition::Equals("end".to_owned())),
+            ),
+        ))
+        .unwrap();
+
+    // The slice holds the presence of the whole system, cut to the window,
+    // although the window holds neither event.
+    let slice = system.slice(5..10);
+    assert_eq!(slice.intervals("presence").unwrap().len(), 1);
+
+    // Saving keeps the streams and the processors, and loading evaluates them
+    // again over the streams the slice holds.
+    let loaded = round_trip(&slice);
+    assert_ne!(loaded, slice);
+    assert_eq!(loaded.raw("motion"), slice.raw("motion"));
+    assert_eq!(loaded.processors(), slice.processors());
+    assert!(loaded.intervals("presence").unwrap().is_empty());
+    assert_eq!(round_trip(&loaded), loaded);
 }
 
 #[test]
@@ -469,57 +523,78 @@ fn a_loaded_system_keeps_behaving_like_the_original() {
     let mut system = full_system(&mut random);
     let mut loaded = round_trip(&system);
 
-    // A live member refuses late events, a schema still refuses a wrong value.
-    let late = TimePointEvent::new(0, 1_i64);
+    // The same update gives the same report and the same derived streams.
+    let update = || {
+        let mut update = Update::new();
+        update.points("count", [TimePointEvent::new(DOMAIN_START + 1, 2_i64)]);
+        update.spans("up", [span(DOMAIN_START, DOMAIN_START + 3)]);
+        update
+    };
     assert_eq!(
-        loaded.record_point("live", late).unwrap_err(),
-        system.record_point("live", late).unwrap_err()
+        loaded.update(update()).unwrap(),
+        system.update(update()).unwrap()
     );
+    assert_eq!(loaded, system);
+
+    // A schema still refuses a wrong value, and a derived stream is read-only.
     if loaded.schema("record").is_some() {
-        let wrong = TimePointEvent::new(3, Value::from("not a record"));
-        assert!(loaded.record_point("record", wrong).is_err());
+        let mut wrong = Update::new();
+        wrong.points(
+            "record",
+            [TimePointEvent::new(3, Value::from("not a record"))],
+        );
+        assert!(loaded.update(wrong).is_err());
+    }
+    for key in loaded.derived().cloned().collect::<Vec<_>>() {
+        let mut into_derived = Update::new();
+        into_derived.spans(key.as_str(), [span(0, 1)]);
+        assert!(loaded.update(into_derived).is_err(), "{key}");
     }
 }
 
 #[test]
 fn a_system_document_has_a_stable_shape() {
-    let mut system = SequenceSystem::new();
-    system.insert(
-        "count",
-        TimePointSequence::from_events("count", vec![TimePointEvent::new(3, 7_i64)]),
-    );
-    system.insert(
-        "up",
-        TimeIntervalSequence::from_spans("up", vec![span(0, 5)]),
-    );
+    let mut system = StreamSystem::new();
+    system
+        .insert_stream(
+            "count",
+            TimePointSequence::from_events("count", vec![TimePointEvent::new(3, 7_i64)]),
+        )
+        .unwrap();
+    system
+        .insert_stream(
+            "up",
+            TimeIntervalSequence::from_spans("up", vec![span(0, 5)]),
+        )
+        .unwrap();
+    let processor = Processor::new("again", Formula::state("up"));
+    system.add_processor(processor.clone()).unwrap();
     system
         .metadata_mut()
         .insert("unit".to_owned(), "seconds".to_owned());
-    system.insert_live("live", TimePointSequence::<bool>::new("live"), 4);
+    system
+        .member_metadata_mut("count")
+        .unwrap()
+        .insert("sensor".to_owned(), "a".to_owned());
+
+    let mut rules = serde_json::to_value(&processor).unwrap();
+    rules.as_object_mut().unwrap().remove("format");
 
     let everything = json!([[i64::MIN, i64::MAX]]);
     assert_eq!(
         serde_json::to_value(&system).unwrap(),
         json!({
             "format": 1,
+            "mode": "batch",
             "metadata": {"unit": "seconds"},
-            "members": [
+            "streams": [
                 {
                     "key": "count",
                     "sequence": {
                         "type": "i64", "attribute": {"name": "count"},
                         "observed": everything, "events": [{"timestamp": 3, "value": 7}]
                     },
-                    "metadata": {}
-                },
-                {
-                    "key": "live",
-                    "sequence": {
-                        "type": "bool", "attribute": {"name": "live"},
-                        "observed": [[i64::MIN, 4]], "events": []
-                    },
-                    "metadata": {},
-                    "frontier": 4
+                    "metadata": {"sensor": "a"}
                 },
                 {
                     "key": "up",
@@ -529,15 +604,49 @@ fn a_system_document_has_a_stable_shape() {
                     },
                     "metadata": {}
                 }
-            ]
+            ],
+            "processors": [rules]
         })
     );
 }
 
 #[test]
-fn a_point_member_of_another_value_type_cannot_be_saved() {
-    let mut system = SequenceSystem::new();
-    system.insert("letters", TimePointSequence::<char>::new("letters"));
+fn a_transformed_stream_is_saved_as_it_was_recorded() {
+    let mut system = StreamSystem::new();
+    system
+        .insert_stream(
+            "count",
+            TimePointSequence::from_events(
+                "count",
+                vec![TimePointEvent::new(1, 1_i64), TimePointEvent::new(2, 9_i64)],
+            ),
+        )
+        .unwrap();
+    let kept = Events::Matching(Pattern::new("count", Condition::Less(5_i64)));
+    system.add_processor(Processor::new("count", kept)).unwrap();
+    assert_eq!(system.points::<i64>("count").unwrap().len(), 1);
+
+    let saved = serde_json::to_value(&system).unwrap();
+    assert_eq!(
+        saved["streams"][0]["sequence"]["events"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+
+    let loaded: StreamSystem = round_trip(&system);
+    assert_eq!(loaded.points::<i64>("count").unwrap().len(), 1);
+    assert_eq!(loaded.raw("count"), system.raw("count"));
+    assert_eq!(loaded.transforms("count").len(), 1);
+}
+
+#[test]
+fn a_point_stream_of_another_value_type_cannot_be_saved() {
+    let mut system = StreamSystem::new();
+    system
+        .insert_stream("letters", TimePointSequence::<char>::new("letters"))
+        .unwrap();
 
     let error = serde_json::to_string(&system).unwrap_err().to_string();
     assert!(
@@ -546,7 +655,7 @@ fn a_point_member_of_another_value_type_cannot_be_saved() {
     );
 }
 
-fn member(key: &str, sequence: Json) -> Json {
+fn stream(key: &str, sequence: Json) -> Json {
     json!({"key": key, "sequence": sequence})
 }
 
@@ -554,16 +663,24 @@ fn points(kind: &str, events: Json) -> Json {
     json!({"type": kind, "attribute": {"name": "x"}, "events": events})
 }
 
-fn system_of(members: Vec<Json>) -> Json {
-    json!({"format": 1, "members": members})
+fn system_of(streams: Vec<Json>, processors: Vec<Json>) -> Json {
+    json!({"format": 1, "mode": "batch", "streams": streams, "processors": processors})
+}
+
+/// The body of a processor in a system document.
+fn rules(output: &str, formula: Json) -> Json {
+    json!({"output": output, "formula": formula})
 }
 
 #[test]
-fn a_member_of_an_unknown_value_type_is_refused_by_key() {
-    let message = refusal::<SequenceSystem>(&system_of(vec![
-        member("good", points("i64", json!([]))),
-        member("odd", points("complex", json!([]))),
-    ]));
+fn a_stream_of_an_unknown_value_type_is_refused_by_key() {
+    let message = refusal::<StreamSystem>(&system_of(
+        vec![
+            stream("good", points("i64", json!([]))),
+            stream("odd", points("complex", json!([]))),
+        ],
+        vec![],
+    ));
 
     assert!(
         message.contains("`odd`") && message.contains("does not support"),
@@ -572,114 +689,127 @@ fn a_member_of_an_unknown_value_type_is_refused_by_key() {
 }
 
 #[test]
-fn a_member_whose_data_breaks_its_schema_is_refused_by_key() {
-    let mut document = member(
+fn a_stream_whose_data_breaks_its_schema_is_refused_by_key() {
+    let mut document = stream(
         "records",
         points("value", json!([{"timestamp": 1, "value": {"n": "one"}}])),
     );
     document["schema"] = json!({"record": {"n": "integer"}});
 
-    let message = refusal::<SequenceSystem>(&system_of(vec![document]));
+    let message = refusal::<StreamSystem>(&system_of(vec![document], vec![]));
     assert!(
         message.contains("`records`") && message.contains("at `n`"),
         "{message}"
     );
 
-    let mut wrong_type = member("count", points("i64", json!([])));
+    let mut wrong_type = stream("count", points("i64", json!([])));
     wrong_type["schema"] = json!("any");
-    assert!(refusal::<SequenceSystem>(&system_of(vec![wrong_type])).contains("`count`"));
+    assert!(refusal::<StreamSystem>(&system_of(vec![wrong_type], vec![])).contains("`count`"));
 
-    let mut fitting = member(
+    let mut fitting = stream(
         "records",
         points("value", json!([{"timestamp": 1, "value": {"n": 1}}])),
     );
     fitting["schema"] = json!({"record": {"n": "integer"}});
-    let system: SequenceSystem = load(&system_of(vec![fitting])).unwrap();
+    let system: StreamSystem = load(&system_of(vec![fitting], vec![])).unwrap();
     assert!(system.schema("records").is_some());
 }
 
 #[test]
-fn a_member_with_data_outside_its_extent_is_refused_by_key() {
-    let mut outside = member("p", points("i64", json!([{"timestamp": 50, "value": 1}])));
+fn a_stream_with_data_outside_its_extent_is_refused_by_key() {
+    let mut outside = stream("p", points("i64", json!([{"timestamp": 50, "value": 1}])));
     outside["sequence"]["observed"] = json!([[0, 10]]);
 
-    let message = refusal::<SequenceSystem>(&system_of(vec![outside]));
+    let message = refusal::<StreamSystem>(&system_of(vec![outside], vec![]));
     assert!(
         message.contains("`p`") && message.contains("outside"),
         "{message}"
     );
-}
-
-#[test]
-fn a_live_member_holds_data_outside_its_extent_only_from_its_frontier() {
-    let mut live = member("p", points("i64", json!([{"timestamp": 12, "value": 1}])));
-    live["sequence"]["observed"] = json!([[0, 10]]);
-    live["frontier"] = json!(10);
-    let system: SequenceSystem = load(&system_of(vec![live.clone()])).unwrap();
-    assert_eq!(system.frontier_of("p"), Some(10));
-    assert_eq!(system.points::<i64>("p").unwrap().len(), 1);
-
-    // Before its frontier, a live member's data lies inside its extent.
-    let mut before = live.clone();
-    before["sequence"]["events"] = json!([{"timestamp": 5, "value": 1}]);
-    before["sequence"]["observed"] = json!([[0, 3]]);
-    let message = refusal::<SequenceSystem>(&system_of(vec![before]));
-    assert!(
-        message.contains("`p`") && message.contains("outside"),
-        "{message}"
-    );
-
-    // An extent past the frontier is not what a live member holds.
-    let mut past = live;
-    past["sequence"]["observed"] = json!([[0, 15]]);
-    let message = refusal::<SequenceSystem>(&system_of(vec![past]));
-    assert!(
-        message.contains("`p`") && message.contains("frontier"),
-        "{message}"
-    );
-}
-
-#[test]
-fn what_is_filed_beside_a_member_must_agree_with_it() {
-    let lineage = json!({"state": {"state": "up"}});
-    let mut derived_and_live = member("d", points("i64", json!([])));
-    derived_and_live["frontier"] = json!(3);
-    derived_and_live["lineage"] = lineage.clone();
-    assert!(refusal::<SequenceSystem>(&system_of(vec![derived_and_live])).contains("`d`"));
-
-    let mut entity_without_lineage = member("out/7", points("i64", json!([])));
-    entity_without_lineage["entity"] = json!(7);
-    assert!(refusal::<SequenceSystem>(&system_of(vec![entity_without_lineage])).contains("entity"));
-
-    let per_entity = json!({"per_entity": {
-        "by": {"key": "gate", "path": "agent"}, "formula": {"state": "up"}
-    }});
-    let mut misfiled = member("out/8", points("i64", json!([])));
-    misfiled["lineage"] = per_entity.clone();
-    misfiled["entity"] = json!(7);
-    assert!(refusal::<SequenceSystem>(&system_of(vec![misfiled])).contains("`out/8`"));
-
-    let mut filed = member("out/7", points("i64", json!([])));
-    filed["lineage"] = per_entity;
-    filed["entity"] = json!(7);
-    // What is filed beside a member is saved and loaded back unchanged.
-    let system: SequenceSystem = load(&system_of(vec![filed])).unwrap();
-    assert_eq!(round_trip(&system), system);
-    let saved = serde_json::to_value(&system).unwrap();
-    assert_eq!(saved["members"][0]["entity"], json!(7));
 }
 
 #[test]
 fn a_key_that_appears_twice_is_refused() {
-    let message = refusal::<SequenceSystem>(&system_of(vec![
-        member("p", points("i64", json!([]))),
-        member("p", points("bool", json!([]))),
-    ]));
+    let message = refusal::<StreamSystem>(&system_of(
+        vec![
+            stream("p", points("i64", json!([]))),
+            stream("p", points("bool", json!([]))),
+        ],
+        vec![],
+    ));
 
     assert!(
         message.contains("`p`") && message.contains("twice"),
         "{message}"
     );
+}
+
+#[test]
+fn only_a_batch_document_loads() {
+    let live = json!({"format": 1, "mode": "live", "streams": []});
+    assert!(refusal::<StreamSystem>(&live).contains("mode"));
+
+    let without = json!({"format": 1, "streams": []});
+    assert!(refusal::<StreamSystem>(&without).contains("mode"));
+}
+
+#[test]
+fn processors_are_evaluated_on_load_and_a_failing_one_is_the_load_error() {
+    let streams = vec![
+        stream("a", points("i64", json!([{"timestamp": 1, "value": 5}]))),
+        stream(
+            "up",
+            json!({"type": "intervals", "attribute": {"name": "up"}, "spans": [[0, 5]]}),
+        ),
+    ];
+
+    // Derived streams come back from the processors, in order.
+    let document = system_of(
+        streams.clone(),
+        vec![
+            rules("first", json!({"state": {"state": "up"}})),
+            rules("second", json!({"state": {"state": "first"}})),
+        ],
+    );
+    let system: StreamSystem = load(&document).unwrap();
+    assert_eq!(system.derived().count(), 2);
+    assert_eq!(system.intervals("second").unwrap().len(), 1);
+    assert_eq!(system.processors().len(), 2);
+
+    // A processor that reads a key nobody holds.
+    let missing = system_of(
+        streams.clone(),
+        vec![rules("out", json!({"state": {"state": "nowhere"}}))],
+    );
+    let message = refusal::<StreamSystem>(&missing);
+    assert!(
+        message.contains("`out`") && message.contains("nowhere"),
+        "{message}"
+    );
+
+    // A processor that reads a stream of another shape than it asks for.
+    let wrong_shape = system_of(
+        streams.clone(),
+        vec![rules("out", json!({"state": {"state": "a"}}))],
+    );
+    assert!(refusal::<StreamSystem>(&wrong_shape).contains("`out`"));
+
+    // A processor that writes a stream the system already holds, without
+    // reading it, is not a transform.
+    let taken = system_of(
+        streams.clone(),
+        vec![rules("up", json!({"state": {"state": "first"}}))],
+    );
+    assert!(refusal::<StreamSystem>(&taken).contains("`up`"));
+
+    // A processor that fails its own check.
+    let invalid = system_of(
+        streams,
+        vec![
+            json!({"output": "out", "formula": {"state": {"state": "up"}},
+            "inputs": [{"key": "up", "input": "timeline"}, {"key": "up", "input": "timeline"}]}),
+        ],
+    );
+    assert!(refusal::<StreamSystem>(&invalid).contains("twice"));
 }
 
 // ------------------------------------------------------------ processors
@@ -1051,7 +1181,14 @@ fn a_saved_system_and_processor_reproduce_a_derived_result() {
     let processor = Processor::new("a", Formula::state("s").or(Formula::state("t")));
 
     let derived = derive(&processor, &world).unwrap();
-    let again = derive(&round_trip(&processor), &round_trip(&world)).unwrap();
+    let mut system = StreamSystem::new();
+    for (key, sequence) in &world {
+        system.insert_stream(key.clone(), sequence.clone()).unwrap();
+    }
+    system.add_processor(processor.clone()).unwrap();
+    let loaded = round_trip(&system);
+    assert_eq!(loaded.get("a"), Some(&derived));
+    let again = derive(&round_trip(&processor), &world).unwrap();
 
     assert_eq!(again, derived);
     assert!(matches!(derived, Sequence::TimeInterval(_)));

@@ -18,7 +18,7 @@ struct InputRef<'a> {
 }
 
 #[derive(Serialize)]
-struct ProcessorBodyRef<'a> {
+pub(super) struct ProcessorBodyRef<'a> {
     output: &'a Key,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     inputs: Vec<InputRef<'a>>,
@@ -32,26 +32,51 @@ struct InputBody {
 }
 
 #[derive(Deserialize)]
-struct ProcessorBody {
+pub(super) struct ProcessorBody {
     output: Key,
     #[serde(default)]
     inputs: Vec<InputBody>,
     formula: Recipe,
 }
 
+impl<'a> ProcessorBodyRef<'a> {
+    pub(super) fn of(processor: &'a Processor) -> Self {
+        Self {
+            output: processor.output(),
+            inputs: processor
+                .declared_inputs()
+                .iter()
+                .map(|(key, input)| InputRef { key, input })
+                .collect(),
+            formula: processor.recipe(),
+        }
+    }
+}
+
+impl ProcessorBody {
+    /// The processor, checked as [`Processor::check`] does.
+    pub(super) fn build(self) -> Result<Processor, String> {
+        let mut declared = BTreeSet::new();
+        let mut processor = Processor::new(self.output, self.formula);
+        for InputBody { key, input } in self.inputs {
+            if !declared.insert(key.clone()) {
+                return Err(format!(
+                    "the input `{key}` is declared twice in the processor"
+                ));
+            }
+            processor = processor.with_input(key, input);
+        }
+        processor.check().map_err(|error| error.to_string())?;
+
+        Ok(processor)
+    }
+}
+
 impl Serialize for Processor {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         Document {
             format: Format,
-            body: ProcessorBodyRef {
-                output: self.output(),
-                inputs: self
-                    .declared_inputs()
-                    .iter()
-                    .map(|(key, input)| InputRef { key, input })
-                    .collect(),
-                formula: self.recipe(),
-            },
+            body: ProcessorBodyRef::of(self),
         }
         .serialize(serializer)
     }
@@ -70,18 +95,6 @@ impl<'de> Deserialize<'de> for Processor {
             body,
         } = Document::<ProcessorBody>::deserialize(deserializer)?;
 
-        let mut declared = BTreeSet::new();
-        let mut processor = Self::new(body.output, body.formula);
-        for InputBody { key, input } in body.inputs {
-            if !declared.insert(key.clone()) {
-                return Err(de::Error::custom(format_args!(
-                    "the input `{key}` is declared twice in the processor"
-                )));
-            }
-            processor = processor.with_input(key, input);
-        }
-        processor.check().map_err(de::Error::custom)?;
-
-        Ok(processor)
+        body.build().map_err(de::Error::custom)
     }
 }

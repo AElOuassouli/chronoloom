@@ -2,6 +2,14 @@
 
 ## Added
 
+- `StreamSystem<Batch>` is a `serde` document, `{ "format": 1, "mode": "batch",
+  metadata, streams, processors }`: the recorded streams (a transformed stream
+  as it was recorded) with their metadata and schema, and the processors in
+  order. Derived streams are not stored but evaluated again on load over the
+  saved streams, so a `slice` or a drained part, whose derived streams are not
+  what the processors give over its own streams, loads with different ones. A
+  processor that fails over the streams is the error of the load. A
+  `StreamSystem<Live>` has no document yet.
 - `StreamSystem<Live>`, made by `StreamSystem::live(from)`: a system with a
   frontier per stream whose processors run incrementally over what became
   final, on the data held once in the system. `insert_stream`, `add_processor`
@@ -190,6 +198,8 @@
 
 ## Removed
 
+- The `serde` implementations of `SequenceSystem`: a system is saved as a
+  `StreamSystem<Batch>`, and a document of a `SequenceSystem` no longer loads.
 - `Formula::evaluate`, `Events::evaluate` and `Recipe::evaluate`, which took a
   `SequenceSystem`: evaluate a processor with `Processor::evaluate` over a
   `StreamSystem`, or add it to one.

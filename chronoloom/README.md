@@ -1074,26 +1074,38 @@ dependency (`cargo add chronoloom --features serde`), every type that holds data
 implements `Serialize` and `Deserialize`, for any self-describing format. The
 examples use JSON, and need the feature, so they are marked `ignore` here and
 run as doctests of the `serialisation` module. A `TimePointSequence`, a
-`TimeIntervalSequence`, a `SequenceSystem` and a `Processor` are documents that
-start with a format version, `{ "format": 1, .. }`; what is nested in them
-carries none, and a reader refuses any version it does not know.
-A system is saved whole: members, metadata, frontiers of live members, the
-output each derived member came from (its lineage), entities and schemas.
+`TimeIntervalSequence`, a `StreamSystem` in batch mode and a `Processor` are
+documents that start with a format version, `{ "format": 1, .. }`; what is nested
+in them carries none, and a reader refuses any version it does not know.
+A system is saved as its recorded streams (key, data, metadata and schema, a
+transformed stream as it was recorded) and its processors, with
+`"mode": "batch"`. The derived streams are not saved: loading adds the
+processors in order, which evaluates them again over the saved streams, and the
+metadata of a derived stream is not kept. A `slice` of a system, or the part a
+live system `drain`s, holds derived streams that are not what the processors
+give over its own streams, so it loads with different derived streams. A
+processor that fails over the streams is an error of the load. A system in live
+mode has no document.
 
 ```rust,ignore
 use chronoloom::{
-    Condition, Formula, Pattern, Processor, SequenceSystem, TimePointEvent, TimePointSequence,
+    Condition, Formula, Pattern, Processor, StreamSystem, TimePointEvent, TimePointSequence,
 };
 
-let mut system = SequenceSystem::new();
-system.insert("count", TimePointSequence::from_events("count", vec![
+let mut system = StreamSystem::new();
+system.insert_stream("count", TimePointSequence::from_events("count", vec![
     TimePointEvent::new(3, 4_i64),
     TimePointEvent::new(9, 8_i64),
-]));
+]))?;
+system.add_processor(Processor::new(
+    "busy",
+    Formula::occurs(Pattern::new("count", Condition::Greater(5_i64))),
+))?;
 system.metadata_mut().insert("unit".to_owned(), "seconds".to_owned());
 
-let saved = serde_json::to_string(&system).unwrap();
-let loaded: SequenceSystem = serde_json::from_str(&saved).unwrap();
+// The derived stream is not saved: loading evaluates the processor again.
+let saved = serde_json::to_string(&system)?;
+let loaded: StreamSystem = serde_json::from_str(&saved)?;
 assert_eq!(loaded, system);
 
 // A processor is a document of its own, and a loaded one has been checked.
@@ -1101,23 +1113,24 @@ let processor = Processor::new(
     "busy",
     Formula::occurs(Pattern::new("count", Condition::Greater(5_i64))),
 );
-let rules = serde_json::to_string(&processor).unwrap();
-let rules: Processor = serde_json::from_str(&rules).unwrap();
+let rules = serde_json::to_string(&processor)?;
+let rules: Processor = serde_json::from_str(&rules)?;
 assert_eq!(rules, processor);
 
 // A reader refuses any format version it does not know.
 let future = saved.replacen(r#""format":1"#, r#""format":2"#, 1);
-assert!(serde_json::from_str::<SequenceSystem>(&future).is_err());
+assert!(serde_json::from_str::<StreamSystem>(&future).is_err());
+# Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
 Loading validates. A document that loads gives values whose invariants hold, as
 though they had been built in code: spans that overlap, touch or come unsorted
 are normalized, and one that ends before it starts is refused; point events are
 sorted, ties keeping their stored order; data outside the extent a sequence was
-observed over is refused (a point stamped `i64::MAX` and the data of a live
-member excepted, as documented); a schema must fit the data of its member; and a
-processor must pass `Processor::check`, so a stored processor that loads is a
-valid one. A refusal says what was wrong and names the member's key.
+observed over is refused (a point stamped `i64::MAX` excepted, as documented);
+a schema must fit the data of its stream; and a processor must pass
+`Processor::check`, so a stored processor that loads is a valid one. A refusal
+says what was wrong and names the stream's key.
 
 A `Value` is plain JSON, `null`, `true`, `5`, `5.0`, `"text"` and `{..}`, and an
 integer and a float stay distinct on the way back although `5 == 5.0`. A float
@@ -1157,8 +1170,8 @@ assert!(schema["properties"]["inputs"].is_object());
 
 What is open:
 
-- A `StreamSystem` in live mode does not run transforms, and saving and loading
-  a `StreamSystem` is not here yet.
+- A `StreamSystem` in live mode does not run transforms, and has no saved
+  form yet: only a system in batch mode is a document.
 - Record values have no lists, and a projection copies the values rather than
   viewing them in place.
 - A live system keeps every entity of a per-entity output it has seen. A way to

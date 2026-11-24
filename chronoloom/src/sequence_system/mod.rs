@@ -48,8 +48,6 @@ mod errors;
 mod key;
 mod live;
 mod mutation;
-#[cfg(feature = "serde")]
-mod parts;
 mod sequence;
 mod slice;
 mod traits;
@@ -58,8 +56,6 @@ pub(crate) use erased::ErasedPoints;
 pub use erased::{AnyPointSequence, AnyValue, PointValue};
 pub use errors::RecordError;
 pub use key::Key;
-#[cfg(feature = "serde")]
-pub(crate) use parts::MemberParts;
 pub use sequence::Sequence;
 pub use traits::{IntoIter, Iter};
 

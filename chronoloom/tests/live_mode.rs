@@ -15,8 +15,8 @@ use std::collections::BTreeMap;
 use chronoloom::processor::Processor;
 use chronoloom::stream_system::{Live, StreamSystem, Update, UpdateError};
 use chronoloom::{
-    Condition, Edge, Events, Formula, Pattern, ProcessError, RecordError, Sequence,
-    TimeIntervalSequence, TimePointEvent, TimePointSequence, Timestamp, Value,
+    Condition, Edge, Events, Formula, Input, Kind, Pattern, ProcessError, RecordError, Schema,
+    Sequence, TimeIntervalSequence, TimePointEvent, TimePointSequence, Timestamp, Value,
 };
 
 use common::{bounds, for_each_seed, property_cases, span, Random};
@@ -597,7 +597,7 @@ fn per_entity_members_appear_with_their_first_record() {
 }
 
 #[test]
-fn an_update_that_fails_after_recording_changes_nothing() {
+fn an_update_refused_before_recording_changes_nothing() {
     let mut room = room();
     let before = room.clone();
 
@@ -612,6 +612,153 @@ fn an_update_that_fails_after_recording_changes_nothing() {
     ));
     assert_eq!(room, before);
     assert_eq!(room.frontier("motion"), Some(0));
+}
+
+#[test]
+fn an_update_refused_by_a_declared_input_after_recording_changes_nothing() {
+    let mut room = room();
+    room.insert_stream("readings", TimePointSequence::<Value>::new("readings"))
+        .unwrap();
+    room.add_processor(
+        Processor::new("speed", Events::project("readings", "n", Kind::Integer)).with_input(
+            "readings",
+            Input::Records(Schema::record([("n", Schema::Integer)])),
+        ),
+    )
+    .unwrap();
+    let before = room.clone();
+
+    let mut update = Update::new();
+    update
+        .points("motion", [TimePointEvent::new(2, "start")])
+        .points(
+            "readings",
+            [TimePointEvent::new(
+                3,
+                Value::record([("n", Value::from("text"))]),
+            )],
+        )
+        .advance_all(10);
+    assert!(matches!(
+        room.update(update),
+        Err(UpdateError::Process { processor, .. }) if processor.as_str() == "speed"
+    ));
+    assert_eq!(room, before);
+    assert_eq!(room.get("readings"), before.get("readings"));
+    assert_eq!(room.get("motion"), before.get("motion"));
+}
+
+#[test]
+fn an_update_that_fails_in_a_processor_after_another_stepped_changes_nothing() {
+    let mut room = room();
+    room.insert_stream("readings", TimePointSequence::<Value>::new("readings"))
+        .unwrap();
+    room.insert_stream("records", TimePointSequence::<Value>::new("records"))
+        .unwrap();
+    room.add_processor(Processor::new(
+        "each",
+        chronoloom::Recipe::per_entity(
+            chronoloom::Group::new("records", "id"),
+            Formula::while_matching(Pattern::field(
+                "records",
+                "ok",
+                Condition::Equals(Value::from(true)),
+            )),
+        ),
+    ))
+    .unwrap();
+    room.add_processor(Processor::new(
+        "speed",
+        Events::project("readings", "n", Kind::Integer),
+    ))
+    .unwrap();
+
+    // Something already derived, so that the failing update appends to it.
+    let mut update = Update::new();
+    update
+        .points("motion", [TimePointEvent::new(2, "start")])
+        .spans("door", [span(1, 4)])
+        .advance_all(4);
+    room.update(update).unwrap();
+    let before = room.clone();
+
+    let mut failing = Update::new();
+    failing
+        .points(
+            "motion",
+            [
+                TimePointEvent::new(6, "end"),
+                TimePointEvent::new(8, "start"),
+            ],
+        )
+        // Touches the span before it, so the two merge.
+        .spans("door", [span(4, 6)])
+        .points(
+            "records",
+            [TimePointEvent::new(
+                5,
+                Value::record([("id", Value::from(1)), ("ok", Value::from(true))]),
+            )],
+        )
+        .points(
+            "readings",
+            [TimePointEvent::new(
+                7,
+                Value::record([("n", Value::from("text"))]),
+            )],
+        )
+        .advance_all(20);
+    // Without the failing reading the same update goes through, and gives a
+    // chunk of `presence` and a new member of `each`: both were done before the
+    // failure and are undone.
+    let mut working = Update::new();
+    working
+        .points(
+            "motion",
+            [
+                TimePointEvent::new(6, "end"),
+                TimePointEvent::new(8, "start"),
+            ],
+        )
+        .points(
+            "records",
+            [TimePointEvent::new(
+                5,
+                Value::record([("id", Value::from(1)), ("ok", Value::from(true))]),
+            )],
+        )
+        .advance_all(20);
+    let report = before.clone().update(working).unwrap();
+    assert!(report.chunks().contains_key("presence"));
+    assert!(report.chunks().contains_key("each/1"));
+
+    let error = room.update(failing).unwrap_err();
+    assert!(matches!(
+        &error,
+        UpdateError::Process { processor, .. } if processor.as_str() == "speed"
+    ));
+    assert!(!room.contains("each/1"));
+    assert_eq!(room.get("door"), before.get("door"));
+    assert_eq!(room, before);
+    assert_eq!(room.get("presence"), before.get("presence"));
+    assert_eq!(room.get("motion"), before.get("motion"));
+    assert_eq!(room.frontier("presence"), before.frontier("presence"));
+
+    // The running state is back too: the same later update gives what it gives
+    // on a system that never failed.
+    let later = || {
+        let mut update = Update::new();
+        update
+            .points("motion", [TimePointEvent::new(6, "end")])
+            .advance_all(20);
+        update
+    };
+    let mut expected = before;
+    assert_eq!(
+        room.update(later()).unwrap(),
+        expected.update(later()).unwrap()
+    );
+    assert_eq!(room, expected);
 }
 
 #[test]

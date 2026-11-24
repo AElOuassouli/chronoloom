@@ -2,10 +2,13 @@
 //! them as they arrive.
 
 use core::any;
+use core::ops::Bound;
 
+use crate::primitives::{TimeIntervalEvent, Timestamp};
 use crate::sequences::Extent;
 use crate::values::{Schema, SchemaError, Value};
 
+use super::erased::ErasedPoints;
 use super::{Key, Member, Metadata, RecordError, Sequence, Store};
 use crate::stream_system::update::Pending;
 use crate::stream_system::Update;
@@ -255,6 +258,75 @@ impl Store {
                 Sequence::TimePoint(points) => points.as_erased_mut().observe(extent),
                 Sequence::TimeInterval(timeline) => timeline.observe(extent),
             }
+        }
+    }
+}
+
+/// What a member held from an instant on, with its extent: enough to put the
+/// member back as it was after something was recorded or appended at or after
+/// that instant, at the cost of what lies there and not of the whole member.
+#[derive(Debug)]
+pub(crate) struct Tail {
+    from: Timestamp,
+    observed: Extent,
+    data: TailData,
+}
+
+#[derive(Debug)]
+enum TailData {
+    Points(Box<dyn ErasedPoints>),
+    Spans(Vec<TimeIntervalEvent<()>>),
+}
+
+impl Store {
+    /// The part of the member under `key` that recording at or after `from`
+    /// may change. `None` if no member is under `key`.
+    pub(crate) fn tail_from(&self, key: &str, from: Timestamp) -> Option<Tail> {
+        let member = self.members.get(key)?;
+        let (observed, data) = match &member.sequence {
+            Sequence::TimePoint(points) => (
+                points.observed().clone(),
+                TailData::Points(
+                    points
+                        .0
+                        .slice_bounds((Bound::Included(from), Bound::Unbounded)),
+                ),
+            ),
+            Sequence::TimeInterval(timeline) => (
+                timeline.observed().clone(),
+                TailData::Spans(timeline.tail_from(from)),
+            ),
+        };
+        Some(Tail {
+            from,
+            observed,
+            data,
+        })
+    }
+
+    /// Put the member under `key` back as `tail` took it, whatever was
+    /// recorded or appended at or after its instant since. Nothing changes if
+    /// no member is under `key` or it is of another shape.
+    pub(crate) fn restore_tail(&mut self, key: &str, tail: Tail) {
+        let Some(member) = self.members.get_mut(key) else {
+            return;
+        };
+        let Tail {
+            from,
+            observed,
+            data,
+        } = tail;
+        match (&mut member.sequence, data) {
+            (Sequence::TimePoint(points), TailData::Points(tail)) => {
+                assert!(
+                    points.as_erased_mut().restore_tail(from, &*tail, observed),
+                    "a tail is put back into the member it was taken from"
+                );
+            }
+            (Sequence::TimeInterval(timeline), TailData::Spans(spans)) => {
+                timeline.restore_tail(from, spans, observed);
+            }
+            _ => {}
         }
     }
 }

@@ -9,10 +9,11 @@ use crate::primitives::{TimeIntervalEvent, Timestamp};
 use crate::processing::{check_declared, member_key, render, ProcessError, Recipe};
 use crate::processor::Processor;
 use crate::sequences::Extent;
-use crate::store::{Key, RecordError, Sequence, Store};
+use crate::store::{Key, RecordError, Sequence, Store, Tail};
 
 #[cfg(feature = "serde")]
 use super::checkpoint::Checkpoint;
+use super::journal::Journal;
 use super::mode::LiveNode;
 use super::pipeline::{writes, Pipeline};
 use super::update::Watermark;
@@ -138,7 +139,11 @@ impl StreamSystem<Live> {
             read: BTreeMap::new(),
         });
         let mut chunks = BTreeMap::new();
-        next.step(next.mode.nodes.len() - 1, &mut chunks)?;
+        next.step(
+            next.mode.nodes.len() - 1,
+            &mut chunks,
+            &mut Journal::default(),
+        )?;
 
         let report = next.report(chunks);
         *self = next;
@@ -160,17 +165,29 @@ impl StreamSystem<Live> {
     /// advances a derived stream, [`UpdateError::Record`] if recording fails
     /// (an unknown key, another shape or value type, a schema mismatch) or a
     /// watermark names an unknown key, and [`UpdateError::Process`] if a
-    /// processor fails. Nothing changes in any case.
+    /// processor fails. Nothing changes in any case, also if a processor
+    /// panics: the update is undone before the panic goes on.
     ///
-    /// Known limit: all or nothing is kept by working on a copy of the system,
-    /// so an update costs a copy of everything the system holds besides the
-    /// evaluation.
+    /// A failed update is undone from a record of what it touched (the part of
+    /// each recorded stream it changed, the frontiers it moved, the processors
+    /// it stepped and what it appended), so it costs what the update changes and
+    /// not what the system holds.
     pub fn update(&mut self, update: Update) -> Result<LiveReport, UpdateError> {
-        let mut next = self.clone();
-        let report = next.apply(update)?;
-
-        *self = next;
-        Ok(report)
+        let mut journal = Journal::default();
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.apply(update, &mut journal)
+        }));
+        match outcome {
+            Ok(Ok(report)) => Ok(report),
+            Ok(Err(error)) => {
+                journal.undo(self);
+                Err(error)
+            }
+            Err(panic) => {
+                journal.undo(self);
+                std::panic::resume_unwind(panic)
+            }
+        }
     }
 
     /// Move the frontier of the stream under `key` to `watermark`, as an
@@ -442,8 +459,8 @@ impl StreamSystem<Live> {
     }
 
     /// [`update`](StreamSystem::update) on the system itself, which the caller
-    /// works on a copy of.
-    fn apply(&mut self, update: Update) -> Result<LiveReport, UpdateError> {
+    /// undoes from `journal` if this fails.
+    fn apply(&mut self, update: Update, journal: &mut Journal) -> Result<LiveReport, UpdateError> {
         let Update { chunks, watermarks } = update;
         let recorded: BTreeSet<Key> = chunks.iter().map(|(key, _)| key.clone()).collect();
 
@@ -462,6 +479,33 @@ impl StreamSystem<Live> {
                     frontier,
                 });
             }
+        }
+        // A watermark that names an unknown key is refused before anything is
+        // recorded or moved.
+        for watermark in &watermarks {
+            if let Watermark::Stream(key, _) = watermark {
+                if !self.mode.frontiers.contains_key(key) {
+                    return Err(if self.members.contains(key.as_str()) {
+                        UpdateError::Derived { key: key.clone() }
+                    } else {
+                        RecordError::Unknown {
+                            key: key.as_str().to_owned(),
+                        }
+                        .into()
+                    });
+                }
+            }
+        }
+
+        let touched: Vec<(Key, Tail)> = chunks
+            .iter()
+            .filter_map(|(key, pending)| {
+                let tail = self.members.tail_from(key.as_str(), pending.earliest()?)?;
+                Some((key.clone(), tail))
+            })
+            .collect();
+        for (key, tail) in touched {
+            journal.recorded(key, tail);
         }
         self.members.record_update(Update {
             chunks,
@@ -493,17 +537,13 @@ impl StreamSystem<Live> {
         for watermark in watermarks {
             match watermark {
                 Watermark::Stream(key, watermark) => {
-                    let Some(frontier) = self.mode.frontiers.get_mut(&key) else {
-                        return Err(if self.members.contains(key.as_str()) {
-                            UpdateError::Derived { key }
-                        } else {
-                            RecordError::Unknown {
-                                key: key.as_str().to_owned(),
-                            }
-                            .into()
-                        });
-                    };
+                    let frontier = self
+                        .mode
+                        .frontiers
+                        .get_mut(&key)
+                        .expect("checked above to be a stream");
                     if watermark > *frontier {
+                        journal.moved(key.clone(), *frontier);
                         *frontier = watermark;
                         moved.insert(key);
                     }
@@ -511,6 +551,7 @@ impl StreamSystem<Live> {
                 Watermark::All(watermark) => {
                     for (key, frontier) in &mut self.mode.frontiers {
                         if watermark > *frontier {
+                            journal.moved(key.clone(), *frontier);
                             *frontier = watermark;
                             moved.insert(key.clone());
                         }
@@ -521,7 +562,7 @@ impl StreamSystem<Live> {
 
         let mut chunks = BTreeMap::new();
         for index in self.pipeline.affected(&moved) {
-            self.step(index, &mut chunks)?;
+            self.step(index, &mut chunks, journal)?;
         }
         Ok(self.report(chunks))
     }
@@ -543,16 +584,23 @@ impl StreamSystem<Live> {
         self.mode.from = Timestamp::MAX;
 
         let mut chunks = BTreeMap::new();
+        let mut journal = Journal::default();
         for index in self.pipeline.affected(&moved) {
-            self.step(index, &mut chunks)?;
+            self.step(index, &mut chunks, &mut journal)?;
         }
         Ok(self.report(chunks))
     }
 
     /// Run the processor at `index` over the range that became final in what
     /// it reads, and append what it gives to its derived streams. The chunks
-    /// that made progress are put in `chunks`, by key.
-    fn step(&mut self, index: usize, chunks: &mut BTreeMap<Key, Chunk>) -> Result<(), UpdateError> {
+    /// that made progress are put in `chunks`, by key. What it changes is noted
+    /// in `journal`.
+    fn step(
+        &mut self,
+        index: usize,
+        chunks: &mut BTreeMap<Key, Chunk>,
+        journal: &mut Journal,
+    ) -> Result<(), UpdateError> {
         let processor = self.pipeline.processors()[index].clone();
         let output = processor.output();
         let failed = |error| UpdateError::Process {
@@ -580,6 +628,8 @@ impl StreamSystem<Live> {
         }
 
         let node = &mut self.mode.nodes[index];
+        journal.stepped(index, node);
+        let before = node.recipe.frontier();
         let produced = node.recipe.step(&inputs, to).map_err(failed)?;
         node.read.extend(reached);
 
@@ -594,6 +644,12 @@ impl StreamSystem<Live> {
                 if !self.members.is_derived(key.as_str()) {
                     return Err(UpdateError::Taken { key });
                 }
+                // What is appended lies at or after where the processor was
+                // final, so that is all an undo has to put back.
+                let from = earliest(chunk.sequence()).map_or(before, |at| at.min(before));
+                if let Some(tail) = self.members.tail_from(key.as_str(), from) {
+                    journal.appended(key.clone(), tail);
+                }
                 self.members.append_derived(key.as_str(), chunk.sequence());
             } else {
                 let mut sequence = chunk.clone().into_sequence();
@@ -603,6 +659,7 @@ impl StreamSystem<Live> {
                     timeline.set_attribute(formula.to_string());
                 }
                 self.members.insert_derived(key.clone(), sequence, entity);
+                journal.created(key.clone());
             }
 
             if !chunk.range().is_empty() {

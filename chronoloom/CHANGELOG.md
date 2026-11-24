@@ -187,6 +187,13 @@
   refused with `UpdateError::Taken`, and so is inserting a stream under a
   per-entity output. Before, they were accepted, and the per-entity processor
   could overwrite or delete the other member.
+- A live `update` no longer copies the whole system to stay all or nothing: it
+  notes what it touches (the part of each recorded stream it changes, the
+  frontiers it moves, the processors it steps, what it appends) and puts only
+  that back when a processor fails, so its cost follows what the update
+  changes, not all data recorded. An update with both a refused chunk (a schema
+  mismatch, say) and a watermark naming an unknown key now reports the
+  watermark error.
 
 ## Removed
 

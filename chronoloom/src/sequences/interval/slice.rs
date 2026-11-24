@@ -2,9 +2,10 @@
 
 use std::ops::RangeBounds;
 
-use crate::primitives::Timestamp;
+use crate::primitives::{TimeIntervalEvent, Timestamp};
 use crate::sequences::extent::Extent;
 
+use super::normalization::span_ticks;
 use super::operations::intersection_spans;
 use super::TimeIntervalSequence;
 
@@ -68,5 +69,32 @@ impl TimeIntervalSequence {
         );
         *self = remaining;
         drained
+    }
+
+    /// The spans that end at or after `from`, whole: what recording at `from`
+    /// or later may change, to be put back by [`restore_tail`].
+    ///
+    /// [`restore_tail`]: TimeIntervalSequence::restore_tail
+    pub(crate) fn tail_from(&self, from: Timestamp) -> Vec<TimeIntervalEvent<()>> {
+        let split = self.spans.partition_point(|span| span.end() < from);
+        self.spans[split..].to_vec()
+    }
+
+    /// Put back what [`tail_from`](TimeIntervalSequence::tail_from) took: the
+    /// spans ending at or after `from` become `tail`, and the extent becomes
+    /// `observed`.
+    pub(crate) fn restore_tail(
+        &mut self,
+        from: Timestamp,
+        tail: Vec<TimeIntervalEvent<()>>,
+        observed: Extent,
+    ) {
+        let split = self.spans.partition_point(|span| span.end() < from);
+        let removed: u64 = self.spans[split..].iter().map(span_ticks).sum();
+        let restored: u64 = tail.iter().map(span_ticks).sum();
+        self.active_duration = self.active_duration - removed + restored;
+        self.spans.truncate(split);
+        self.spans.extend(tail);
+        self.observed = observed;
     }
 }

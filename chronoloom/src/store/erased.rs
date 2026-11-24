@@ -40,6 +40,9 @@ pub(crate) trait ErasedPoints: fmt::Debug + Send + Sync {
     fn observed_mut(&mut self) -> &mut Extent;
     fn slice_bounds(&self, range: (Bound<Timestamp>, Bound<Timestamp>)) -> Box<dyn ErasedPoints>;
     fn split_before(&mut self, frontier: Timestamp) -> Box<dyn ErasedPoints>;
+    /// Put back a tail taken by `slice_bounds(from..)`, with the extent from
+    /// before. False when `tail` is of another value type.
+    fn restore_tail(&mut self, from: Timestamp, tail: &dyn ErasedPoints, observed: Extent) -> bool;
     /// Append `next`, which comes after, and grow the extent by its own; false
     /// and untouched when `next` carries another value type.
     fn append(&mut self, next: &dyn ErasedPoints) -> bool;
@@ -111,6 +114,14 @@ impl<T: PointValue> ErasedPoints for TimePointSequence<T> {
 
     fn split_before(&mut self, frontier: Timestamp) -> Box<dyn ErasedPoints> {
         Box::new(Self::split_before(self, frontier))
+    }
+
+    fn restore_tail(&mut self, from: Timestamp, tail: &dyn ErasedPoints, observed: Extent) -> bool {
+        let Some(tail) = tail.as_any().downcast_ref::<Self>() else {
+            return false;
+        };
+        Self::restore_tail(self, from, tail, observed);
+        true
     }
 
     fn append(&mut self, next: &dyn ErasedPoints) -> bool {

@@ -58,4 +58,14 @@ impl<T: Clone> TimePointSequence<T> {
 
         Self::from_parts(self.attribute.clone(), finalised, finalised_observed)
     }
+
+    /// Put back what [`slice`](TimePointSequence::slice) took from `from` on:
+    /// the events from `from` on become `tail`, and the extent becomes
+    /// `observed`.
+    pub(crate) fn restore_tail(&mut self, from: Timestamp, tail: &Self, observed: Extent) {
+        let split = self.lower_bound(from);
+        self.events.truncate(split);
+        self.events.extend(tail.events.iter().cloned());
+        self.observed = observed;
+    }
 }

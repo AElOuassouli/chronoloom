@@ -6,6 +6,7 @@ mod batch;
 #[cfg(feature = "serde")]
 pub(crate) mod checkpoint;
 mod errors;
+mod journal;
 mod live;
 mod mode;
 mod pipeline;

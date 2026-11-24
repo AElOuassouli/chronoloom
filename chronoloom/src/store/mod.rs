@@ -25,6 +25,7 @@ pub(crate) use erased::ErasedPoints;
 pub use erased::{AnyPointSequence, AnyValue, PointValue};
 pub use errors::RecordError;
 pub use key::Key;
+pub(crate) use mutation::Tail;
 pub use sequence::Sequence;
 
 /// Facts about a system or one of its members that chronoloom never

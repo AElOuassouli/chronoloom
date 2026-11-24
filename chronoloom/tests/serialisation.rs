@@ -19,9 +19,9 @@ use chronoloom::{
     TimePointSequence, Value,
 };
 
-use common::{bounds, extent, for_each_seed, span, spans, Random, DOMAIN_END, DOMAIN_START};
-
-const CASES: u64 = 300;
+use common::{
+    bounds, extent, for_each_seed, property_cases, span, spans, Random, DOMAIN_END, DOMAIN_START,
+};
 
 fn round_trip<T: serde::Serialize + serde::de::DeserializeOwned>(value: &T) -> T {
     let text = serde_json::to_string(value).expect("the value serialises");
@@ -98,7 +98,7 @@ fn a_value_refuses_what_it_cannot_hold() {
 
 #[test]
 fn random_timelines_round_trip_losslessly() {
-    for_each_seed(CASES, |random, _| {
+    for_each_seed(property_cases(), |random, _| {
         let mut timeline =
             TimeIntervalSequence::from_spans("up", spans(random, 6)).with_observed(extent(random));
         match random.below(3) {
@@ -120,7 +120,7 @@ fn random_timelines_round_trip_losslessly() {
 
 #[test]
 fn random_point_sequences_round_trip_losslessly() {
-    for_each_seed(CASES, |random, _| {
+    for_each_seed(property_cases(), |random, _| {
         let events = (0..random.below(8))
             .map(|order| {
                 TimePointEvent::new(random.between(DOMAIN_START, DOMAIN_END), order as i64)
@@ -433,7 +433,7 @@ fn full_system(random: &mut Random) -> StreamSystem {
 
 #[test]
 fn random_systems_round_trip_losslessly() {
-    for_each_seed(CASES, |random, _| {
+    for_each_seed(property_cases(), |random, _| {
         let system = full_system(random);
 
         let text = serde_json::to_string(&system).unwrap();
@@ -915,7 +915,7 @@ fn derive(processor: &Processor, world: &StreamSystem) -> Result<Sequence, Strin
 
 #[test]
 fn random_processors_round_trip_and_evaluate_identically() {
-    for_each_seed(CASES, |random, _| {
+    for_each_seed(property_cases(), |random, _| {
         let processor = Processor::new("o0", formula(random, 3));
         let loaded = round_trip(&processor);
         let world = world(random);
@@ -1151,7 +1151,7 @@ fn assert_matches_schema(processor: &Processor) {
 #[cfg(feature = "json-schema")]
 #[test]
 fn the_schema_accepts_the_documents_of_random_processors() {
-    for_each_seed(CASES, |random, _| {
+    for_each_seed(property_cases(), |random, _| {
         let mut processor = Processor::new("o0", formula(random, 3));
         if random.chance(1, 2) {
             processor = with_inputs(processor);

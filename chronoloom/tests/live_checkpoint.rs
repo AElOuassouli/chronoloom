@@ -17,10 +17,8 @@ use chronoloom::{
     TimePointEvent, TimePointSequence, Timestamp, Value,
 };
 
-use common::{for_each_seed, span, Random};
+use common::{for_each_seed, property_cases, span, Random};
 use streams::{processors, stream, Op, Stream, POINT_INPUTS, RECORD_INPUTS, STATE_INPUTS};
-
-const CASES: u64 = 300;
 
 /// The checkpoint of a live system, as text.
 fn save(live: &StreamSystem<Live>) -> String {
@@ -119,7 +117,7 @@ fn stop(random: &mut Random, stream: &Stream) -> usize {
 
 #[test]
 fn a_restored_system_goes_on_as_one_that_never_stopped() {
-    for_each_seed(CASES, |random, _| {
+    for_each_seed(property_cases(), |random, _| {
         let processors = processors(random);
         let stream = stream(random);
 
@@ -149,7 +147,7 @@ fn a_restored_system_goes_on_as_one_that_never_stopped() {
 
 #[test]
 fn a_checkpoint_after_finish_stays_finished() {
-    for_each_seed(100, |random, _| {
+    for_each_seed(property_cases(), |random, _| {
         let processors = processors(random);
         let stream = stream(random);
         let mut live = system(stream.from, &processors);

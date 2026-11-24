@@ -59,6 +59,27 @@ impl Random {
     }
 }
 
+/// Seeds per property when `CHRONOLOOM_PROPERTY_CASES` is not set.
+pub const LOCAL_CASES: u64 = 50;
+
+/// How many seeds a property runs over.
+///
+/// Returns the value of the `CHRONOLOOM_PROPERTY_CASES` environment variable
+/// when it is set (continuous integration sets it for the thorough run),
+/// otherwise [`LOCAL_CASES`], which keeps the local check fast.
+///
+/// # Panics
+///
+/// Panics if the variable is set to something that is not a whole number.
+pub fn property_cases() -> u64 {
+    match std::env::var("CHRONOLOOM_PROPERTY_CASES") {
+        Ok(value) => value
+            .parse()
+            .expect("CHRONOLOOM_PROPERTY_CASES is a whole number"),
+        Err(_) => LOCAL_CASES,
+    }
+}
+
 /// Run `property` once per seed in `0..cases`, naming the seed that fails.
 ///
 /// The property receives a generator fixed by the seed, and the seed itself.

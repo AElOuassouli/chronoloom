@@ -14,13 +14,13 @@ use chronoloom::{
 
 use update::Evaluate;
 
-use common::{bounds, extent, for_each_seed, span, spans, Random, DOMAIN_END, DOMAIN_START};
+use common::{
+    bounds, extent, for_each_seed, property_cases, span, spans, Random, DOMAIN_END, DOMAIN_START,
+};
 
 /// First and one past the last instant the per-instant oracles look at: the
 /// domain, and a margin on each side where nothing ever happens.
 const CHECK: std::ops::Range<i64> = (DOMAIN_START - 20)..(DOMAIN_END + 20);
-
-const CASES: u64 = 400;
 
 fn window(start: i64, end: i64) -> Extent {
     Extent::from_spans(vec![span(start, end)])
@@ -863,7 +863,7 @@ fn edges_of_an_empty_timeline_are_no_points_and_keep_the_extent() {
 
 #[test]
 fn edges_read_back_by_between_rebuild_the_state() {
-    for_each_seed(CASES, |random, _| {
+    for_each_seed(property_cases(), |random, _| {
         let up =
             TimeIntervalSequence::from_spans("up", spans(random, 10)).with_observed(extent(random));
         let mut system = StreamSystem::new();
@@ -967,7 +967,7 @@ fn changes_report_what_cannot_be_read() {
 
 #[test]
 fn changes_are_idempotent_and_leave_while_unchanged() {
-    for_each_seed(CASES, |random, _| {
+    for_each_seed(property_cases(), |random, _| {
         let points = random_numbers(random);
         let (condition, _) = random_test(random);
         let mut system = StreamSystem::new();
@@ -1131,7 +1131,7 @@ fn run_start(instant: i64, observed: &dyn Fn(i64) -> bool) -> i64 {
 
 #[test]
 fn occurs_matches_its_definition_at_every_instant() {
-    for_each_seed(CASES, |random, _| {
+    for_each_seed(property_cases(), |random, _| {
         let points = random_numbers(random);
         let (condition, test) = random_test(random);
         let mut system = StreamSystem::new();
@@ -1203,7 +1203,7 @@ fn a_hold_of_a_negative_duration_panics() {
 
 #[test]
 fn hold_equals_its_shifted_occurs_and_its_definition_at_every_instant() {
-    for_each_seed(CASES, |random, _| {
+    for_each_seed(property_cases(), |random, _| {
         let points = random_numbers(random);
         let (condition, test) = random_test(random);
         let ticks = random.between(1, 6);
@@ -1239,7 +1239,7 @@ fn hold_equals_its_shifted_occurs_and_its_definition_at_every_instant() {
 
 #[test]
 fn while_matches_its_definition_at_every_instant() {
-    for_each_seed(CASES, |random, _| {
+    for_each_seed(property_cases(), |random, _| {
         let points = random_numbers(random);
         let (condition, test) = random_test(random);
         let mut system = StreamSystem::new();
@@ -1267,7 +1267,7 @@ fn while_matches_its_definition_at_every_instant() {
 
 #[test]
 fn while_within_matches_its_definition_at_every_instant() {
-    for_each_seed(CASES, |random, _| {
+    for_each_seed(property_cases(), |random, _| {
         let points = random_numbers(random);
         let (condition, test) = random_test(random);
         let timeout = random.between(1, 12);
@@ -1302,7 +1302,7 @@ fn while_within_matches_its_definition_at_every_instant() {
 
 #[test]
 fn while_within_equals_while_matching_when_no_gap_outlasts_the_timeout() {
-    for_each_seed(CASES, |random, _| {
+    for_each_seed(property_cases(), |random, _| {
         let points = random_numbers(random);
         let (condition, _) = random_test(random);
         let mut system = StreamSystem::new();
@@ -1369,7 +1369,7 @@ fn while_within_refuses_a_timeout_that_is_not_positive() {
 
 #[test]
 fn between_matches_its_definition_at_every_instant() {
-    for_each_seed(CASES, |random, _| {
+    for_each_seed(property_cases(), |random, _| {
         let first = random_numbers(random);
         let second = random_numbers(random);
         let same_member = random.chance(1, 2);
@@ -2119,7 +2119,7 @@ fn field_and_projection(random: &mut Random, path: &str, between: bool) -> Vec<P
 
 #[test]
 fn between_and_while_over_a_field_equal_them_over_its_projection() {
-    for_each_seed(CASES, |random, _| {
+    for_each_seed(property_cases(), |random, _| {
         let system = field_stream(random, false);
         let path = if random.chance(1, 2) { "n" } else { "a.n" };
         let between = random.chance(1, 2);
@@ -2134,7 +2134,7 @@ fn between_and_while_over_a_field_equal_them_over_its_projection() {
 
 #[test]
 fn matching_a_field_equals_matching_its_projection_even_with_gaps() {
-    for_each_seed(CASES, |random, _| {
+    for_each_seed(property_cases(), |random, _| {
         let system = field_stream(random, true);
         let condition = random_field_condition(random);
         let processor = vec![

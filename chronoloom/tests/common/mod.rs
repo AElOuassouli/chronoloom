@@ -15,7 +15,9 @@ mod knowledge;
 mod random;
 
 pub use knowledge::{assert_knows, observed_instants, Knowledge, Truth};
-pub use random::{bounds, extent, for_each_seed, span, spans, Random, DOMAIN_END, DOMAIN_START};
+pub use random::{
+    bounds, extent, for_each_seed, property_cases, span, spans, Random, DOMAIN_END, DOMAIN_START,
+};
 
 /// Up to `count` random point events inside the domain, in no particular
 /// order, each carrying the order it was drawn in so ties can be told apart.

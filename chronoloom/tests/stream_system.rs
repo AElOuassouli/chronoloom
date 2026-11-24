@@ -15,7 +15,7 @@ use chronoloom::{
     TimeIntervalSequence, TimePointEvent, TimePointSequence, Value,
 };
 
-use common::{bounds, for_each_seed, span, Random};
+use common::{bounds, for_each_seed, property_cases, span, Random};
 use streams::{processors, stream, Op, Stream, POINT_INPUTS, RECORD_INPUTS, STATE_INPUTS};
 
 /// A room: motion events, a door timeline, presence derived from motion, and
@@ -541,7 +541,7 @@ fn updates(random: &mut Random, stream: &Stream) -> Vec<(Update, Update)> {
 
 #[test]
 fn derived_streams_always_equal_the_processors_run_from_scratch() {
-    for_each_seed(300, |random, _| {
+    for_each_seed(property_cases(), |random, _| {
         let list = processors(random);
         let stream = stream(random);
 
@@ -921,7 +921,7 @@ fn readers(source_p: &str, source_s: &str) -> [Processor; 2] {
 
 #[test]
 fn transformed_streams_always_equal_the_chain_run_from_scratch() {
-    for_each_seed(300, |random, _| {
+    for_each_seed(property_cases(), |random, _| {
         let for_p = chain(random, true);
         let for_s = chain(random, false);
 

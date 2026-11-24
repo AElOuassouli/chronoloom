@@ -58,6 +58,9 @@ jobs:
           workspaces: chronoloom
       # Default features, then all of them (the serde feature).
       - run: make test
+        env:
+          # The thorough depth of the seeded properties; locally they run fewer seeds.
+          CHRONOLOOM_PROPERTY_CASES: 500
 
   package:
     runs-on: ubuntu-latest

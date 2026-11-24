@@ -17,7 +17,7 @@ use chronoloom::{
     Sequence, TimeIntervalSequence, TimePointEvent, TimePointSequence, Timestamp, Value,
 };
 
-use common::{bounds, for_each_seed, span, Random};
+use common::{bounds, for_each_seed, property_cases, span, Random};
 use streams::{processors, stream, Op, Stream, POINT_INPUTS, RECORD_INPUTS, STATE_INPUTS};
 
 /// A live system holding the streams the random processors read, empty.
@@ -165,7 +165,7 @@ fn joined(parts: &[&Sequence]) -> Vec<(Timestamp, String)> {
 
 #[test]
 fn drained_parts_joined_with_the_remainder_equal_the_system_that_never_drained() {
-    for_each_seed(150, |random, _| {
+    for_each_seed(property_cases(), |random, _| {
         let processors = processors(random);
         let stream: Stream = stream(random);
         let context = format!("from {} over {:?}", stream.from, stream.ops);
@@ -473,7 +473,7 @@ fn nothing_is_known_about_what_nothing_observed() {
 
 #[test]
 fn finishing_gives_the_batch_result_over_the_streams() {
-    for_each_seed(200, |random, _| {
+    for_each_seed(property_cases(), |random, _| {
         let processors = processors(random);
         let stream: Stream = stream(random);
         let context = format!(

@@ -12,12 +12,9 @@ use chronoloom::{
 };
 
 use common::{
-    assert_knows, bounds, extent, for_each_seed, instants, observed_instants, point_events, span,
-    spans, InstantSet, Knowledge, Random, Truth, DOMAIN_END, DOMAIN_START,
+    assert_knows, bounds, extent, for_each_seed, instants, observed_instants, point_events,
+    property_cases, span, spans, InstantSet, Knowledge, Random, Truth, DOMAIN_END, DOMAIN_START,
 };
-
-/// Seeds per property.
-const CASES: u64 = 500;
 
 /// Most spans an operand is built from.
 const SPAN_COUNT: u64 = 12;
@@ -31,7 +28,7 @@ fn timeline(random: &mut Random, attribute: &str) -> (TimeIntervalSequence, Inst
 
 #[test]
 fn union_matches_the_oracle() {
-    for_each_seed(CASES, |random, _| {
+    for_each_seed(property_cases(), |random, _| {
         let (a, a_instants) = timeline(random, "a");
         let (b, b_instants) = timeline(random, "b");
         assert_eq!(
@@ -43,7 +40,7 @@ fn union_matches_the_oracle() {
 
 #[test]
 fn intersection_matches_the_oracle() {
-    for_each_seed(CASES, |random, _| {
+    for_each_seed(property_cases(), |random, _| {
         let (a, a_instants) = timeline(random, "a");
         let (b, b_instants) = timeline(random, "b");
         assert_eq!(
@@ -55,7 +52,7 @@ fn intersection_matches_the_oracle() {
 
 #[test]
 fn difference_matches_the_oracle() {
-    for_each_seed(CASES, |random, _| {
+    for_each_seed(property_cases(), |random, _| {
         let (a, a_instants) = timeline(random, "a");
         let (b, b_instants) = timeline(random, "b");
         assert_eq!(
@@ -67,7 +64,7 @@ fn difference_matches_the_oracle() {
 
 #[test]
 fn symmetric_difference_matches_the_oracle() {
-    for_each_seed(CASES, |random, _| {
+    for_each_seed(property_cases(), |random, _| {
         let (a, a_instants) = timeline(random, "a");
         let (b, b_instants) = timeline(random, "b");
         assert_eq!(
@@ -79,7 +76,7 @@ fn symmetric_difference_matches_the_oracle() {
 
 #[test]
 fn transform_matches_the_oracle() {
-    for_each_seed(CASES, |random, _| {
+    for_each_seed(property_cases(), |random, _| {
         let (timeline, oracle) = timeline(random, "a");
         let alpha = random.between(-8, 9);
         let beta = random.between(-8, 9);
@@ -96,7 +93,7 @@ fn transform_matches_the_oracle() {
 
 #[test]
 fn from_spans_is_normalized_and_measured() {
-    for_each_seed(CASES, |random, _| {
+    for_each_seed(property_cases(), |random, _| {
         let (timeline, oracle) = timeline(random, "a");
         let spans = bounds(&timeline);
 
@@ -116,7 +113,7 @@ fn from_spans_is_normalized_and_measured() {
 
 #[test]
 fn contains_matches_the_oracle() {
-    for_each_seed(CASES, |random, _| {
+    for_each_seed(property_cases(), |random, _| {
         let (timeline, oracle) = timeline(random, "a");
         for _ in 0..16 {
             let instant = instants(random);
@@ -131,7 +128,7 @@ fn contains_matches_the_oracle() {
 
 #[test]
 fn building_twice_gives_identical_output() {
-    for_each_seed(CASES, |random, _| {
+    for_each_seed(property_cases(), |random, _| {
         let drawn = spans(random, SPAN_COUNT);
         let first = TimeIntervalSequence::from_spans("a", drawn.clone());
         let second = TimeIntervalSequence::from_spans("a", drawn);
@@ -146,7 +143,7 @@ fn building_twice_gives_identical_output() {
 
 #[test]
 fn generated_inputs_stay_in_the_domain() {
-    for_each_seed(CASES, |random, _| {
+    for_each_seed(property_cases(), |random, _| {
         for span in spans(random, SPAN_COUNT) {
             assert!(span.start() >= 0 && span.end() <= DOMAIN_END);
         }
@@ -168,7 +165,7 @@ fn observed_timeline(random: &mut Random, attribute: &str) -> (TimeIntervalSeque
 
 #[test]
 fn observed_timelines_match_the_oracle() {
-    for_each_seed(CASES, |random, _| {
+    for_each_seed(property_cases(), |random, _| {
         let (timeline, knowledge) = observed_timeline(random, "a");
         assert_knows(&timeline, &knowledge, "construction");
     });
@@ -176,7 +173,7 @@ fn observed_timelines_match_the_oracle() {
 
 #[test]
 fn three_valued_union_matches_the_oracle() {
-    for_each_seed(CASES, |random, _| {
+    for_each_seed(property_cases(), |random, _| {
         let (a, known_a) = observed_timeline(random, "a");
         let (b, known_b) = observed_timeline(random, "b");
         assert_knows(&a.union(&b), &known_a.union(&known_b), "union");
@@ -185,7 +182,7 @@ fn three_valued_union_matches_the_oracle() {
 
 #[test]
 fn three_valued_intersection_matches_the_oracle() {
-    for_each_seed(CASES, |random, _| {
+    for_each_seed(property_cases(), |random, _| {
         let (a, known_a) = observed_timeline(random, "a");
         let (b, known_b) = observed_timeline(random, "b");
         assert_knows(
@@ -198,7 +195,7 @@ fn three_valued_intersection_matches_the_oracle() {
 
 #[test]
 fn three_valued_difference_matches_the_oracle() {
-    for_each_seed(CASES, |random, _| {
+    for_each_seed(property_cases(), |random, _| {
         let (a, known_a) = observed_timeline(random, "a");
         let (b, known_b) = observed_timeline(random, "b");
         assert_knows(
@@ -211,7 +208,7 @@ fn three_valued_difference_matches_the_oracle() {
 
 #[test]
 fn three_valued_symmetric_difference_matches_the_oracle() {
-    for_each_seed(CASES, |random, _| {
+    for_each_seed(property_cases(), |random, _| {
         let (a, known_a) = observed_timeline(random, "a");
         let (b, known_b) = observed_timeline(random, "b");
         assert_knows(
@@ -224,7 +221,7 @@ fn three_valued_symmetric_difference_matches_the_oracle() {
 
 #[test]
 fn three_valued_complement_matches_the_oracle() {
-    for_each_seed(CASES, |random, _| {
+    for_each_seed(property_cases(), |random, _| {
         let (timeline, knowledge) = observed_timeline(random, "a");
         assert_knows(
             &timeline.complement(),
@@ -236,7 +233,7 @@ fn three_valued_complement_matches_the_oracle() {
 
 #[test]
 fn three_valued_transform_matches_the_oracle() {
-    for_each_seed(CASES, |random, _| {
+    for_each_seed(property_cases(), |random, _| {
         let (timeline, knowledge) = observed_timeline(random, "a");
         let alpha = random.between(-8, 9);
         let beta = random.between(-8, 9);
@@ -251,7 +248,7 @@ fn three_valued_transform_matches_the_oracle() {
 
 #[test]
 fn complementing_twice_covers_the_same_within_the_extent() {
-    for_each_seed(CASES, |random, _| {
+    for_each_seed(property_cases(), |random, _| {
         let (timeline, _) = observed_timeline(random, "a");
         let twice = timeline.complement().complement();
         assert!(twice.covers_same(&timeline));
@@ -264,7 +261,7 @@ fn complementing_twice_covers_the_same_within_the_extent() {
 /// gives it the same state.
 #[test]
 fn transform_knows_what_every_completion_agrees_on() {
-    for_each_seed(200, |random, _| {
+    for_each_seed(property_cases(), |random, _| {
         // A few unknown instants inside [0, 10); everything else is observed.
         let holes: Vec<i64> = (0..10).filter(|_| random.chance(1, 3)).take(6).collect();
         let mut observed = vec![span(i64::MIN, 0), span(10, i64::MAX)];
@@ -336,7 +333,7 @@ fn range(random: &mut Random) -> (i64, i64) {
 
 #[test]
 fn slicing_a_timeline_intersects_spans_and_extent_with_the_range() {
-    for_each_seed(CASES, |random, _| {
+    for_each_seed(property_cases(), |random, _| {
         let (start, end) = range(random);
         let (timeline, _) = timeline(random, "a");
         let timeline = timeline.with_observed(extent(random));
@@ -354,7 +351,7 @@ fn slicing_a_timeline_intersects_spans_and_extent_with_the_range() {
 
 #[test]
 fn slicing_points_keeps_the_events_and_extent_inside_the_range() {
-    for_each_seed(CASES, |random, _| {
+    for_each_seed(property_cases(), |random, _| {
         let (start, end) = range(random);
         let drawn = point_events(random, SPAN_COUNT);
         let readings =
@@ -377,7 +374,7 @@ fn slicing_points_keeps_the_events_and_extent_inside_the_range() {
 
 #[test]
 fn slicing_twice_is_slicing_once_to_the_overlap() {
-    for_each_seed(CASES, |random, _| {
+    for_each_seed(property_cases(), |random, _| {
         let (a, b) = range(random);
         let (c, d) = range(random);
         let (timeline, _) = timeline(random, "a");
@@ -617,7 +614,7 @@ fn evaluate(formula: &Formula, world: &World) -> TimeIntervalSequence {
 
 #[test]
 fn random_formulas_match_the_three_valued_oracle() {
-    for_each_seed(CASES, |random, _| {
+    for_each_seed(property_cases(), |random, _| {
         let world = world(random);
         let (formula, expected) = formula(random, &world, 3);
         let timeline = evaluate(&formula, &world);
@@ -667,7 +664,7 @@ fn is_conjunctive_normal_form(formula: &Formula) -> bool {
 
 #[test]
 fn the_conjunctive_normal_form_denotes_the_same_timeline() {
-    for_each_seed(CASES, |random, _| {
+    for_each_seed(property_cases(), |random, _| {
         let world = world(random);
         let (formula, _) = formula(random, &world, 3);
         let normal = formula.conjunctive_normal_form();

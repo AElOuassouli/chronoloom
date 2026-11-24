@@ -13,9 +13,9 @@ use chronoloom::{
 
 use update::Evaluate;
 
-use common::{bounds, extent, for_each_seed, span, spans, Random, DOMAIN_END, DOMAIN_START};
-
-const CASES: u64 = 400;
+use common::{
+    bounds, extent, for_each_seed, property_cases, span, spans, Random, DOMAIN_END, DOMAIN_START,
+};
 
 fn crossing(agent: Value, direction: &str) -> Value {
     Value::record([("agent", agent), ("direction", Value::from(direction))])
@@ -116,7 +116,7 @@ fn filtered(system: &StreamSystem, agent: i64) -> (StreamSystem, Option<i64>) {
 
 #[test]
 fn an_entity_is_the_formula_over_its_own_records() {
-    for_each_seed(CASES, |random, _| {
+    for_each_seed(property_cases(), |random, _| {
         let mut system = gate(crossings(random));
         let observed = extent(random);
         system.observe(&observed).unwrap();
@@ -146,7 +146,7 @@ fn an_entity_is_the_formula_over_its_own_records() {
 
 #[test]
 fn any_is_the_union_of_the_entities() {
-    for_each_seed(CASES, |random, _| {
+    for_each_seed(property_cases(), |random, _| {
         let system = gate(crossings(random));
         let result = update::run(&system, &processor(&present())).expect("a result");
 
@@ -169,7 +169,7 @@ fn any_is_the_union_of_the_entities() {
 
 #[test]
 fn the_count_is_the_number_of_active_entities_at_every_instant() {
-    for_each_seed(CASES, |random, _| {
+    for_each_seed(property_cases(), |random, _| {
         let mut system = gate(crossings(random));
         system
             .observe(&Extent::from_spans(vec![span(
@@ -211,7 +211,7 @@ fn the_count_is_the_number_of_active_entities_at_every_instant() {
 
 #[test]
 fn the_durations_of_the_entities_add_up_to_the_count_times_its_duration() {
-    for_each_seed(CASES, |random, _| {
+    for_each_seed(property_cases(), |random, _| {
         let mut system = gate(crossings(random));
         let horizon = DOMAIN_END + 8;
         system

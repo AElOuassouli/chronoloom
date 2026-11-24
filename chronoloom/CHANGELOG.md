@@ -43,7 +43,9 @@
   `transforms` lists the chain and `is_transformed` tells. A transform that
   changes the shape of its stream is `ProcessError::TransformShape`, and one
   added after a processor reads the stream is `UpdateError::Read`.
-  `remove_processor` takes the last transform of a stream away.
+  `remove_processor` takes the last transform of a stream away, and `producer`
+  gives the last transform of a transformed stream, `transforms` the chain. The
+  version each reader reads is not tracked.
 - `Processor::evaluate`, the output of a processor over a `StreamSystem`, once:
   nothing is stored and the system is not changed. It refuses what
   `add_processor` would refuse on its own (a per-entity output reading a member
@@ -152,7 +154,7 @@
   spans and extents are normalized, a span that ends before it starts is
   refused, events are sorted, data outside the extent is refused (a point at
   `i64::MAX` and the data of a stream of a live system at or past its frontier excepted), a schema must fit its
-  member's data, lineage (the output a derived member came from) must agree, and a processor must pass `Processor::check`. A `Value` is plain JSON and keeps `5` and `5.0`
+  member's data, and a processor must pass `Processor::check`. A `Value` is plain JSON and keeps `5` and `5.0`
   apart. The point members of a system and the patterns of a processor are
   tagged with one of `f64`, `i64`, `bool`, `text`, `value` and `edge`; any other
   type is an error naming the key. The processor document has an `inputs` array,

@@ -798,7 +798,11 @@ A transform keeps the shape of the stream, points as points and a timeline as a
 timeline (the value type may change, as a projection does); anything else is
 `ProcessError::TransformShape`. `transforms(key)` lists the chain, and
 `remove_processor` takes the last transform of a stream away, as long as no
-processor reads the stream.
+processor reads the stream. The system does not track which version each reader
+reads: a transform is refused (`UpdateError::Read`) once another processor reads
+the stream, and a transform in the middle of a chain cannot be removed on its
+own. `producer(key)` gives the processor that derives a stream, or the last
+transform of a transformed one; `transforms(key)` gives the whole chain.
 
 ```rust
 use chronoloom::{Condition, Events, Pattern, Processor, StreamSystem};

@@ -214,6 +214,34 @@ fn streams_and_derived_streams_are_told_apart() {
 }
 
 #[test]
+fn the_producer_of_a_key_is_found_by_the_key_alone() {
+    let mut room = room();
+    let producer_of = |system: &StreamSystem, key: &str| {
+        system
+            .producer(key)
+            .map(|processor| processor.output().as_str().to_owned())
+    };
+
+    // A slice and a clone keep who produces what, with no recipe stored on
+    // the members.
+    let slice = room.slice(0..5);
+    assert_eq!(producer_of(&slice, "presence").as_deref(), Some("presence"));
+    assert!(slice.is_derived("occupied") && !slice.is_derived("motion"));
+    assert_eq!(
+        producer_of(&room.clone(), "occupied").as_deref(),
+        Some("occupied")
+    );
+
+    // What the processor writes follows the processor: removed, the key is
+    // neither derived nor produced, and a stream can take it.
+    room.remove_processor("occupied").unwrap();
+    assert!(!room.contains("occupied"));
+    room.insert_stream("occupied", TimeIntervalSequence::new("occupied"))
+        .unwrap();
+    assert!(!room.is_derived("occupied") && room.producer("occupied").is_none());
+}
+
+#[test]
 fn a_derived_stream_is_read_only() {
     let mut room = room();
     let before = room.clone();
@@ -1016,6 +1044,34 @@ fn a_slice_and_an_observation_keep_the_recorded_data_and_the_versions_apart() {
     assert_eq!(room.raw("motion").unwrap().len(), 2);
     assert_eq!(instants(&room, "motion"), [10, 25]);
     assert_eq!(room.intervals("presence").unwrap()[0].bounds(), (10, 25));
+}
+
+#[test]
+fn the_producer_of_a_transformed_stream_is_its_last_transform_and_the_chain_is_transforms() {
+    let mut room = StreamSystem::new();
+    room.insert_stream("motion", TimePointSequence::<&str>::new("motion"))
+        .unwrap();
+    assert!(room.producer("motion").is_none());
+
+    room.add_processor(Processor::new("motion", drop_noise()))
+        .unwrap();
+    let first = room.producer("motion").unwrap().clone();
+    room.add_processor(Processor::new("motion", Events::changes("motion")))
+        .unwrap();
+    let last = room.transforms("motion").pop().unwrap().clone();
+    assert_ne!(first, last);
+
+    for system in [room.clone(), room.slice(0..5)] {
+        assert_eq!(system.producer("motion"), Some(&last));
+        assert_eq!(system.transforms("motion").len(), 2);
+        assert_eq!(system.transforms("motion")[0], &first);
+    }
+
+    // Removing the last transform makes the one before the producer.
+    room.remove_processor("motion").unwrap();
+    assert_eq!(room.producer("motion"), Some(&first));
+    room.remove_processor("motion").unwrap();
+    assert!(room.producer("motion").is_none());
 }
 
 #[test]

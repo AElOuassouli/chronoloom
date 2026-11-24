@@ -35,6 +35,11 @@ use super::{Batch, Mode};
 /// ([`UpdateError::Read`] otherwise). A transform keeps the shape of the
 /// stream, points as points and a timeline as a timeline, though the value
 /// type may change. [`transforms`](StreamSystem::transforms) lists the chain.
+/// The system does not track which version each reader reads: a later
+/// transform is refused once a processor reads the stream, and
+/// [`remove_processor`](StreamSystem::remove_processor) takes only the last
+/// transform away. [`producer`](StreamSystem::producer) gives the last
+/// transform, [`transforms`](StreamSystem::transforms) the whole chain.
 ///
 /// Reading is the same for all: [`get`](StreamSystem::get),
 /// [`points`](StreamSystem::points) and [`intervals`](StreamSystem::intervals)

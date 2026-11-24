@@ -18,9 +18,10 @@ Intervals are **half-open**: `start` is included, `end` is excluded. Two
 intervals that merely touch (`[0, 5)` and `[5, 9)`) therefore share no instant.
 
 The document goes from the parts to the whole: events and sequences, the
-algebra on timelines, what was observed, systems that hold them together, the
-processors that derive one from another, the same processors run online, and
-saving and loading.
+algebra on timelines, what was observed, streams and the processors that derive
+one from another, record values and one timeline per entity, transforms, the
+two modes of a `StreamSystem` (batch, then live as the data arrives), and
+saving and checkpoints.
 
 ## Primitives
 
@@ -243,13 +244,13 @@ assert!(up.is_observed(42));
 `StreamSystem::observe` narrows every member at once. Equality includes the
 extent; `covers_same` does not.
 
-## Processors
+## Streams and processors
 
 Sensors report transitions as point events, or values that cross a threshold.
 Turning them into a timeline does not happen on the sequence types, which hold
 data, extent and the set algebra and nothing else. It goes through a
 `Processor`, one recipe: a formula filed under the key of the one output it
-produces, evaluated by a `StreamSystem` (see Stream systems). A `Formula` is
+produces, evaluated by a `StreamSystem` (see Batch mode). A `Formula` is
 data: it can be compared, printed, evaluated against any stream system and
 later stored. `Processor::evaluate` gives the output over a system once,
 without storing it, and `add_processor` keeps it up to date. It reads points
@@ -374,7 +375,7 @@ assert_eq!(spans, [(10, 15), (30, 33)]);
 A formula may name the key of the output of another processor, and then reads
 that output. A processor reads only what the system already holds, so the
 processors are added in the order they depend on each other. A formula reading
-its own output transforms that stream (see "Transforming a stream" below), and
+its own output transforms that stream (see Transforms), and
 a per-entity output reading its own members is `ProcessError::Cycle`.
 
 ```rust
@@ -474,7 +475,7 @@ system.insert_stream("temperature", TimePointSequence::<i64>::new("temperature")
 assert!(system.add_processor(processor).is_err());
 ```
 
-## Datasets
+### Datasets
 
 A `StreamSystem` with the pieces above describes a dataset: the recordings of
 one subject over a stretch of time. Each piece answers one question.
@@ -530,71 +531,6 @@ assert_eq!(
     Some("door"),
 );
 ```
-
-## Running processors online
-
-`StreamSystem::live(from)` makes a stream system in live mode: the same
-processors, run as the data arrives. Each stream has a frontier (a watermark)
-before which everything is final, and it starts at `from`. An `Update` carries
-events and watermarks (`advance`, `advance_all`); `update` refuses an event
-before the frontier of its stream (`UpdateError::Late`), records the rest,
-moves the frontiers, and runs the processors that read a stream whose frontier
-moved over the range that became final. The `LiveReport` it returns gives, for
-each derived stream that made progress, the `Chunk` that became final: its
-sequence over `[old frontier, new frontier)`, which joined end to end give what
-batch mode gives over the same data, whatever order and watermarks the data
-arrives with. A state chunk gives its `edges()`, so a start reaches the host
-before its span closes.
-
-Every operator has a lag: the frontier of a derived stream is a function of the
-frontiers of its inputs. Set operations take the smaller one, `Shift { alpha,
-beta }` adds `min(alpha, beta)`, and a chained output has the frontier of the
-output it reads. Each processor keeps a small running state of its own (an open
-span, the sample that holds a `While`, the entities seen) and reads only the
-newly final part of its inputs, so a step costs what is new.
-
-`finish(horizon)` ends the system: every stream is final up to the end of time,
-what they hold at or after the horizon is dropped, and the processors flush what
-they held back, so a span still open is closed at the horizon and the derived
-streams are the batch result over the streams as they are. Nothing is recorded
-after that.
-
-```rust
-use chronoloom::{Condition, Formula, Pattern, Processor, StreamSystem, TimePointEvent};
-use chronoloom::{TimePointSequence, Update};
-
-let busy = Formula::while_matching(Pattern::new("count", Condition::Greater(5_i64)));
-let mut live = StreamSystem::live(0);
-live.insert_stream("count", TimePointSequence::<i64>::new("count")).unwrap();
-live.add_processor(Processor::new("busy", busy)).unwrap();
-
-let mut update = Update::new();
-update.points("count", [TimePointEvent::new(7, 9_i64)]).advance("count", 10);
-let report = live.update(update).unwrap();
-
-// The state became active at 7, and nothing before 10 can change.
-assert_eq!(report.chunks()["busy"].range(), 0..10);
-assert_eq!(live.frontier("busy"), Some(10));
-
-// Its end is not known yet; `finish` closes what is open at the horizon.
-live.finish(30).unwrap();
-assert_eq!(live.intervals("busy").unwrap()[0].bounds(), (7, 30));
-```
-
-A live system holds what is not final, and `drain` keeps that bound over a
-stream that does not end: it hands over the final part of every stream and
-derived stream as a batch system, with the same processors, metadata and
-schemas, and keeps only the rest (a span that reaches the frontier stays whole,
-since it may still grow). The processors do not need the data drained, as each
-carries its own state, so what a live system holds stays under a bound whatever
-the length of the stream. A processor added later starts over what is still
-held. `StreamSystem::into_live(from)` goes the other way: a batch system cut to
-what lies before `from`, whose processors start by stepping over it and go on
-as a live system that was given the same events from the start.
-
-A live system does not run transforms yet (`UpdateError::LiveTransform`), and
-unknown regions give nothing. With `OpenEnd::Head` the head is the frontier of
-the inputs.
 
 ## Record values
 
@@ -849,7 +785,41 @@ appear there. Each entity is kept for good, with the state one formula would
 hold, so the state grows with the entities seen and an update costs in
 proportion.
 
-## Stream systems
+## Transforms
+
+In a `StreamSystem` (see Batch mode), a processor whose output key is a stream it reads rewrites that stream, instead
+of deriving a new one: it cleans, filters or projects it. The stream reads as
+its last version (`get`, `points`, `intervals`) while `raw` gives the recorded
+data, and recording into it records into that data, after which the transforms
+run again. Several transforms of one stream chain in the order they are added,
+each reading the version before it, and every other processor reads the last
+version, so a transform is added before the processors that read its stream.
+A transform keeps the shape of the stream, points as points and a timeline as a
+timeline (the value type may change, as a projection does); anything else is
+`ProcessError::TransformShape`. `transforms(key)` lists the chain, and
+`remove_processor` takes the last transform of a stream away, as long as no
+processor reads the stream.
+
+```rust
+use chronoloom::{Condition, Events, Pattern, Processor, StreamSystem};
+use chronoloom::{TimePointEvent, TimePointSequence, Update};
+
+let mut room = StreamSystem::new();
+room.insert_stream("motion", TimePointSequence::<&str>::new("motion")).unwrap();
+room.add_processor(Processor::new(
+    "motion",
+    Events::Matching(Pattern::new("motion", Condition::NotEquals("noise"))),
+)).unwrap();
+
+let mut update = Update::new();
+update.points("motion", [TimePointEvent::new(1, "noise"), TimePointEvent::new(2, "start")]);
+room.update(update).unwrap();
+
+assert_eq!(room.points::<&str>("motion").unwrap().len(), 1);
+assert_eq!(room.raw("motion").unwrap().len(), 2);
+```
+
+## Batch mode
 
 A `StreamSystem` puts the pieces above together: it holds the streams of a
 subject and a list of processors, and keeps what the processors derive up to
@@ -894,45 +864,11 @@ assert_eq!(room.intervals("occupied").unwrap().len(), 2);
 assert!(room.is_derived("presence"));
 ```
 
-### Transforming a stream
-
-A processor whose output key is a stream it reads rewrites that stream, instead
-of deriving a new one: it cleans, filters or projects it. The stream reads as
-its last version (`get`, `points`, `intervals`) while `raw` gives the recorded
-data, and recording into it records into that data, after which the transforms
-run again. Several transforms of one stream chain in the order they are added,
-each reading the version before it, and every other processor reads the last
-version, so a transform is added before the processors that read its stream.
-A transform keeps the shape of the stream, points as points and a timeline as a
-timeline (the value type may change, as a projection does); anything else is
-`ProcessError::TransformShape`. `transforms(key)` lists the chain, and
-`remove_processor` takes the last transform of a stream away, as long as no
-processor reads the stream.
-
-```rust
-use chronoloom::{Condition, Events, Pattern, Processor, StreamSystem};
-use chronoloom::{TimePointEvent, TimePointSequence, Update};
-
-let mut room = StreamSystem::new();
-room.insert_stream("motion", TimePointSequence::<&str>::new("motion")).unwrap();
-room.add_processor(Processor::new(
-    "motion",
-    Events::Matching(Pattern::new("motion", Condition::NotEquals("noise"))),
-)).unwrap();
-
-let mut update = Update::new();
-update.points("motion", [TimePointEvent::new(1, "noise"), TimePointEvent::new(2, "start")]);
-room.update(update).unwrap();
-
-assert_eq!(room.points::<&str>("motion").unwrap().len(), 1);
-assert_eq!(room.raw("motion").unwrap().len(), 2);
-```
-
 The mode of a stream system is a type parameter, so what every mode shares is
-written once. Batch mode is a dataset held whole; live mode, where an update
-also moves frontiers and the processors run incrementally, follows this section.
+written once. Batch mode, `StreamSystem<Batch>` and the default, is a dataset
+held whole; live mode follows.
 
-## A stream system in live mode
+## Live mode
 
 `StreamSystem::live(from)` makes a `StreamSystem<Live>`: the streams and
 processors of the batch mode, with a frontier per stream before which everything
@@ -945,7 +881,7 @@ update that carries a watermark. The `LiveReport` it returns has, for each
 derived stream that made progress, the new `Chunk` (its `range()`, its
 `sequence()` and its `edges()`), and the frontier of every derived stream.
 Joined end to end, the chunks are the batch result, which is what the live mode
-is tested against. Live mode does not run transforms yet.
+is tested against. Live mode does not run transforms yet (`UpdateError::LiveTransform`).
 
 ```rust
 use chronoloom::stream_system::{Live, StreamSystem, Update};
@@ -975,7 +911,58 @@ late.points("motion", [TimePointEvent::new(29, "start")]);
 assert!(room.update(late).is_err());
 ```
 
-## Saving and loading
+### Lag, finishing and draining
+
+Every operator has a lag: the frontier of a derived stream is a function of the
+frontiers of its inputs. Set operations take the smaller one, `Shift { alpha,
+beta }` adds `min(alpha, beta)`, and a chained output has the frontier of the
+output it reads. Each processor keeps a small running state of its own (an open
+span, the sample that holds a `While`, the entities seen) and reads only the
+newly final part of its inputs, so a step costs what is new.
+
+`finish(horizon)` ends the system: every stream is final up to the end of time,
+what they hold at or after the horizon is dropped, and the processors flush what
+they held back, so a span still open is closed at the horizon and the derived
+streams are the batch result over the streams as they are. Nothing is recorded
+after that.
+
+```rust
+use chronoloom::{Condition, Formula, Pattern, Processor, StreamSystem, TimePointEvent};
+use chronoloom::{TimePointSequence, Update};
+
+let busy = Formula::while_matching(Pattern::new("count", Condition::Greater(5_i64)));
+let mut live = StreamSystem::live(0);
+live.insert_stream("count", TimePointSequence::<i64>::new("count")).unwrap();
+live.add_processor(Processor::new("busy", busy)).unwrap();
+
+let mut update = Update::new();
+update.points("count", [TimePointEvent::new(7, 9_i64)]).advance("count", 10);
+let report = live.update(update).unwrap();
+
+// The state became active at 7, and nothing before 10 can change.
+assert_eq!(report.chunks()["busy"].range(), 0..10);
+assert_eq!(live.frontier("busy"), Some(10));
+
+// Its end is not known yet; `finish` closes what is open at the horizon.
+live.finish(30).unwrap();
+assert_eq!(live.intervals("busy").unwrap()[0].bounds(), (7, 30));
+```
+
+A live system holds what is not final, and `drain` keeps that bound over a
+stream that does not end: it hands over the final part of every stream and
+derived stream as a batch system, with the same processors, metadata and
+schemas, and keeps only the rest (a span that reaches the frontier stays whole,
+since it may still grow). The processors do not need the data drained, as each
+carries its own state, so what a live system holds stays under a bound whatever
+the length of the stream. A processor added later starts over what is still
+held. `StreamSystem::into_live(from)` goes the other way: a batch system cut to
+what lies before `from`, whose processors start by stepping over it and go on
+as a live system that was given the same events from the start.
+
+Unknown regions give nothing. With `OpenEnd::Head` the head is the frontier of
+the inputs.
+
+## Saving and checkpoints
 
 Behind the `serde` feature, which is off by default and adds the `serde`
 dependency (`cargo add chronoloom --features serde`), every type that holds data
@@ -1110,14 +1097,8 @@ it.
 
 ## Development
 
-```sh
-make lint   # cargo fmt --check, clippy (also with --all-features), and the dependency assertions
-make test   # unit and integration tests, then all tests with --all-features
-```
-
 This crate must never depend on pyo3 — that is what makes it usable from any
 Rust project — and with default features it depends on nothing at all.
-`make lint` enforces both.
 
 ## License
 

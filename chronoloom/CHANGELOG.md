@@ -151,9 +151,8 @@
   (`FORMAT_VERSION`), and a reader refuses any other number. Loading validates:
   spans and extents are normalized, a span that ends before it starts is
   refused, events are sorted, data outside the extent is refused (a point at
-  `i64::MAX` and the data of a live member excepted), a schema must fit its
-  member's data, lineage (the output a derived member came from), entity and
-  frontier must agree, and a processor must pass `Processor::check`. A `Value` is plain JSON and keeps `5` and `5.0`
+  `i64::MAX` and the data of a stream of a live system at or past its frontier excepted), a schema must fit its
+  member's data, lineage (the output a derived member came from) must agree, and a processor must pass `Processor::check`. A `Value` is plain JSON and keeps `5` and `5.0`
   apart. The point members of a system and the patterns of a processor are
   tagged with one of `f64`, `i64`, `bool`, `text`, `value` and `edge`; any other
   type is an error naming the key. The processor document has an `inputs` array,
@@ -171,7 +170,7 @@
   directly or through another output, returning a `Report` of the derived
   streams that changed. `insert_stream`, `remove_stream`, `add_processor` and
   `remove_processor` refuse what would break that (`UpdateError`). The mode is
-  a type parameter; batch mode is the first.
+  a type parameter: `Batch`, the default, and `Live`.
 
 ## Fixed
 

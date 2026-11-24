@@ -16,8 +16,8 @@ use crate::store::{Key, Sequence};
 /// Everything the sequence holds lies inside the range, and so does its
 /// extent: an instant of the range outside the extent is unknown, as in a
 /// whole sequence. Chunks of one output follow each other, and
-/// [`join`](Chunk::join) of consecutive chunks is the sequence over the
-/// whole range. A span cut at a chunk boundary merges back on `join`, as
+/// consecutive chunks put end to end are the sequence over the whole
+/// range. A span cut at a chunk boundary merges back when they are joined, as
 /// touching spans do in any timeline, so no edge is left at the boundary.
 ///
 /// One exception: a chunk that ends at the end of time may hold points at

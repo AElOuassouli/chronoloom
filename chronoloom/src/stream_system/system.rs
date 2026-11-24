@@ -108,9 +108,7 @@ use super::{Batch, Mode};
 /// ```
 ///
 /// Every change is all or nothing: if recording, or evaluating any processor
-/// it affects, fails, the system is left as it was. In this first version that
-/// is done by working on a copy of the members, so a change costs a copy of the
-/// data besides the evaluation.
+/// it affects, fails, the system is left as it was.
 ///
 /// ```
 /// use chronoloom::processor::Processor;

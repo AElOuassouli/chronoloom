@@ -82,8 +82,9 @@
 //! an event, or wherever other states are. A [`Processor`] is one recipe: the
 //! inputs it reads, a formula over them, and the one output it produces; it is
 //! how point sequences become timelines and timelines become [`Edge`] events.
-//! A live [`StreamSystem`] runs them online and produces the same outputs as
-//! in batch, chunk by chunk, as watermarks make the data final.
+//! A [`StreamSystem`] runs them, on a finished recording or online, and a live
+//! one produces the same outputs as in batch, chunk by chunk, as watermarks
+//! make the data final.
 //! [`Processor::with_input`] declares what a processor expects of its inputs,
 //! and [`Processor::validate`] lists every problem without a system.
 //!
@@ -116,19 +117,29 @@
 //! # Stream systems
 //!
 //! A [`StreamSystem`] holds the streams of a subject and a list of
-//! [`processor::Processor`]s, each one recipe: inputs, a formula, one
-//! output. Its derived streams are read-only and follow every change: an
-//! [`update`](StreamSystem::update) records into the streams and evaluates
-//! again the processors that read what changed, and no others. It has a mode
-//! as a type parameter: [`Batch`] holds a dataset whole, and [`Live`], made by
-//! [`StreamSystem::live`], moves a frontier per stream with watermarks and runs
-//! the processors over what became final, reporting a [`LiveReport`] of chunks.
+//! [`Processor`]s, each one recipe: inputs, a formula, one output. Its derived
+//! streams are read-only and follow every change: an
+//! [`update`](StreamSystem::update) records into the streams, all or nothing,
+//! and evaluates again the processors that read what changed, and no others,
+//! returning a [`Report`]. A processor whose output is a stream it reads is a
+//! transform: it rewrites that stream, and the transforms of one stream chain
+//! in the order they are added.
+//!
+//! The mode is a type parameter. [`Batch`] holds a dataset whole. [`Live`],
+//! made by [`StreamSystem::live`], moves a frontier per stream with the
+//! watermarks of an [`Update`] and runs the processors incrementally over what
+//! became final, reporting a [`LiveReport`] of [`Chunk`]s that joined end to end
+//! are the batch result. [`StreamSystem::drain`] hands the final part of a live
+//! system over as a batch one, and [`StreamSystem::into_live`] goes the other
+//! way.
 //!
 //! # Saving and loading
 //!
 //! With the `serde` feature, sequences, systems and processors are saved and loaded with any
 //! self-describing format, as documents that start with a format version and
 //! are validated when read, so a document that loads is always a valid value.
+//! A live system is saved as a checkpoint, with the running state of its
+//! processors, and restored to go on exactly as one that never stopped.
 //! The `serialisation` module (present with the feature) documents the format,
 //! and with the `json-schema` feature it also gives the JSON Schema of a
 //! processor.

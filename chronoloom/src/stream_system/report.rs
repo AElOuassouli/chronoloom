@@ -8,6 +8,13 @@ use crate::store::Key;
 
 /// What a change to a [`StreamSystem`] did to its derived streams.
 ///
+/// An [`update`](super::StreamSystem::update), `insert_stream` or
+/// `add_processor` of a batch system evaluates again only the processors that
+/// read what changed. A live system returns a [`LiveReport`] instead.
+/// `changed` names the derived streams whose content differs afterwards, and
+/// `evaluated` the outputs of every processor that ran, whether or not its
+/// output differs, so a host can tell "unchanged" from "not looked at".
+///
 /// [`StreamSystem`]: super::StreamSystem
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Report {

@@ -1211,7 +1211,7 @@ fn the_readme_example_is_the_doctest_of_the_serialisation_module() {
         .map(|line| line.strip_prefix("//!").unwrap_or(line))
         .map(|line| line.strip_prefix(' ').unwrap_or(line).to_owned());
 
-    let documented = first_block(readme, "## Saving and loading", "```rust,ignore");
+    let documented = first_block(readme, "## Saving and checkpoints", "```rust,ignore");
     let tested = first_block(
         module,
         "Saving and loading: the `serde` form of sequences, systems and processors,",

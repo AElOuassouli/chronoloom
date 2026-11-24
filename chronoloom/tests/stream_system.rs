@@ -393,6 +393,80 @@ fn a_per_entity_processor_produces_a_family_that_follows_its_entities() {
 }
 
 #[test]
+fn removing_a_per_entity_processor_removes_its_whole_family_and_nothing_else() {
+    let mut gate = StreamSystem::new();
+    gate.insert_stream("gate", TimePointSequence::<Value>::new("gate"))
+        .unwrap();
+    let pass = |agent: &str, direction: &str| {
+        Value::record([
+            ("agent", Value::from(agent)),
+            ("direction", Value::from(direction)),
+        ])
+    };
+    let inside = Formula::between(
+        Pattern::field("gate", "direction", Condition::Equals(Value::from("in"))),
+        Pattern::field("gate", "direction", Condition::Equals(Value::from("out"))),
+    );
+    gate.add_processor(Processor::new(
+        "presence",
+        Recipe::per_entity(Group::new("gate", "agent"), inside),
+    ))
+    .unwrap();
+    gate.add_processor(Processor::new(
+        "entering",
+        Formula::while_matching(Pattern::field(
+            "gate",
+            "direction",
+            Condition::Equals(Value::from("in")),
+        )),
+    ))
+    .unwrap();
+    let mut update = Update::new();
+    update.points(
+        "gate",
+        [
+            TimePointEvent::new(1, pass("ada", "in")),
+            TimePointEvent::new(4, pass("bob", "in")),
+            TimePointEvent::new(9, pass("ada", "out")),
+        ],
+    );
+    gate.update(update).unwrap();
+    assert!(gate.is_derived("presence/ada"));
+    assert!(gate.is_derived("presence/bob"));
+
+    let entering_before = gate.intervals("entering").cloned();
+    let gate_before = gate.points::<Value>("gate").cloned();
+    assert!(entering_before.is_some() && gate_before.is_some());
+
+    gate.remove_processor("presence").unwrap();
+
+    assert!(!gate.is_derived("presence/ada"));
+    assert!(!gate.is_derived("presence/bob"));
+    assert!(gate.intervals("presence/ada").is_none());
+    assert!(gate.intervals("presence/bob").is_none());
+    assert!(gate.is_derived("entering"));
+    assert!(!gate.is_derived("gate"));
+    assert_eq!(gate.derived().count(), 1);
+    assert_eq!(gate.intervals("entering").cloned(), entering_before);
+    assert_eq!(gate.points::<Value>("gate").cloned(), gate_before);
+}
+
+#[test]
+fn a_processor_that_ran_is_evaluated_even_when_its_output_is_unchanged() {
+    let mut room = room();
+    room.update(motion(&[(10, "start"), (25, "end")])).unwrap();
+
+    // A word that is neither start nor end reaches `presence` and changes nothing.
+    let report = room.update(motion(&[(30, "noise")])).unwrap();
+    assert!(report.evaluated().contains("presence"));
+    assert!(!report.changed().contains("presence"));
+    // `occupied` reads `presence`, so it is evaluated too, and no more changed.
+    assert!(report.evaluated().contains("occupied"));
+    assert!(!report.changed().contains("occupied"));
+    assert_eq!(bounds(room.intervals("presence").unwrap()), [(10, 25)]);
+}
+
+#[test]
 fn a_slice_cuts_the_derived_streams_of_the_whole_system() {
     let mut room = room();
     room.update(motion(&[(10, "start"), (25, "end")])).unwrap();

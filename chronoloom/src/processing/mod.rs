@@ -3,13 +3,13 @@
 //!
 //! A [`Formula`] says what a state is: active between one kind of event and
 //! the next, while a value stays within bounds, or wherever other states are.
-//! It is a tree whose leaves read a [`SequenceSystem`] through [`Pattern`]s
+//! It is a tree whose leaves read a [`StreamSystem`] through [`Pattern`]s
 //! (a key and a [`Condition`] on the points' values) and whose inner nodes are
 //! the set algebra of [`TimeIntervalSequence`]. [`Events`] are the formulas
 //! whose result is points, such as the [`Edge`]s of a state. A
 //! [`Processor`](crate::processor::Processor) is one recipe built on one.
 //!
-//! [`SequenceSystem`]: crate::sequence_system::SequenceSystem
+//! [`StreamSystem`]: crate::StreamSystem
 //! [`TimeIntervalSequence`]: crate::sequences::TimeIntervalSequence
 
 mod condition;

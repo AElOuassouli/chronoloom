@@ -11,7 +11,7 @@ use schemars::{json_schema, JsonSchema, Schema, SchemaGenerator};
 
 use crate::processing::{Condition, Edge, Input, Pattern, Recipe};
 use crate::processor::Processor;
-use crate::sequence_system::Key;
+use crate::store::Key;
 use crate::values::Value;
 
 impl JsonSchema for Value {

@@ -6,7 +6,7 @@ use serde::{de, ser, Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::operator::Chunk;
 use crate::primitives::Timestamp;
-use crate::sequence_system::{Key, Sequence};
+use crate::store::{Key, Sequence};
 
 use super::stream_system::{SequenceBody, SequenceRef, SUPPORTED};
 

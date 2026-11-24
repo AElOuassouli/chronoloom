@@ -2,7 +2,7 @@
 
 use crate::primitives::Timestamp;
 use crate::processing::{Pattern, ProcessError};
-use crate::sequence_system::{AnyPointSequence, Sequence, SequenceSystem};
+use crate::store::{AnyPointSequence, Sequence, Store};
 
 use super::chunk::{Chunk, Inputs};
 use super::online_points::OnlinePoints;
@@ -27,7 +27,7 @@ impl Matching {
         })
     }
 
-    pub(super) fn batch(&self, inputs: &SequenceSystem) -> Result<AnyPointSequence, ProcessError> {
+    pub(super) fn batch(&self, inputs: &Store) -> Result<AnyPointSequence, ProcessError> {
         let points = points(&self.pattern.key, inputs)?;
         let mut matching = self
             .pattern

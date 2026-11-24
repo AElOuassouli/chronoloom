@@ -7,7 +7,7 @@ use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::processing::{Input, Recipe};
 use crate::processor::Processor;
-use crate::sequence_system::Key;
+use crate::store::Key;
 
 use super::{Document, Format};
 

@@ -4,11 +4,11 @@ use core::fmt;
 use core::ops::Not;
 
 use crate::primitives::Timestamp;
-use crate::sequence_system::Key;
-#[cfg(doc)]
-use crate::sequence_system::SequenceSystem;
 #[cfg(doc)]
 use crate::sequences::TimeIntervalSequence;
+use crate::store::Key;
+#[cfg(doc)]
+use crate::stream_system::StreamSystem;
 
 use super::condition::Pattern;
 
@@ -45,7 +45,7 @@ pub enum OpenEnd {
 
 /// What a state is, as a tree: every node denotes a timeline, with an extent.
 ///
-/// Leaves read a [`SequenceSystem`] and inner nodes combine what the leaves
+/// Leaves read the streams of a [`StreamSystem`] and inner nodes combine what the leaves
 /// denote with the set algebra of [`TimeIntervalSequence`], so a formula is
 /// data about a timeline rather than a procedure that builds one. It can be
 /// compared, cloned, printed, normalized and evaluated against any system, and

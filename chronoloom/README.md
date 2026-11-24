@@ -7,11 +7,10 @@ a finished recording or online, as the data arrives.
 
 What it holds today: two event shapes and two sequence types, one for points
 and one for timelines; the instants a sequence was observed over, so that
-"inactive" and "unknown" differ; a `SequenceSystem` that files sequences under
-keys as one dataset; a `Processor`, a set of formulas that turns points into
-timelines and timelines into edges; a `StreamSystem` that runs them over a
-finished dataset or, in live mode, produces the same outputs as the data
-arrives; dynamic record values with a schema; and one timeline per entity of a
+"inactive" and "unknown" differ; a `Processor`, a set of formulas that turns points into
+timelines and timelines into edges; a `StreamSystem` that files sequences under
+keys as one dataset and runs processors over it, on a finished recording or, in
+live mode, as the data arrives; dynamic record values with a schema; and one timeline per entity of a
 record field. Behind features, systems and processors save and load, and a
 processor has a JSON Schema.
 
@@ -241,103 +240,8 @@ assert!(up.is_observed(42));
 ```
 
 `with_observed` sets the extent and cuts the data to it, and
-`SequenceSystem::observe` narrows every member at once. Equality includes the
+`StreamSystem::observe` narrows every member at once. Equality includes the
 extent; `covers_same` does not.
-
-## Sequence systems
-
-A `SequenceSystem` holds the sequences describing one subject side by side, the
-way a sensor system holds its sensors: point sequences of any value type next to
-timelines, one sequence per key. Events are recorded into it as they
-arrive — one at a time, or an `Update` at a time, all or nothing. A member can
-also be a stream (next section), and the Datasets section adds metadata and
-`slice`.
-
-```rust
-use chronoloom::{SequenceSystem, TimeIntervalEvent, TimeIntervalSequence, Update};
-use chronoloom::{TimePointEvent, TimePointSequence};
-
-// Declare each sensor once, under the key that identifies it.
-let mut machine = SequenceSystem::new();
-machine.insert("temperature", TimePointSequence::<f64>::new("temperature"));
-machine.insert("log", TimePointSequence::<String>::new("log"));
-machine.insert("up", TimeIntervalSequence::new("up"));
-
-machine.record_point("temperature", TimePointEvent::new(10, 21.5_f64)).unwrap();
-
-let mut tick = Update::new();
-tick.points("temperature", [TimePointEvent::new(11, 21.7_f64)])
-    .points("log", [TimePointEvent::new(11, String::from("fan on"))])
-    .spans("up", [TimeIntervalEvent::span(0, 20).unwrap()]);
-machine.record_update(tick).unwrap();
-
-assert_eq!(machine.points::<f64>("temperature").map(|s| s.len()), Some(2));
-
-// Recording never creates a sequence, so a misspelt key is an error.
-assert!(machine.record_point("temprature", TimePointEvent::new(12, 0.0_f64)).is_err());
-
-// The key is the identity; the attribute is only a description, and can change.
-machine.relabel("up", "uptime").unwrap();
-assert_eq!(machine.intervals("up").map(|s| s.label()), Some(String::from("uptime")));
-```
-
-## Streaming into a system
-
-A member inserted with `insert_live` is a stream. It has a frontier: data
-before it is final, so an event stamped before it is late, and recording it is
-`RecordError::Late`, with nothing changed. `advance` moves the frontier forward
-and marks what it passed over as observed; `advance_unobserved` moves it
-without observing, which leaves a gap for an outage (data already recorded
-there still counts as seen). The frontier is the state of the stream, so it
-lives on the system, not on the sequence, and equality ignores it.
-
-```rust
-use chronoloom::{RecordError, SequenceSystem, TimePointEvent, TimePointSequence};
-
-let mut room = SequenceSystem::new();
-room.insert_live("door", TimePointSequence::<&str>::new("door"), 0);
-
-room.record_point("door", TimePointEvent::new(5, "open")).unwrap();
-room.advance("door", 10).unwrap();
-assert_eq!(room.frontier_of("door"), Some(10));
-
-// Before the frontier is final: a late event is refused.
-let late = room.record_point("door", TimePointEvent::new(3, "close"));
-assert!(matches!(late, Err(RecordError::Late { .. })));
-
-// What the frontier passed over is observed; beyond it, nothing is known yet.
-let door = room.points::<&str>("door").unwrap();
-assert!(door.is_observed(7) && !door.is_observed(12));
-```
-
-A live member grows for as long as the stream runs, so `drain_finalised` hands
-its final part over. It takes, from each live member by its own frontier, the
-events before the frontier and the spans that end before it, whole, and returns
-them as a system of batch members with the same keys and metadata. A span that
-reaches the frontier stays, since it may still grow, so a live member holds at
-most its open spans plus its non-final events. The extent is split where the
-data is: the drained part carries what was observed before the earliest instant
-the member keeps, and the member keeps the rest, so the two put back together
-are what a batch system of the same events holds. A member with nothing final is
-still in the result, empty but with its extent; batch members, derived ones
-included, are never drained.
-
-```rust
-use chronoloom::{SequenceSystem, TimeIntervalEvent, TimeIntervalSequence};
-
-let mut room = SequenceSystem::new();
-room.insert_live("occupied", TimeIntervalSequence::new("occupied"), 0);
-
-room.record_span("occupied", TimeIntervalEvent::span(2, 5).unwrap()).unwrap();
-room.record_span("occupied", TimeIntervalEvent::span(8, 30).unwrap()).unwrap();
-room.advance("occupied", 20).unwrap();
-
-// The first span is final; the second reaches the frontier and stays whole.
-let finalised = room.drain_finalised();
-assert_eq!(finalised.intervals("occupied").unwrap().len(), 1);
-assert_eq!(room.intervals("occupied").unwrap().len(), 1);
-assert_eq!(room.frontier_of("occupied"), Some(20));
-```
 
 ## Processors
 
@@ -572,13 +476,13 @@ assert!(system.add_processor(processor).is_err());
 
 ## Datasets
 
-A `SequenceSystem` with the pieces above describes a dataset: the recordings of
+A `StreamSystem` with the pieces above describes a dataset: the recordings of
 one subject over a stretch of time. Each piece answers one question.
 
 - **Keys** say which sequence is which. The key is the identity; the label is
   only a description.
 - **The observed extent** says what was seen. A dataset that stopped early is
-  the system narrowed with `observe`: every member ends at the same instant, and
+  the stream system narrowed with `observe`: every member ends at the same instant, and
   after it `contains` and `is_observed` are both false.
 - **Metadata** says what the data means to you: a time unit, an origin, a unit
   per sensor. `Metadata` is a string map, kept on the system and on each member.
@@ -704,10 +608,11 @@ a float compare as numbers, any other pair is unordered, so an ordering
 reaches a field by a dotted path, `"agent.id"`.
 
 A `Schema` says what shape the values of a member must have, and it belongs to
-the system. A record requires its fields and rejects unknown ones, `Optional`
-fields may be left out, and a `Float` accepts an integer. Once set, recording a
-value without the shape is `RecordError::SchemaMismatch`, naming the path of the
-offending field, and a batch stays all or nothing.
+the stream system. A record requires its fields and rejects unknown ones, `Optional`
+fields may be left out, and a `Float` accepts an integer. Once set, an
+update with a value without the shape is `UpdateError::Record` holding
+`RecordError::SchemaMismatch`, naming the path of the offending field, and an
+update stays all or nothing.
 
 `Events::Project` reads one field of each record out into a point sequence of
 its own, of the type a `Kind` names. A record without the field is skipped, and
@@ -717,8 +622,8 @@ runs it like `Matching`, so what it appends equals the batch result.
 ```rust
 use chronoloom::{Processor, StreamSystem};
 use chronoloom::{
-    Condition, Events, Formula, Kind, Pattern, RecordError, Schema, SequenceSystem,
-    TimePointEvent, TimePointSequence, Update, Value,
+    Condition, Events, Formula, Kind, Pattern, RecordError, Schema, TimePointEvent,
+    TimePointSequence, Update, UpdateError, Value,
 };
 
 let message = |agent: i64, zone: &str| {
@@ -728,9 +633,9 @@ let message = |agent: i64, zone: &str| {
     ])
 };
 
-let mut system = SequenceSystem::new();
-system.insert("sensor", TimePointSequence::<Value>::new("sensor"));
-system
+let mut result = StreamSystem::new();
+result.insert_stream("sensor", TimePointSequence::<Value>::new("sensor")).unwrap();
+result
     .set_schema(
         "sensor",
         Schema::record([
@@ -741,21 +646,24 @@ system
     )
     .unwrap();
 
-system.record_point("sensor", TimePointEvent::new(10, message(7, "gate"))).unwrap();
-system.record_point("sensor", TimePointEvent::new(20, message(9, "yard"))).unwrap();
+let mut update = Update::new();
+update.points("sensor", [
+    TimePointEvent::new(10, message(7, "gate")),
+    TimePointEvent::new(20, message(9, "yard")),
+]);
+result.update(update).unwrap();
 
 // A value without the shape is refused, and nothing is recorded.
 let wrong = Value::record([("agent", Value::from(7)), ("zone", Value::from("gate"))]);
-let refused = system.record_point("sensor", TimePointEvent::new(30, wrong));
+let mut update = Update::new();
+update.points("sensor", [TimePointEvent::new(30, wrong)]);
+let refused = result.update(update);
 assert!(matches!(
     refused,
-    Err(RecordError::SchemaMismatch { error, .. }) if error.path == "agent"
+    Err(UpdateError::Record(RecordError::SchemaMismatch { error, .. })) if error.path == "agent"
 ));
 
 // A field becomes a sequence of its own, and an ordinary processor reads it.
-let mut result = StreamSystem::new();
-result.insert_stream("sensor", system.points::<Value>("sensor").unwrap().clone()).unwrap();
-result.set_schema("sensor", system.schema("sensor").unwrap().clone()).unwrap();
 result
     .add_processor(Processor::new(
         "agent",

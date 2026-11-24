@@ -4,8 +4,8 @@
 use std::collections::BTreeSet;
 
 use crate::primitives::Timestamp;
-use crate::sequence_system::{Key, Metadata, RecordError, Sequence, SequenceSystem};
 use crate::sequences::Extent;
+use crate::store::{Key, Metadata, RecordError, Sequence, Store};
 use crate::values::Schema;
 
 use crate::processing::{ProcessError, Recipe};
@@ -26,8 +26,8 @@ impl StreamSystem<Batch> {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            members: SequenceSystem::new(),
-            raw: SequenceSystem::new(),
+            members: Store::new(),
+            raw: Store::new(),
             pipeline: Pipeline::default(),
             mode: Batch,
         }
@@ -215,7 +215,7 @@ impl StreamSystem<Batch> {
         } else {
             let written: Vec<Key> = members
                 .keys()
-                .filter(|key| writes(&processor, key) && members.lineage(key.as_str()).is_some())
+                .filter(|key| writes(&processor, key) && members.is_derived(key.as_str()))
                 .cloned()
                 .collect();
             for key in &written {
@@ -254,7 +254,8 @@ impl StreamSystem<Batch> {
     /// # Errors
     ///
     /// [`UpdateError::Derived`] for a derived stream, and
-    /// [`UpdateError::Record`] as [`SequenceSystem::set_schema`] says.
+    /// [`UpdateError::Record`] if the stream is not of record values or holds
+    /// one that does not have the shape.
     pub fn set_schema(&mut self, key: &str, schema: Schema) -> Result<(), UpdateError> {
         let key = Key::from(key);
         self.writable(&key)?;
@@ -329,7 +330,7 @@ impl StreamSystem<Batch> {
     fn change(
         &mut self,
         changed: Option<BTreeSet<Key>>,
-        edit: impl FnOnce(&mut SequenceSystem, &mut SequenceSystem) -> Result<(), RecordError>,
+        edit: impl FnOnce(&mut Store, &mut Store) -> Result<(), RecordError>,
     ) -> Result<Report, UpdateError> {
         let mut members = self.members.clone();
         let mut raw = self.raw.clone();

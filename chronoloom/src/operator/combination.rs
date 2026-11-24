@@ -2,8 +2,8 @@
 
 use crate::primitives::Timestamp;
 use crate::processing::ProcessError;
-use crate::sequence_system::Sequence;
 use crate::sequences::TimeIntervalSequence;
+use crate::store::Sequence;
 
 use super::chunk::{Chunk, Inputs};
 use super::online::OnlineNode;

@@ -67,32 +67,6 @@
 //! # Ok::<(), chronoloom::IntervalError>(())
 //! ```
 //!
-//! # Sequence systems
-//!
-//! A [`SequenceSystem`] holds the sequences describing one subject side by
-//! side, the way a sensor system holds its sensors: point sequences of any
-//! value type next to timelines, one sequence per key. Events are
-//! recorded into it as they arrive, one at a time or an [`Update`] at a time, all
-//! or nothing.
-//!
-//! ```
-//! use chronoloom::{SequenceSystem, TimeIntervalEvent, TimeIntervalSequence};
-//! use chronoloom::{TimePointEvent, TimePointSequence};
-//!
-//! let mut machine = SequenceSystem::new();
-//! machine.insert("temperature", TimePointSequence::<f64>::new("temperature"));
-//! machine.insert("log", TimePointSequence::<String>::new("log"));
-//! machine.insert("up", TimeIntervalSequence::new("up"));
-//!
-//! machine.record_point("temperature", TimePointEvent::new(10, 21.5_f64))?;
-//! machine.record_point("log", TimePointEvent::new(10, String::from("boot")))?;
-//! machine.record_span("up", TimeIntervalEvent::span(0, 60)?)?;
-//!
-//! let keys: Vec<&str> = machine.keys().map(|key| key.as_str()).collect();
-//! assert_eq!(keys, ["log", "temperature", "up"]);
-//! # Ok::<(), Box<dyn std::error::Error>>(())
-//! ```
-//!
 //! # What was observed
 //!
 //! Every sequence carries an [`Extent`], the instants it was observed over. An
@@ -100,15 +74,6 @@
 //! Operations keep a result wherever it can be decided, and
 //! [`TimeIntervalSequence::complement`] is the observed instants that are not
 //! active.
-//!
-//! # Streaming
-//!
-//! A member inserted with [`SequenceSystem::insert_live`] is a stream with a
-//! frontier: data before it is final, so recording an event before it is
-//! [`RecordError::Late`]. [`SequenceSystem::advance`] moves the frontier and
-//! marks what it passed as observed, and [`SequenceSystem::drain_finalised`]
-//! hands the final part of every live member over, so a stream holds only its
-//! open spans and its events not yet final.
 //!
 //! # Processors
 //!
@@ -124,10 +89,10 @@
 //!
 //! # Datasets
 //!
-//! A [`SequenceSystem`] is also a dataset. It files members under a [`Key`],
-//! carries opaque [`Metadata`] on itself and on each member, remembers which
-//! [`Recipe`] a derived member came from, and [`SequenceSystem::observe`] and
-//! [`SequenceSystem::slice`] narrow every member to an extent or a window of
+//! A [`StreamSystem`] is also a dataset. It files streams under a [`Key`],
+//! carries opaque [`Metadata`] on itself and on each stream, remembers which
+//! [`Processor`] a derived stream came from, and [`StreamSystem::observe`] and
+//! [`StreamSystem::slice`] narrow every stream to an extent or a window of
 //! time at once. The README walks through an example.
 //!
 //! # Record values
@@ -135,7 +100,7 @@
 //! A [`Value`] is a dynamic payload (null, bool, integer, float, text or a record
 //! of named fields) for a `TimePointSequence<Value>`, beside the sequences of
 //! one fixed value type. A [`Schema`] says what shape the values of a member
-//! must have ([`SequenceSystem::set_schema`]), and [`Events::Project`] reads a
+//! must have ([`StreamSystem::set_schema`]), and [`Events::Project`] reads a
 //! field of each record out into a sequence of its own, online as well as in
 //! batch. The README walks through an example.
 //!
@@ -215,10 +180,10 @@ mod operator;
 pub mod primitives;
 pub mod processing;
 pub mod processor;
-pub mod sequence_system;
 pub mod sequences;
 #[cfg(feature = "serde")]
 pub mod serialisation;
+mod store;
 pub mod stream_system;
 pub mod values;
 
@@ -227,11 +192,9 @@ pub use processing::{
     Condition, Edge, Events, Formula, Group, Input, Kind, OpenEnd, Pattern, ProcessError, Recipe,
 };
 pub use processor::Processor;
-pub use sequence_system::{
-    AnyPointSequence, AnyValue, Key, Metadata, PointValue, RecordError, Sequence, SequenceSystem,
-};
 pub use sequences::{Attribute, Extent, SetOperation, TimeIntervalSequence, TimePointSequence};
 pub use stream_system::{
-    Batch, Chunk, Live, LiveReport, Mode, Report, StreamSystem, Update, UpdateError,
+    AnyPointSequence, AnyValue, Batch, Chunk, Key, Live, LiveReport, Metadata, Mode, PointValue,
+    RecordError, Report, Sequence, StreamSystem, Update, UpdateError,
 };
 pub use values::{Schema, SchemaError, Value};

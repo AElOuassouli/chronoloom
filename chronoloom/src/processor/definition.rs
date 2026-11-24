@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::operator::compile_recipe;
 use crate::processing::{self, Input, ProcessError, Recipe};
-use crate::sequence_system::{Key, Sequence, SequenceSystem};
+use crate::store::{Key, Sequence, Store};
 use crate::stream_system::{writes, Mode, StreamSystem};
 
 /// One recipe of a [`StreamSystem`]: the inputs it reads, a formula over them,
@@ -176,14 +176,14 @@ impl Processor {
         &self.declared
     }
 
-    /// A new system holding the members of the output, each carrying the
-    /// recipe as its lineage, evaluated through the operators.
+    /// A new system holding the members of the output, marked as
+    /// derived, evaluated through the operators.
     ///
     /// # Errors
     ///
     /// The first declared input the system does not satisfy, in key order,
     /// otherwise the first [`ProcessError`] the recipe meets.
-    pub(crate) fn run(&self, system: &SequenceSystem) -> Result<SequenceSystem, ProcessError> {
+    pub(crate) fn run(&self, system: &Store) -> Result<Store, ProcessError> {
         let transform = self.is_transform();
         processing::check_declared(
             &self.declared,
@@ -191,14 +191,9 @@ impl Processor {
             system,
         )?;
 
-        let mut produced = SequenceSystem::new();
+        let mut produced = Store::new();
         for member in compile_recipe(&self.recipe).members(&self.output, system)? {
-            produced.insert_derived(
-                member.key,
-                member.sequence,
-                self.recipe.clone(),
-                member.entity,
-            );
+            produced.insert_derived(member.key, member.sequence, member.entity);
         }
 
         Ok(produced)

@@ -1,4 +1,4 @@
-//! Draining: handing over the final part of the live members.
+//! Cutting members: taking out the part before a cut.
 
 use std::collections::BTreeMap;
 
@@ -6,7 +6,7 @@ use crate::primitives::Timestamp;
 use crate::sequences::Extent;
 
 use super::erased::AnyPointSequence;
-use super::{Key, Member, Sequence, SequenceSystem};
+use super::{Key, Member, Sequence, Store};
 
 impl Sequence {
     /// Take out the part final at `frontier`, leaving the rest in place.
@@ -20,45 +20,13 @@ impl Sequence {
     }
 }
 
-impl SequenceSystem {
-    /// Take the final part of every live member out of the system, each by its
-    /// own frontier, and return it as a system of batch members.
-    ///
-    /// Batch members are left alone and absent from the result. See
-    /// [`SequenceSystem`] for what is drained and what stays.
-    pub fn drain_finalised(&mut self) -> Self {
-        let mut members = BTreeMap::new();
-
-        for (key, member) in &mut self.members {
-            let Some(frontier) = member.frontier else {
-                continue;
-            };
-            let drained = Member {
-                sequence: member.sequence.split_finalised(frontier),
-                metadata: member.metadata.clone(),
-                frontier: None,
-                lineage: member.lineage.clone(),
-                entity: member.entity.clone(),
-                schema: member.schema.clone(),
-            };
-            members.insert(key.clone(), drained);
-        }
-
-        Self {
-            members,
-            metadata: self.metadata.clone(),
-        }
-    }
-}
-
-impl SequenceSystem {
+impl Store {
     /// Take the part of every member before the instant `cuts` gives for its
-    /// key out of the system, and return it as a system of batch members that
-    /// keep their metadata, lineage, entity and schema. A member without a cut
+    /// key out of the store, and return it as a store whose members
+    /// keep their metadata, entity and schema. A member without a cut
     /// is left alone and absent from the result.
     ///
-    /// As [`drain_finalised`](SequenceSystem::drain_finalised) does for the
-    /// frontier of a live member, a span reaching the cut stays whole.
+    /// A span reaching the cut stays whole, because it may still grow.
     pub(crate) fn drain_before(&mut self, cuts: &BTreeMap<Key, Timestamp>) -> Self {
         let mut members = BTreeMap::new();
 
@@ -69,8 +37,7 @@ impl SequenceSystem {
             let drained = Member {
                 sequence: member.sequence.split_finalised(cut),
                 metadata: member.metadata.clone(),
-                frontier: None,
-                lineage: member.lineage.clone(),
+                derived: member.derived,
                 entity: member.entity.clone(),
                 schema: member.schema.clone(),
             };
@@ -84,7 +51,7 @@ impl SequenceSystem {
     }
 
     /// Narrow the member for `key` to `extent`, as
-    /// [`observe`](SequenceSystem::observe) does for all of them. An unknown
+    /// [`observe`](Store::observe) does for all of them. An unknown
     /// key is left alone.
     pub(crate) fn observe_member(&mut self, key: &str, extent: &Extent) {
         if let Some(member) = self.members.get_mut(key) {
@@ -103,6 +70,15 @@ impl SequenceSystem {
             member
                 .observed_mut()
                 .grow(Extent::of_range(&(from..)).as_slice());
+        }
+    }
+}
+
+impl Member {
+    fn observed_mut(&mut self) -> &mut Extent {
+        match &mut self.sequence {
+            Sequence::TimePoint(points) => points.as_erased_mut().observed_mut(),
+            Sequence::TimeInterval(timeline) => timeline.observed_mut(),
         }
     }
 }

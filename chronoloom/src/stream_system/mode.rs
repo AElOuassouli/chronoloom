@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use crate::operator::OnlineRecipe;
 use crate::primitives::Timestamp;
-use crate::sequence_system::Key;
+use crate::store::Key;
 
 mod sealed {
     pub trait Sealed {}

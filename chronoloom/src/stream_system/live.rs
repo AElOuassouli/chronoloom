@@ -8,8 +8,8 @@ use crate::operator::{compile_recipe, Chunk, Inputs};
 use crate::primitives::{TimeIntervalEvent, Timestamp};
 use crate::processing::{check_declared, member_key, render, ProcessError, Recipe};
 use crate::processor::Processor;
-use crate::sequence_system::{Key, RecordError, Sequence, SequenceSystem};
 use crate::sequences::Extent;
+use crate::store::{Key, RecordError, Sequence, Store};
 
 #[cfg(feature = "serde")]
 use super::checkpoint::Checkpoint;
@@ -25,8 +25,8 @@ impl StreamSystem<Live> {
     #[must_use]
     pub fn live(from: Timestamp) -> Self {
         Self {
-            members: SequenceSystem::new(),
-            raw: SequenceSystem::new(),
+            members: Store::new(),
+            raw: Store::new(),
             pipeline: Pipeline::default(),
             mode: Live {
                 from,
@@ -252,7 +252,7 @@ impl StreamSystem<Live> {
 
         StreamSystem {
             members: self.members.drain_before(&cuts),
-            raw: SequenceSystem::new(),
+            raw: Store::new(),
             pipeline: self.pipeline.clone(),
             mode: Batch,
         }
@@ -414,12 +414,9 @@ impl StreamSystem<Live> {
                         member.key
                     )));
                 }
-                system.members.insert_derived(
-                    member.key.clone(),
-                    member.sequence,
-                    processor.recipe().clone(),
-                    member.entity,
-                );
+                system
+                    .members
+                    .insert_derived(member.key.clone(), member.sequence, member.entity);
                 if let Some(kept) = system.members.member_metadata_mut(member.key.as_str()) {
                     *kept = member.metadata;
                 }
@@ -594,7 +591,7 @@ impl StreamSystem<Live> {
             let chunk = member.chunk;
 
             if self.members.contains(key.as_str()) {
-                if self.members.lineage(key.as_str()).is_none() {
+                if !self.members.is_derived(key.as_str()) {
                     return Err(UpdateError::Taken { key });
                 }
                 self.members.append_derived(key.as_str(), chunk.sequence());
@@ -605,12 +602,7 @@ impl StreamSystem<Live> {
                 {
                     timeline.set_attribute(formula.to_string());
                 }
-                self.members.insert_derived(
-                    key.clone(),
-                    sequence,
-                    processor.recipe().clone(),
-                    entity,
-                );
+                self.members.insert_derived(key.clone(), sequence, entity);
             }
 
             if !chunk.range().is_empty() {

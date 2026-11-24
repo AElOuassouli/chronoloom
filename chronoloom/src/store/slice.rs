@@ -5,7 +5,7 @@ use std::ops::RangeBounds;
 use crate::primitives::Timestamp;
 
 use super::erased::AnyPointSequence;
-use super::{Member, Sequence, SequenceSystem};
+use super::{Member, Sequence, Store};
 
 impl Sequence {
     /// The part of the sequence inside `range`, as [`slice`] does for either
@@ -25,7 +25,7 @@ impl Sequence {
     }
 }
 
-impl SequenceSystem {
+impl Store {
     /// Every member cut to `range`, each keeping its key, label and metadata,
     /// and the system keeping its own metadata.
     #[must_use]
@@ -40,8 +40,7 @@ impl SequenceSystem {
                     let member = Member {
                         sequence: member.sequence.slice(bounds),
                         metadata: member.metadata.clone(),
-                        frontier: None,
-                        lineage: member.lineage.clone(),
+                        derived: member.derived,
                         entity: member.entity.clone(),
                         schema: member.schema.clone(),
                     };

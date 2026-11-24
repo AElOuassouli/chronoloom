@@ -36,8 +36,6 @@
   starts over what is still held. `StreamSystem::into_live(from)` goes the other
   way: the streams are cut to what lies before `from` and the processors start
   by stepping over it.
-  `SequenceSystem::record_update` refuses an update that carries watermarks
-  (`RecordError::Watermark`).
 - Transformed streams in a `StreamSystem`: a processor whose output key is a
   stream it reads rewrites that stream, and several chain in the order they are
   added. `get` gives the last version and every other processor reads it;
@@ -68,32 +66,19 @@
 - `TimeIntervalSequence::complement`, the observed instants that are not
   active, and `Attribute::Complement` for its label `¬A`.
 - `slice(range)` on `TimePointSequence`, `TimeIntervalSequence`, `Sequence` and
-  `SequenceSystem`: the data and extent inside the range, with labels,
-  metadata and the output a derived member came from kept. A reversed range gives an empty, unobserved result.
-- `Key`, the identity of a member of a `SequenceSystem`, kept apart from its
-  attribute (its description). Two members may share an attribute under
-  different keys, and `SequenceSystem::relabel` replaces a member's attribute
-  in place, keeping its key and data. `SequenceSystem::observe` narrows every
-  member's extent at once.
-- Opaque `Metadata` (string maps) on a `SequenceSystem` and on each member:
+  `StreamSystem`: the data and extent inside the range, with labels,
+  metadata and the output a derived stream came from kept. A reversed range gives an empty, unobserved result.
+- `Key`, the identity of a stream, kept apart from its attribute (its
+  description). Two streams may share an attribute under different keys, and
+  `StreamSystem::relabel` replaces a stream's attribute in place, keeping its
+  key and data. `StreamSystem::observe` narrows every stream's extent at once.
+- Opaque `Metadata` (string maps) on a `StreamSystem` and on each stream:
   `metadata`, `metadata_mut`, `member_metadata` and `member_metadata_mut`.
   Inserting starts a member with empty metadata, replacing or removing drops it,
   and equality includes it.
-- Live members of a `SequenceSystem`. `insert_live` files a member with a
-  frontier, before which its data is final, and recording an event before it is
-  `RecordError::Late`, with nothing recorded. `advance` moves the frontier and
-  marks what it passed over as observed, `advance_unobserved` moves it without
-  observing (except the instants of data already recorded there), and
-  `advance_all` advances every live member. `frontier_of` and `frontier` read
-  it, and equality ignores it. `RecordError::NotLive` reports advancing a batch
-  member. `SequenceSystem::drain_finalised` hands over the final part of every
-  live member by its own frontier, the events before it and the spans ending
-  before it, whole, as a system of batch members with the same keys and
-  metadata; the system keeps the rest, so a live member holds only its open
-  spans and its non-final events.
 - The `processing` module, re-exported at the crate root. A `Formula` is data
   that describes a state (`State`, `Between`, `While`, `Occurs`, `Not`, `And`,
-  `Or`, `Shift`), read from a `SequenceSystem` through `Pattern`s, a key and a
+  `Or`, `Shift`), read from the streams of a `StreamSystem` through `Pattern`s, a key and a
   `Condition` on the values of that member, and evaluated three-valued with an
   extent. A `Shift` never fails, keeping bounds at the ends of time and
   saturating the others. `Between` takes an `OpenEnd` (`Extent` or `Head`) for a
@@ -138,9 +123,9 @@
   `From` conversions and a JSON-like `Display` build and read it. A `Schema`
   (`Any`, `Null`, `Bool`, `Integer`, `Float`, `Text`, `Record`, `Optional`; a
   record rejects unknown fields) is filed on the system with
-  `SequenceSystem::set_schema` and read with `schema`; `check` says where a
+  `StreamSystem::set_schema` and read with `schema`; `check` says where a
   value differs through a `SchemaError`. Recording a value without the shape is
-  `RecordError::SchemaMismatch`, in an update too, which stays all or nothing.
+  `RecordError::SchemaMismatch` (as `UpdateError::Record`), and an update stays all or nothing.
 - `Events::Project { key, path, into: Kind }` reads a field of each record into
   a point sequence of the type the `Kind` names (`Bool`, `Integer`, `Float`,
   `Text`, `Value`), skipping records without the field.
@@ -161,7 +146,7 @@
 - The optional `serde` feature (the only dependency, off by default, which
   leaves the default build with none): `Serialize` and `Deserialize` for
   sequences, extents, values, schemas, formulas, processors and systems, with the `chronoloom::serialisation` module documenting the
-  format. A `TimePointSequence`, a `TimeIntervalSequence`, a `SequenceSystem` and a
+  format. A `TimePointSequence`, a `TimeIntervalSequence`, a `StreamSystem` and a
   `Processor` are documents that start with `"format": 1`
   (`FORMAT_VERSION`), and a reader refuses any other number. Loading validates:
   spans and extents are normalized, a span that ends before it starts is
@@ -204,23 +189,23 @@
 
 ## Removed
 
+- `SequenceSystem` and the `sequence_system` module: the storage is crate-private
+  now, and a `StreamSystem` holds, records into and reads the streams. `Key`,
+  `Sequence`, `AnyPointSequence`, `AnyValue`, `PointValue`, `Metadata` and
+  `RecordError` stay at the crate root and are also in `stream_system`. Live
+  members (`insert_live`, `advance`, `advance_unobserved`, `advance_all`,
+  `frontier`, `frontier_of`, `drain_finalised`) are the frontiers and `drain` of
+  `StreamSystem<Live>`, and `RecordError::Late`, `RecordError::NotLive` and
+  `RecordError::Watermark` are gone, `UpdateError::Late` and
+  `UpdateError::Watermark` taking their place.
 - The `serde` implementations of `SequenceSystem`: a system is saved as a
   `StreamSystem<Batch>`, and a document of a `SequenceSystem` no longer loads.
 - `Formula::evaluate`, `Events::evaluate` and `Recipe::evaluate`, which took a
   `SequenceSystem`: evaluate a processor with `Processor::evaluate` over a
   `StreamSystem`, or add it to one.
 - `sequence_system::Batch`, the recording buffer: it is now `stream_system::Update`
-  (also at the crate root), and `SequenceSystem::record_batch` is
-  `record_update`. `Batch` at the root now names the batch mode of a
-  `StreamSystem`.
-- Filing a member under its own label: `SequenceSystem::insert` now takes the key
-  as its first argument, `insert(key, sequence)`. `FromIterator` and `Extend`
-  take `(key, sequence)` pairs, and `Update::points` and `Update::spans` take a
-  key.
-- `SequenceSystem::attributes()`, replaced by `keys()`.
-- The `btree_map` iterators of `SequenceSystem`: `iter()` and `into_iter()` now
-  return the named `sequence_system::Iter` and `IntoIter`, and yield `Key`
-  instead of `String`.
+  (also at the crate root). `Batch` at the root now names the batch mode of a
+  `StreamSystem`. `Update::points` and `Update::spans` take a key.
 - The `attribute` field of every `RecordError` variant, replaced by `key`.
 - Support for Rust older than 1.85: the crate is now on the 2024 edition, and
   its minimum supported Rust version is 1.85.

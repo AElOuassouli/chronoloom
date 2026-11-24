@@ -12,22 +12,20 @@ use chronoloom::primitives::Timestamp;
 use chronoloom::processing::{
     Condition, Edge, Events, Formula, OpenEnd, Pattern, ProcessError, Recipe,
 };
-use chronoloom::sequence_system::{
-    AnyPointSequence, Key, PointValue, RecordError, Sequence, SequenceSystem,
-};
 use chronoloom::sequences::attribute::{Attribute, SetOperation};
 use chronoloom::sequences::interval::TimeIntervalSequence;
 use chronoloom::sequences::time_point::TimePointSequence;
 use chronoloom::stream_system::{
-    Batch, Chunk, Live, LiveReport, Mode, Report, Update, UpdateError,
+    AnyPointSequence, Batch, Chunk, Key, Live, LiveReport, Mode, PointValue, RecordError, Report,
+    Sequence, Update, UpdateError,
 };
 use chronoloom::{
     AnyPointSequence as RootAnyPointSequence, Attribute as RootAttribute,
     IntervalError as RootError, Key as RootKey, PointValue as RootPointValue,
-    RecordError as RootRecordError, Sequence as RootSequence, SequenceSystem as RootSequenceSystem,
-    SetOperation as RootSetOperation, TimeIntervalEvent as RootIntervalEvent,
-    TimeIntervalSequence as RootIntervalSequence, TimePointEvent as RootPointEvent,
-    TimePointSequence as RootPointSequence, Timestamp as RootTimestamp,
+    RecordError as RootRecordError, Sequence as RootSequence, SetOperation as RootSetOperation,
+    TimeIntervalEvent as RootIntervalEvent, TimeIntervalSequence as RootIntervalSequence,
+    TimePointEvent as RootPointEvent, TimePointSequence as RootPointSequence,
+    Timestamp as RootTimestamp,
 };
 use chronoloom::{
     Batch as RootBatch, Chunk as RootChunk, Condition as RootCondition, Edge as RootEdge,

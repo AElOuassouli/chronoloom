@@ -5,10 +5,10 @@ use std::collections::BTreeMap;
 
 use crate::primitives::{TimeIntervalEvent, TimePointEvent, Timestamp};
 use crate::processing::{entity_of, member_key, render, EntityId, Formula, Group, ProcessError};
-use crate::sequence_system::{Key, Sequence, SequenceSystem};
 use crate::sequences::attribute::Attribute;
 use crate::sequences::interval::operations::{intersection_spans, union_spans};
 use crate::sequences::{Extent, TimeIntervalSequence, TimePointSequence};
+use crate::store::{Key, Sequence, Store};
 use crate::values::Value;
 
 use super::online_entities::{OnlineAnyEntity, OnlineCountEntities, OnlinePerEntity};
@@ -76,11 +76,7 @@ impl Timelines {
 
 /// The formula evaluated for each entity, over the records restricted to it,
 /// observed from its first record on.
-fn timelines(
-    by: &Group,
-    plan: &TimelinePlan,
-    system: &SequenceSystem,
-) -> Result<Timelines, ProcessError> {
+fn timelines(by: &Group, plan: &TimelinePlan, system: &Store) -> Result<Timelines, ProcessError> {
     let records = records(&by.key, system)?;
     let observed = records.observed().clone();
     let mut entities: Vec<Entity> = entities(records, &by.path)
@@ -145,7 +141,7 @@ impl PerEntity {
     pub(super) fn members(
         &self,
         output: &Key,
-        system: &SequenceSystem,
+        system: &Store,
     ) -> Result<Vec<Member>, ProcessError> {
         let found = timelines(&self.by, &self.plan, system)?;
         for pair in found.entities.windows(2) {
@@ -189,10 +185,7 @@ impl AnyEntity {
         OnlineAnyEntity::new(self.label.clone(), self.by.clone(), self.plan.online())
     }
 
-    pub(super) fn batch(
-        &self,
-        system: &SequenceSystem,
-    ) -> Result<TimeIntervalSequence, ProcessError> {
+    pub(super) fn batch(&self, system: &Store) -> Result<TimeIntervalSequence, ProcessError> {
         let found = timelines(&self.by, &self.plan, system)?;
         let members = found.members();
 
@@ -221,10 +214,7 @@ impl CountEntities {
         OnlineCountEntities::new(self.label.clone(), self.by.clone(), self.plan.online())
     }
 
-    pub(super) fn batch(
-        &self,
-        system: &SequenceSystem,
-    ) -> Result<TimePointSequence<i64>, ProcessError> {
+    pub(super) fn batch(&self, system: &Store) -> Result<TimePointSequence<i64>, ProcessError> {
         let found = timelines(&self.by, &self.plan, system)?;
         let members = found.members();
 

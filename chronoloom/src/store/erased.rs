@@ -10,7 +10,7 @@ use crate::sequences::attribute::Attribute;
 use crate::sequences::extent::Extent;
 use crate::sequences::TimePointSequence;
 
-/// What a point sequence's values must be to join a [`SequenceSystem`].
+/// What a point sequence's values must be to join a [`StreamSystem`].
 ///
 /// Implemented for every type that qualifies, so it never needs implementing by
 /// hand: `f64`, `String`, `bool`, and any value type of your own deriving
@@ -19,7 +19,7 @@ use crate::sequences::TimePointSequence;
 /// threads — and `'static` is what lets the value type be recovered after it
 /// has been erased.
 ///
-/// [`SequenceSystem`]: super::SequenceSystem
+/// [`StreamSystem`]: crate::StreamSystem
 pub trait PointValue: Clone + fmt::Debug + PartialEq + Send + Sync + 'static {}
 
 impl<T: Clone + fmt::Debug + PartialEq + Send + Sync + 'static> PointValue for T {}
@@ -296,7 +296,7 @@ impl PartialEq for AnyValue {
 
 /// A [`TimePointSequence`] whose value type is known only at run time.
 ///
-/// This is how a [`SequenceSystem`] holds `f64` readings beside `String` log
+/// This is how a [`StreamSystem`] holds `f64` readings beside `String` log
 /// lines: each sequence keeps its own value type, and the type is checked when
 /// the sequence is read back with [`downcast_ref`] or [`downcast`]. Anything
 /// that does not depend on the value type — the attribute, the number of events —
@@ -305,7 +305,7 @@ impl PartialEq for AnyValue {
 /// ```
 /// use chronoloom::primitives::TimePointEvent;
 /// use chronoloom::sequences::TimePointSequence;
-/// use chronoloom::sequence_system::AnyPointSequence;
+/// use chronoloom::AnyPointSequence;
 ///
 /// let temperature = TimePointSequence::from_events("temperature", vec![
 ///     TimePointEvent::new(10, 21.5_f64),
@@ -318,14 +318,14 @@ impl PartialEq for AnyValue {
 /// ```
 ///
 /// There is deliberately no mutable downcast. Events reach a sequence inside a
-/// system through [`SequenceSystem::record_point`] instead, and its attribute
-/// changes through [`SequenceSystem::relabel`].
+/// stream system through an [`Update`] instead, and its attribute
+/// changes through [`StreamSystem::relabel`].
 ///
 /// [`downcast`]: AnyPointSequence::downcast
 /// [`downcast_ref`]: AnyPointSequence::downcast_ref
-/// [`SequenceSystem`]: super::SequenceSystem
-/// [`SequenceSystem::record_point`]: super::SequenceSystem::record_point
-/// [`SequenceSystem::relabel`]: super::SequenceSystem::relabel
+/// [`StreamSystem`]: crate::StreamSystem
+/// [`StreamSystem::relabel`]: crate::StreamSystem::relabel
+/// [`Update`]: crate::Update
 pub struct AnyPointSequence(pub(crate) Box<dyn ErasedPoints>);
 
 impl AnyPointSequence {

@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::operator::Chunk;
 use crate::primitives::Timestamp;
-use crate::sequence_system::Key;
+use crate::store::Key;
 
 /// What a change to a [`StreamSystem`] did to its derived streams.
 ///

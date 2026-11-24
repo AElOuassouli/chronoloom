@@ -8,7 +8,7 @@ use crate::primitives::Timestamp;
 ///
 /// Every sequence has an attribute: a [`TimePointSequence`] says which
 /// quantity it is a record of, a [`TimeIntervalSequence`] which state it is the
-/// timeline of, and a [`SequenceSystem`] records one sequence per attribute.
+/// timeline of, and a [`StreamSystem`] can file sequences by attribute.
 /// An attribute given outright is where every expression starts; the operations
 /// build the rest, so a derived timeline carries the expression it came from
 /// rather than an attribute someone had to invent for it.
@@ -49,7 +49,7 @@ use crate::primitives::Timestamp;
 /// ```
 ///
 /// [`Display`]: core::fmt::Display
-/// [`SequenceSystem`]: crate::sequence_system::SequenceSystem
+/// [`StreamSystem`]: crate::StreamSystem
 /// [`TimeIntervalSequence`]: crate::sequences::TimeIntervalSequence
 /// [`TimePointSequence`]: crate::sequences::TimePointSequence
 #[derive(Debug, Clone, PartialEq, Eq)]

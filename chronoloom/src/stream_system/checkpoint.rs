@@ -3,7 +3,7 @@
 
 use crate::primitives::Timestamp;
 use crate::processor::Processor;
-use crate::sequence_system::{Key, Metadata, Sequence};
+use crate::store::{Key, Metadata, Sequence};
 use crate::values::Value;
 
 use super::mode::LiveNode;

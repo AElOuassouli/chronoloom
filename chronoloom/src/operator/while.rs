@@ -3,10 +3,10 @@
 
 use crate::primitives::{TimeIntervalEvent, Timestamp};
 use crate::processing::{Pattern, ProcessError};
-use crate::sequence_system::{Sequence, SequenceSystem};
 use crate::sequences::attribute::Attribute;
 use crate::sequences::interval::normalization::normalize;
 use crate::sequences::{Extent, TimeIntervalSequence};
+use crate::store::{Sequence, Store};
 
 use super::chunk::{Chunk, Inputs};
 use super::online::OnlineNode;
@@ -32,10 +32,7 @@ impl While {
         })
     }
 
-    pub(super) fn batch(
-        &self,
-        inputs: &SequenceSystem,
-    ) -> Result<TimeIntervalSequence, ProcessError> {
+    pub(super) fn batch(&self, inputs: &Store) -> Result<TimeIntervalSequence, ProcessError> {
         let marks = read(&self.pattern, inputs)?;
         let mut spans = Vec::new();
         let mut known = Vec::new();

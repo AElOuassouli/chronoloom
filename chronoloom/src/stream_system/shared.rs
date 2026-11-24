@@ -5,8 +5,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::ops::RangeBounds;
 
 use crate::primitives::Timestamp;
-use crate::sequence_system::{Key, Metadata, Sequence, SequenceSystem};
 use crate::sequences::{TimeIntervalSequence, TimePointSequence};
+use crate::store::{Key, Metadata, Sequence, Store};
 use crate::values::Schema;
 
 use crate::processing::ProcessError;
@@ -87,7 +87,7 @@ impl<M: Mode> StreamSystem<M> {
     #[must_use]
     pub fn is_derived(&self, key: &str) -> bool {
         let key = Key::from(key);
-        self.members.lineage(key.as_str()).is_some() && self.pipeline.producer(&key).is_some()
+        self.members.is_derived(key.as_str()) && self.pipeline.producer(&key).is_some()
     }
 
     /// The processor that produces the derived stream under `key`; for a
@@ -98,7 +98,9 @@ impl<M: Mode> StreamSystem<M> {
         if self.raw.contains(key) {
             return self.transforms(key).pop();
         }
-        self.members.lineage(key)?;
+        if !self.members.is_derived(key) {
+            return None;
+        }
         self.pipeline.producer(&Key::from(key))
     }
 
@@ -125,11 +127,11 @@ impl<M: Mode> StreamSystem<M> {
     /// per-entity output.
     #[must_use]
     pub fn entity(&self, key: &str) -> Option<&crate::values::Value> {
-        self.members.lineage_entity(key)
+        self.members.derived_entity(key)
     }
 
-    /// The streams and derived streams together, as a sequence system.
-    pub(crate) const fn members(&self) -> &SequenceSystem {
+    /// The streams and derived streams together, as a store.
+    pub(crate) const fn members(&self) -> &Store {
         &self.members
     }
 
@@ -202,8 +204,8 @@ impl<M: Mode> StreamSystem<M> {
 }
 
 /// Put `sequence` under `key` in `members`, as a version of a stream: the
-/// member keeps its metadata and has no lineage.
-fn put_version(members: &mut SequenceSystem, key: &Key, sequence: Sequence) {
+/// member keeps its metadata and is not derived.
+fn put_version(members: &mut Store, key: &Key, sequence: Sequence) {
     let metadata = members.member_metadata(key.as_str()).cloned();
     members.insert(key.clone(), sequence);
     if let (Some(metadata), Some(kept)) = (metadata, members.member_metadata_mut(key.as_str())) {
@@ -221,7 +223,7 @@ const fn shape(sequence: &Sequence) -> &'static str {
 
 /// Move the stream under `key` out of `members` into `raw`, where its recorded
 /// data stays while transforms rewrite the member.
-pub(super) fn shelve(members: &SequenceSystem, raw: &mut SequenceSystem, key: &Key) {
+pub(super) fn shelve(members: &Store, raw: &mut Store, key: &Key) {
     let sequence = members
         .get(key.as_str())
         .expect("a stream is held before it is transformed")
@@ -235,7 +237,7 @@ pub(super) fn shelve(members: &SequenceSystem, raw: &mut SequenceSystem, key: &K
 
 /// Take the stream under `key` back out of `raw` into `members`, once nothing
 /// transforms it.
-pub(super) fn unshelve(members: &mut SequenceSystem, raw: &mut SequenceSystem, key: &Key) {
+pub(super) fn unshelve(members: &mut Store, raw: &mut Store, key: &Key) {
     let schema = raw.schema(key.as_str()).cloned();
     let sequence = raw
         .remove(key.as_str())
@@ -259,8 +261,8 @@ pub(super) fn unshelve(members: &mut SequenceSystem, raw: &mut SequenceSystem, k
 pub(super) fn evaluate(
     pipeline: &Pipeline,
     indices: &[usize],
-    members: &mut SequenceSystem,
-    raw: &SequenceSystem,
+    members: &mut Store,
+    raw: &Store,
 ) -> Result<Report, UpdateError> {
     let mut report = Report::default();
     let mut previous: BTreeMap<Key, Option<Sequence>> = BTreeMap::new();
@@ -313,7 +315,7 @@ pub(super) fn evaluate(
 
         let before: BTreeSet<Key> = members
             .keys()
-            .filter(|key| writes(processor, key) && members.lineage(key.as_str()).is_some())
+            .filter(|key| writes(processor, key) && members.is_derived(key.as_str()))
             .cloned()
             .collect();
         let after: BTreeSet<Key> = fresh.keys().cloned().collect();
@@ -329,11 +331,7 @@ pub(super) fn evaluate(
             report.changed.insert(key.clone());
         }
         for key in &after {
-            let lineage = fresh
-                .lineage(key.as_str())
-                .cloned()
-                .expect("a processor's run records its output as lineage");
-            let entity = fresh.lineage_entity(key.as_str()).cloned();
+            let entity = fresh.derived_entity(key.as_str()).cloned();
             let sequence = fresh
                 .remove(key.as_str())
                 .expect("every key listed is held");
@@ -342,7 +340,7 @@ pub(super) fn evaluate(
             }
 
             let metadata = members.member_metadata(key.as_str()).cloned();
-            members.insert_derived(key.clone(), sequence, lineage, entity);
+            members.insert_derived(key.clone(), sequence, entity);
             if let (Some(metadata), Some(kept)) =
                 (metadata, members.member_metadata_mut(key.as_str()))
             {

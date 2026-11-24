@@ -4,8 +4,8 @@
 use std::ops::Bound;
 
 use chronoloom::primitives::{IntervalError, TimeIntervalEvent, TimePointEvent};
-use chronoloom::sequence_system::{AnyPointSequence, Key, RecordError, Sequence};
 use chronoloom::sequences::{Extent, TimeIntervalSequence, TimePointSequence};
+use chronoloom::stream_system::{AnyPointSequence, Key, RecordError, Sequence};
 use chronoloom::stream_system::{StreamSystem, Update, UpdateError};
 use chronoloom::{Schema, SchemaError, Value};
 
@@ -33,7 +33,7 @@ fn insert(system: &mut StreamSystem, key: &str, sequence: impl Into<Sequence>) {
 }
 
 /// An update of one push of points.
-fn points_update<T: chronoloom::sequence_system::PointValue>(
+fn points_update<T: chronoloom::stream_system::PointValue>(
     key: &str,
     events: impl IntoIterator<Item = TimePointEvent<T>>,
 ) -> Update {

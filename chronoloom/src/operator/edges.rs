@@ -2,9 +2,9 @@
 
 use crate::primitives::{TimePointEvent, Timestamp};
 use crate::processing::{Edge, ProcessError};
-use crate::sequence_system::{AnyPointSequence, Sequence, SequenceSystem};
 use crate::sequences::attribute::Attribute;
 use crate::sequences::{TimeIntervalSequence, TimePointSequence};
+use crate::store::{AnyPointSequence, Sequence, Store};
 
 use super::chunk::{Chunk, Inputs};
 use super::online::OnlineNode;
@@ -30,7 +30,7 @@ impl Edges {
         })
     }
 
-    pub(super) fn batch(&self, inputs: &SequenceSystem) -> Result<AnyPointSequence, ProcessError> {
+    pub(super) fn batch(&self, inputs: &Store) -> Result<AnyPointSequence, ProcessError> {
         let timeline = self.inner.batch(inputs)?;
         Ok(edges_of(&timeline, &self.label))
     }

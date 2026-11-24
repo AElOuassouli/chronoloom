@@ -3,7 +3,7 @@
 use core::fmt;
 use std::collections::BTreeMap;
 
-use crate::sequence_system::{Key, Sequence, SequenceSystem};
+use crate::store::{Key, Sequence, Store};
 
 use super::errors::ProcessError;
 use super::events::Events;
@@ -93,7 +93,7 @@ impl Recipe {
     /// sequence (add its processor to a stream system); for the grouped outputs, the errors of
     /// reading the records of the group like a projection does, and those of
     /// the formula.
-    pub(crate) fn evaluate(&self, system: &SequenceSystem) -> Result<Sequence, ProcessError> {
+    pub(crate) fn evaluate(&self, system: &Store) -> Result<Sequence, ProcessError> {
         compile_recipe(self).batch(system)
     }
 
@@ -141,7 +141,7 @@ impl fmt::Display for Recipe {
 pub(crate) fn check_declared(
     inputs: &BTreeMap<Key, Input>,
     is_output: impl Fn(&Key) -> bool,
-    system: &SequenceSystem,
+    system: &Store,
 ) -> Result<(), ProcessError> {
     for (key, input) in inputs {
         if is_output(key) {

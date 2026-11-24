@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::processing::{is_under, ProcessError, Recipe};
 use crate::processor::Processor;
-use crate::sequence_system::Key;
+use crate::store::Key;
 
 use super::UpdateError;
 

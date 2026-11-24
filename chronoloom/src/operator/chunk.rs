@@ -5,9 +5,9 @@ use std::ops::Range;
 
 use crate::primitives::{TimePointEvent, Timestamp};
 use crate::processing::Edge;
-use crate::sequence_system::{Key, Sequence};
 use crate::sequences::interval::operations::union_spans;
 use crate::sequences::{Extent, TimeIntervalSequence};
+use crate::store::{Key, Sequence};
 
 /// A timeline or points over the range `[from, to)`, with its extent over
 /// that range: the part of an output that became final in one step of a live

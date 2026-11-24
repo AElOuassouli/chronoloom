@@ -636,22 +636,6 @@ fn a_watermark_may_pass_a_point_of_the_same_update_but_not_the_next_one() {
 }
 
 #[test]
-fn a_sequence_system_refuses_an_update_with_watermarks() {
-    let mut system = chronoloom::SequenceSystem::new();
-    system.insert("p", TimePointSequence::<i64>::new("p"));
-    let mut update = Update::new();
-    update
-        .points("p", [TimePointEvent::new(1, 1_i64)])
-        .advance("p", 5);
-
-    assert_eq!(system.record_update(update), Err(RecordError::Watermark));
-    assert_eq!(
-        system.points::<i64>("p").map(TimePointSequence::len),
-        Some(0)
-    );
-}
-
-#[test]
 fn a_derived_stream_keeps_its_metadata_and_stays_derived_as_chunks_are_appended() {
     let mut room = room();
     room.advance("motion", 5).unwrap();

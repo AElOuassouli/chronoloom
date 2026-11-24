@@ -6,16 +6,16 @@ use crate::sequences::{TimeIntervalSequence, TimePointSequence};
 
 use super::erased::{AnyPointSequence, PointValue};
 
-/// A sequence of either shape, as a [`SequenceSystem`] holds it.
+/// A sequence of either shape, as a [`StreamSystem`] holds it.
 ///
-/// Anything that converts into one can be inserted into a system directly, so
-/// this is mostly met when reading a system back: matching on it says which
+/// Anything that converts into one can be inserted into a stream system directly, so
+/// this is mostly met when reading one back: matching on it says which
 /// shape a member is.
 ///
 /// ```
 /// use chronoloom::primitives::TimeIntervalEvent;
 /// use chronoloom::sequences::TimeIntervalSequence;
-/// use chronoloom::sequence_system::Sequence;
+/// use chronoloom::Sequence;
 ///
 /// let up = TimeIntervalSequence::from_spans("up", vec![TimeIntervalEvent::span(0, 10)?]);
 ///
@@ -26,7 +26,7 @@ use super::erased::{AnyPointSequence, PointValue};
 /// # Ok::<(), chronoloom::primitives::IntervalError>(())
 /// ```
 ///
-/// [`SequenceSystem`]: super::SequenceSystem
+/// [`StreamSystem`]: crate::StreamSystem
 #[derive(Debug, Clone, PartialEq)]
 pub enum Sequence {
     /// Many observations over time, each carrying its own value.

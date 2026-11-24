@@ -3,7 +3,7 @@
 use core::any::type_name;
 use core::fmt;
 
-use crate::sequence_system::{Key, Sequence};
+use crate::store::{Key, Sequence};
 use crate::values::{Schema, Value};
 
 use super::edge::Edge;

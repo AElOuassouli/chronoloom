@@ -7,7 +7,7 @@ use crate::primitives::{TimeIntervalEvent, TimePointEvent, Timestamp};
 use crate::sequences::TimePointSequence;
 use crate::values::{Schema, SchemaError, Value};
 
-use crate::sequence_system::{ErasedPoints, Key, PointValue};
+use crate::store::{ErasedPoints, Key, PointValue};
 
 /// Points and spans to record into the streams of a [`StreamSystem`], by key,
 /// all or nothing.

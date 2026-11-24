@@ -2,9 +2,9 @@
 
 use crate::primitives::{TimePointEvent, Timestamp};
 use crate::processing::{Kind, ProcessError};
-use crate::sequence_system::{AnyPointSequence, Key, PointValue, Sequence, SequenceSystem};
 use crate::sequences::attribute::Attribute;
 use crate::sequences::TimePointSequence;
+use crate::store::{AnyPointSequence, Key, PointValue, Sequence, Store};
 use crate::values::Value;
 
 use super::chunk::{Chunk, Inputs};
@@ -37,7 +37,7 @@ impl Project {
         })
     }
 
-    pub(super) fn batch(&self, inputs: &SequenceSystem) -> Result<AnyPointSequence, ProcessError> {
+    pub(super) fn batch(&self, inputs: &Store) -> Result<AnyPointSequence, ProcessError> {
         self.read(records(&self.key, inputs)?)
     }
 

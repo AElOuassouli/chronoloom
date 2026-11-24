@@ -3,7 +3,7 @@
 
 #[cfg(doc)]
 use crate::processor::Processor;
-use crate::sequence_system::SequenceSystem;
+use crate::store::Store;
 
 use super::pipeline::Pipeline;
 use super::{Batch, Mode};
@@ -13,7 +13,7 @@ use super::{Batch, Mode};
 ///
 /// # Streams and derived streams
 ///
-/// A stream system holds two kinds of member, each under its own [`Key`]:
+/// A stream system holds two kinds of member, each under its own [`Key`](crate::Key):
 ///
 /// - **Streams**, the raw data: point sequences of any value type and
 ///   timelines, with their extent, metadata and schema. They are what is
@@ -162,10 +162,10 @@ use super::{Batch, Mode};
 pub struct StreamSystem<M: Mode = Batch> {
     /// Streams and derived streams together, so that a processor reads both
     /// the same way.
-    pub(super) members: SequenceSystem,
+    pub(super) members: Store,
     /// The recorded data of the streams that transforms rewrite: their
     /// `members` entry holds the last version.
-    pub(super) raw: SequenceSystem,
+    pub(super) raw: Store,
     /// The processors, each after what it reads.
     pub(super) pipeline: Pipeline,
     pub(super) mode: M,

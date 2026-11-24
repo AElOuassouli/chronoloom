@@ -15,6 +15,9 @@ mod system;
 pub(crate) mod update;
 
 pub use crate::operator::Chunk;
+pub use crate::store::{
+    AnyPointSequence, AnyValue, Key, Metadata, PointValue, RecordError, Sequence,
+};
 pub use errors::UpdateError;
 #[cfg(feature = "serde")]
 pub(crate) use mode::LiveNode;

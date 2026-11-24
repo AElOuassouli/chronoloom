@@ -13,7 +13,7 @@ use serde::{de, ser, Deserialize, Deserializer, Serialize, Serializer};
 use crate::primitives::Timestamp;
 use crate::processing::Edge;
 use crate::processor::Processor;
-use crate::sequence_system::{Key, Metadata, Sequence};
+use crate::store::{Key, Metadata, Sequence};
 use crate::stream_system::checkpoint::{Checkpoint, CheckpointDerived, CheckpointStream};
 use crate::stream_system::{Batch, Live, LiveNode, Mode, StreamSystem};
 use crate::values::{Schema, Value};

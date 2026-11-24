@@ -22,8 +22,8 @@ static ANY: Schema = Schema::Any;
 ///
 /// [`check`] says whether a value has the shape, and when it does not, where:
 /// the [`SchemaError`] names the dotted path of the first offending value in
-/// field order, and what was expected and found there. A system holds a schema
-/// for a member of record values, see [`SequenceSystem::set_schema`]. A schema
+/// field order, and what was expected and found there. A stream system holds a schema
+/// for a stream of record values, see [`StreamSystem::set_schema`]. A schema
 /// is plain data, so it can be compared, cloned and printed with `Debug`.
 ///
 /// ```
@@ -50,7 +50,7 @@ static ANY: Schema = Schema::Any;
 /// assert_eq!((error.expected.as_str(), error.found.as_str()), ("integer", "text"));
 /// ```
 ///
-/// [`SequenceSystem::set_schema`]: crate::SequenceSystem::set_schema
+/// [`StreamSystem::set_schema`]: crate::StreamSystem::set_schema
 /// [`check`]: Schema::check
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "json-schema", derive(schemars::JsonSchema))]

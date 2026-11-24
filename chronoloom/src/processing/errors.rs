@@ -2,7 +2,7 @@
 
 use core::fmt;
 
-use crate::sequence_system::Key;
+use crate::store::Key;
 use crate::values::SchemaError;
 
 use super::kind::Kind;
@@ -64,7 +64,7 @@ pub enum ProcessError {
         found: &'static str,
     },
 
-    /// A derived member has a schema, and what its lineage evaluates to again
+    /// A derived member has a schema, and what its processor evaluates to again
     /// does not have its shape.
     SchemaMismatch {
         /// The member that was derived again.

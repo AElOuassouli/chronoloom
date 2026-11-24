@@ -2,8 +2,8 @@
 
 use crate::primitives::Timestamp;
 use crate::processing::ProcessError;
-use crate::sequence_system::{Sequence, SequenceSystem};
 use crate::sequences::TimeIntervalSequence;
+use crate::store::{Sequence, Store};
 
 use super::chunk::{Chunk, Inputs};
 use super::online::OnlineNode;
@@ -35,10 +35,7 @@ impl Shift {
         })
     }
 
-    pub(super) fn batch(
-        &self,
-        inputs: &SequenceSystem,
-    ) -> Result<TimeIntervalSequence, ProcessError> {
+    pub(super) fn batch(&self, inputs: &Store) -> Result<TimeIntervalSequence, ProcessError> {
         Ok(self
             .inner
             .batch(inputs)?

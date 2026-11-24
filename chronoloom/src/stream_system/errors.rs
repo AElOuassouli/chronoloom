@@ -4,7 +4,7 @@ use core::fmt;
 
 use crate::primitives::Timestamp;
 use crate::processing::ProcessError;
-use crate::sequence_system::{Key, RecordError};
+use crate::store::{Key, RecordError};
 
 /// Why a change to a [`StreamSystem`] was refused. Nothing changed in any
 /// case.

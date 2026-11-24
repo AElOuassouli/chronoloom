@@ -2,7 +2,7 @@
 
 use core::fmt;
 
-use crate::sequence_system::Key;
+use crate::store::Key;
 
 use super::condition::Pattern;
 use super::formula::Formula;

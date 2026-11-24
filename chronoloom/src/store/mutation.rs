@@ -1,36 +1,21 @@
 //! Changing a system: which sequences it holds, and recording events into
 //! them as they arrive.
 
-use core::any::{self, Any};
+use core::any;
 
-use crate::primitives::{TimeIntervalEvent, TimePointEvent};
-use crate::processing::Recipe;
-use crate::sequences::{Extent, TimePointSequence};
+use crate::sequences::Extent;
 use crate::values::{Schema, SchemaError, Value};
 
-use super::{Key, Member, Metadata, RecordError, Sequence, SequenceSystem};
+use super::{Key, Member, Metadata, RecordError, Sequence, Store};
 use crate::stream_system::update::Pending;
 use crate::stream_system::Update;
 
-impl SequenceSystem {
+impl Store {
     /// Add a sequence under `key`, returning whichever sequence that key filed
     /// before.
     ///
     /// The member starts with empty metadata, and replacing a member drops the
     /// metadata of the old one.
-    ///
-    /// ```
-    /// use chronoloom::sequences::{TimeIntervalSequence, TimePointSequence};
-    /// use chronoloom::sequence_system::SequenceSystem;
-    ///
-    /// let mut system = SequenceSystem::new();
-    /// assert!(system.insert("up", TimeIntervalSequence::new("up")).is_none());
-    ///
-    /// // Same key, other shape: the timeline is displaced.
-    /// let displaced = system.insert("up", TimePointSequence::<bool>::new("up"));
-    /// assert!(displaced.is_some_and(|old| old.as_time_interval().is_some()));
-    /// assert!(system.points::<bool>("up").is_some());
-    /// ```
     pub fn insert(
         &mut self,
         key: impl Into<Key>,
@@ -39,8 +24,7 @@ impl SequenceSystem {
         let member = Member {
             sequence: sequence.into(),
             metadata: Metadata::new(),
-            frontier: None,
-            lineage: None,
+            derived: false,
             entity: None,
             schema: None,
         };
@@ -50,33 +34,26 @@ impl SequenceSystem {
             .map(|replaced| replaced.sequence)
     }
 
-    /// Add a sequence written by `output` under `key`, as [`insert`] does but
-    /// keeping the output as the member's lineage.
+    /// Add a sequence written by a processor under `key`, as [`insert`] does
+    /// but marking the member as derived.
     ///
-    /// [`insert`]: SequenceSystem::insert
-    pub(crate) fn insert_derived(
-        &mut self,
-        key: Key,
-        sequence: Sequence,
-        output: Recipe,
-        entity: Option<Value>,
-    ) {
+    /// [`insert`]: Store::insert
+    pub(crate) fn insert_derived(&mut self, key: Key, sequence: Sequence, entity: Option<Value>) {
         let derived = Member {
             sequence,
             metadata: Metadata::new(),
-            frontier: None,
-            lineage: Some(output),
+            derived: true,
             entity,
             schema: None,
         };
         self.members.insert(key, derived);
     }
 
-    /// Drop the lineage of the member under `key`, because its data has been
-    /// recorded into.
-    fn forget_lineage(&mut self, key: &str) {
+    /// Mark the member under `key` as no longer derived, because its data has
+    /// been recorded into.
+    fn forget_derivation(&mut self, key: &str) {
         if let Some(member) = self.members.get_mut(key) {
-            member.lineage = None;
+            member.derived = false;
             member.entity = None;
         }
     }
@@ -104,7 +81,7 @@ impl SequenceSystem {
     /// Require every value of the member for `key` to have the shape `schema`,
     /// from now on, replacing the schema it had.
     ///
-    /// See [`SequenceSystem`] for what a schema is checked against and kept
+    /// See [`Store`] for what a schema is checked against and kept
     /// through.
     ///
     /// # Errors
@@ -145,109 +122,6 @@ impl SequenceSystem {
         self.members.remove(key).map(|member| member.sequence)
     }
 
-    /// Drop every sequence and its metadata, leaving the system empty. The
-    /// metadata of the system as a whole stays.
-    pub fn clear(&mut self) {
-        self.members.clear();
-    }
-
-    /// Record a point event into the sequence for `key`.
-    ///
-    /// The sequence keeps itself in time order, so this is amortized constant
-    /// for an event arriving after everything already recorded — the usual
-    /// case for a stream.
-    ///
-    /// # Errors
-    ///
-    /// If no sequence is for `key`, if it is a timeline, or if its events
-    /// carry another value type than `T`. Nothing is recorded in any of those
-    /// cases.
-    ///
-    /// ```
-    /// use chronoloom::primitives::TimePointEvent;
-    /// use chronoloom::sequences::TimePointSequence;
-    /// use chronoloom::sequence_system::{RecordError, SequenceSystem};
-    ///
-    /// let mut system = SequenceSystem::new();
-    /// system.insert("temperature", TimePointSequence::<f64>::new("temperature"));
-    ///
-    /// system.record_point("temperature", TimePointEvent::new(10, 21.5_f64))?;
-    ///
-    /// // An integer literal is not an `f64`, so this is refused.
-    /// let refused = system.record_point("temperature", TimePointEvent::new(11, 22));
-    /// assert!(matches!(refused, Err(RecordError::ValueTypeMismatch { .. })));
-    /// # Ok::<(), RecordError>(())
-    /// ```
-    pub fn record_point<T: 'static>(
-        &mut self,
-        key: &str,
-        event: TimePointEvent<T>,
-    ) -> Result<(), RecordError> {
-        self.reject_late(key, Some(event.timestamp()))?;
-
-        let member = self.members.get_mut(key).ok_or_else(|| unknown(key))?;
-        let recorded = match &mut member.sequence {
-            Sequence::TimePoint(points) => {
-                let expected = points.value_type_name();
-                let typed = points
-                    .as_erased_mut()
-                    .as_any_mut()
-                    .downcast_mut::<TimePointSequence<T>>()
-                    .ok_or_else(|| RecordError::ValueTypeMismatch {
-                        key: key.to_owned(),
-                        expected,
-                        found: any::type_name::<T>(),
-                    })?;
-
-                let as_value: &dyn Any = &event;
-                if let (Some(schema), Some(value)) = (
-                    &member.schema,
-                    as_value.downcast_ref::<TimePointEvent<Value>>(),
-                ) {
-                    schema
-                        .check(value.value())
-                        .map_err(|error| schema_mismatch(key, error))?;
-                }
-
-                typed.insert(event);
-                member.lineage = None;
-                member.entity = None;
-                Ok(())
-            }
-            Sequence::TimeInterval(_) => Err(shape_mismatch(key)),
-        };
-
-        self.confine_to_frontier(key);
-        recorded
-    }
-
-    /// Record a span into the timeline for `key`, merging it into what the
-    /// timeline already covers.
-    ///
-    /// # Errors
-    ///
-    /// If no sequence is for `key`, or if it is a point sequence. Nothing is
-    /// recorded in either case.
-    pub fn record_span(
-        &mut self,
-        key: &str,
-        span: TimeIntervalEvent<()>,
-    ) -> Result<(), RecordError> {
-        self.reject_late(key, Some(span.start()))?;
-
-        let recorded = match self.member_mut(key)? {
-            Sequence::TimeInterval(timeline) => {
-                timeline.insert(span);
-                self.forget_lineage(key);
-                Ok(())
-            }
-            Sequence::TimePoint(_) => Err(shape_mismatch(key)),
-        };
-
-        self.confine_to_frontier(key);
-        recorded
-    }
-
     /// Record every event in `update`, all or nothing.
     ///
     /// Every push in the update is checked against its sequence before anything
@@ -258,40 +132,14 @@ impl SequenceSystem {
     ///
     /// # Errors
     ///
-    /// [`RecordError::Watermark`] if the update carries watermarks, which only a
-    /// live stream system moves frontiers with. Otherwise the first push, in
-    /// push order, that [`record_point`] or [`record_span`] would have refused,
+    /// The first push, in push order, that [`record_point`] or [`record_span`] would have refused,
     /// with the same error.
     ///
-    /// ```
-    /// use chronoloom::primitives::TimePointEvent;
-    /// use chronoloom::sequences::TimePointSequence;
-    /// use chronoloom::sequence_system::{RecordError, SequenceSystem};
-    /// use chronoloom::stream_system::Update;
-    ///
-    /// let mut system = SequenceSystem::new();
-    /// system.insert("temperature", TimePointSequence::<f64>::new("temperature"));
-    ///
-    /// let mut update = Update::new();
-    /// update
-    ///     .points("temperature", [TimePointEvent::new(10, 21.5_f64)])
-    ///     .points("humidity", [TimePointEvent::new(10, 0.4_f64)]);
-    ///
-    /// // No sequence for `humidity`, so not even the temperature goes in.
-    /// let refused = system.record_update(update);
-    /// assert!(matches!(refused, Err(RecordError::Unknown { .. })));
-    /// assert_eq!(system.points::<f64>("temperature").map(|s| s.len()), Some(0));
-    /// ```
-    ///
-    /// [`record_point`]: SequenceSystem::record_point
-    /// [`record_span`]: SequenceSystem::record_span
+    /// [`record_point`]: Store::record_point
+    /// [`record_span`]: Store::record_span
     pub fn record_update(&mut self, update: Update) -> Result<(), RecordError> {
-        if !update.watermarks.is_empty() {
-            return Err(RecordError::Watermark);
-        }
         for (key, pending) in &update.chunks {
             self.check(key.as_str(), pending)?;
-            self.reject_late(key.as_str(), pending.earliest())?;
         }
 
         for (key, pending) in update.chunks {
@@ -306,8 +154,7 @@ impl SequenceSystem {
                 _ => unreachable!("every push was checked against its sequence above"),
             }
 
-            self.confine_to_frontier(key.as_str());
-            self.forget_lineage(key.as_str());
+            self.forget_derivation(key.as_str());
         }
 
         Ok(())
@@ -316,7 +163,7 @@ impl SequenceSystem {
     /// Append `next`, the sequence over the range that follows what the
     /// derived member under `key` holds, in place: its spans or points are
     /// added, and its extent grows over the extent of `next`. The member keeps
-    /// its metadata and lineage.
+    /// its metadata.
     ///
     /// # Panics
     ///
@@ -399,25 +246,9 @@ fn shape_mismatch(key: &str) -> RecordError {
     }
 }
 
-impl SequenceSystem {
+impl Store {
     /// Narrow every member's extent to its overlap with `extent`, cutting the
     /// data outside it.
-    ///
-    /// ```
-    /// use chronoloom::primitives::TimeIntervalEvent;
-    /// use chronoloom::sequences::{Extent, TimeIntervalSequence};
-    /// use chronoloom::sequence_system::SequenceSystem;
-    ///
-    /// let mut system = SequenceSystem::new();
-    /// system.insert("up", TimeIntervalSequence::from_spans("up", vec![TimeIntervalEvent::span(0, 50)?]));
-    ///
-    /// system.observe(&Extent::from_spans(vec![TimeIntervalEvent::span(0, 20)?]));
-    ///
-    /// let up = system.get("up").and_then(|member| member.as_time_interval()).unwrap();
-    /// assert_eq!(up.active_duration(), 20);
-    /// assert!(!up.is_observed(30));
-    /// # Ok::<(), chronoloom::primitives::IntervalError>(())
-    /// ```
     pub fn observe(&mut self, extent: &Extent) {
         for member in self.members.values_mut() {
             match &mut member.sequence {

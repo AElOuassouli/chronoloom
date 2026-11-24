@@ -1,9 +1,9 @@
 //! The tree a formula compiles into.
 
 use crate::processing::{Events, Formula, ProcessError, Recipe};
-use crate::sequence_system::Key;
-use crate::sequence_system::{AnyPointSequence, Sequence, SequenceSystem};
 use crate::sequences::TimeIntervalSequence;
+use crate::store::Key;
+use crate::store::{AnyPointSequence, Sequence, Store};
 
 use super::and::And;
 use super::between::Between;
@@ -69,7 +69,7 @@ pub(crate) enum RecipePlan {
 
 impl RecipePlan {
     /// The sequence of the recipe over the whole `inputs`.
-    pub(crate) fn batch(&self, inputs: &SequenceSystem) -> Result<Sequence, ProcessError> {
+    pub(crate) fn batch(&self, inputs: &Store) -> Result<Sequence, ProcessError> {
         match self {
             Self::Timeline(plan) => plan.batch(inputs).map(Sequence::from),
             Self::Points(plan) => plan.batch(inputs).map(Sequence::from),
@@ -94,7 +94,7 @@ impl RecipePlan {
     pub(crate) fn members(
         &self,
         output: &Key,
-        inputs: &SequenceSystem,
+        inputs: &Store,
     ) -> Result<Vec<Member>, ProcessError> {
         match self {
             Self::PerEntity(operator) => operator.members(output, inputs),
@@ -144,10 +144,7 @@ impl TimelinePlan {
     }
 
     /// The labelled timeline of the plan over the whole `inputs`.
-    pub(crate) fn batch(
-        &self,
-        inputs: &SequenceSystem,
-    ) -> Result<TimeIntervalSequence, ProcessError> {
+    pub(crate) fn batch(&self, inputs: &Store) -> Result<TimeIntervalSequence, ProcessError> {
         let mut timeline = self.root.batch(inputs)?;
         timeline.set_attribute(self.label.clone());
         Ok(timeline)
@@ -178,7 +175,7 @@ impl PointsPlan {
     }
 
     /// The labelled points of the plan over the whole `inputs`.
-    pub(crate) fn batch(&self, inputs: &SequenceSystem) -> Result<AnyPointSequence, ProcessError> {
+    pub(crate) fn batch(&self, inputs: &Store) -> Result<AnyPointSequence, ProcessError> {
         self.root.batch(inputs)
     }
 }
@@ -193,7 +190,7 @@ impl PointsNode {
         }
     }
 
-    fn batch(&self, inputs: &SequenceSystem) -> Result<AnyPointSequence, ProcessError> {
+    fn batch(&self, inputs: &Store) -> Result<AnyPointSequence, ProcessError> {
         match self {
             Self::Edges(operator) => operator.batch(inputs),
             Self::Matching(operator) => operator.batch(inputs),
@@ -243,10 +240,7 @@ impl Node {
         }
     }
 
-    pub(super) fn batch(
-        &self,
-        inputs: &SequenceSystem,
-    ) -> Result<TimeIntervalSequence, ProcessError> {
+    pub(super) fn batch(&self, inputs: &Store) -> Result<TimeIntervalSequence, ProcessError> {
         match self {
             Self::State(operator) => operator.batch(inputs),
             Self::Occurs(operator) => operator.batch(inputs),

@@ -5,10 +5,10 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::primitives::{TimePointEvent, Timestamp};
 use crate::processing::{entity_of, member_key, render, EntityId, Group, ProcessError};
-use crate::sequence_system::{Key, Sequence};
 use crate::sequences::attribute::Attribute;
 use crate::sequences::interval::operations::union_spans;
 use crate::sequences::{Extent, TimeIntervalSequence, TimePointSequence};
+use crate::store::{Key, Sequence};
 use crate::values::Value;
 
 use super::chunk::{Chunk, Inputs};

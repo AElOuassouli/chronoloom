@@ -2,7 +2,7 @@
 
 use core::any::type_name;
 
-use crate::sequence_system::Key;
+use crate::store::Key;
 use crate::values::{Schema, Value};
 
 use super::condition::{Condition, FieldCondition, Pattern};

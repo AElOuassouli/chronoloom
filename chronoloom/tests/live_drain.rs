@@ -13,8 +13,8 @@ use chronoloom::processor::Processor;
 use chronoloom::stream_system::{Live, StreamSystem, Update, UpdateError};
 use chronoloom::Events;
 use chronoloom::{
-    AnyValue, Condition, Edge, Formula, Group, Pattern, ProcessError, Recipe, Sequence,
-    TimeIntervalSequence, TimePointEvent, TimePointSequence, Timestamp, Value,
+    AnyValue, Condition, Edge, Formula, Group, Pattern, ProcessError, Recipe, RecordError, Schema,
+    Sequence, TimeIntervalSequence, TimePointEvent, TimePointSequence, Timestamp, Value,
 };
 
 use common::{bounds, for_each_seed, span, Random};
@@ -895,4 +895,114 @@ fn into_live_keeps_the_metadata_of_streams_and_derived_streams() {
         Some(&"lobby".to_owned())
     );
     assert!(live.is_derived("presence"));
+}
+
+/// A live system with one stream of records `{ n: Integer }`, schema set
+/// before going live, starting at 0.
+fn schema_live() -> StreamSystem<Live> {
+    let mut batch = StreamSystem::new();
+    batch
+        .insert_stream("records", TimePointSequence::<Value>::new("records"))
+        .unwrap();
+    batch
+        .set_schema("records", Schema::record([("n", Schema::Integer)]))
+        .unwrap();
+    batch.into_live(0).unwrap()
+}
+
+fn record(n: i64) -> Value {
+    Value::record([("n", Value::from(n))])
+}
+
+fn wrong_record() -> Value {
+    Value::record([("n", Value::from("text"))])
+}
+
+#[test]
+fn a_live_stream_reports_lateness_before_the_schema() {
+    let mut live = schema_live();
+    let mut update = Update::new();
+    update
+        .points("records", [TimePointEvent::new(5, record(1))])
+        .advance("records", 10);
+    live.update(update).unwrap();
+
+    // Late and also without the shape: lateness is reported first.
+    let mut update = Update::new();
+    update.points("records", [TimePointEvent::new(3, wrong_record())]);
+    assert!(matches!(
+        live.update(update),
+        Err(UpdateError::Late { at: 3, .. })
+    ));
+
+    // On time and without the shape: the schema refuses it.
+    let mut update = Update::new();
+    update.points("records", [TimePointEvent::new(12, wrong_record())]);
+    assert!(matches!(
+        live.update(update),
+        Err(UpdateError::Record(RecordError::SchemaMismatch { .. }))
+    ));
+    assert_eq!(
+        live.points::<Value>("records").map(TimePointSequence::len),
+        Some(1)
+    );
+}
+
+#[test]
+fn draining_keeps_the_schema_on_both_halves() {
+    let mut live = schema_live();
+    let mut update = Update::new();
+    update
+        .points(
+            "records",
+            [
+                TimePointEvent::new(5, record(1)),
+                TimePointEvent::new(15, record(2)),
+            ],
+        )
+        .advance("records", 10);
+    live.update(update).unwrap();
+
+    let drained = live.drain();
+    assert!(live.schema("records").is_some());
+    assert_eq!(live.schema("records"), drained.schema("records"));
+    assert_eq!(
+        drained
+            .points::<Value>("records")
+            .map(TimePointSequence::len),
+        Some(1)
+    );
+    assert_eq!(
+        live.points::<Value>("records").map(TimePointSequence::len),
+        Some(1)
+    );
+
+    // What stays still checks what arrives.
+    let mut update = Update::new();
+    update.points("records", [TimePointEvent::new(20, wrong_record())]);
+    assert!(matches!(
+        live.update(update),
+        Err(UpdateError::Record(RecordError::SchemaMismatch { .. }))
+    ));
+}
+
+#[test]
+fn a_stream_with_nothing_final_is_drained_empty_with_its_extent() {
+    let mut live = schema_live();
+    let mut update = Update::new();
+    update
+        .points("records", [TimePointEvent::new(15, record(1))])
+        .advance("records", 10);
+    live.update(update).unwrap();
+
+    let drained = live.drain();
+    let part = drained
+        .points::<Value>("records")
+        .expect("present in the drained system");
+    assert!(part.is_empty());
+    assert!(part.is_observed(5) && !part.is_observed(12));
+    assert_eq!(
+        live.points::<Value>("records").map(TimePointSequence::len),
+        Some(1)
+    );
 }

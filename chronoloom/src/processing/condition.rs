@@ -4,8 +4,8 @@ use core::any::{self, Any};
 use core::fmt;
 
 use crate::primitives::Timestamp;
-use crate::sequence_system::{AnyPointSequence, Key, PointValue};
 use crate::sequences::TimePointSequence;
+use crate::store::{AnyPointSequence, Key, PointValue};
 use crate::values::Value;
 
 /// What a point's value must satisfy, as data over the value type `T`.

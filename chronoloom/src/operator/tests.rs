@@ -13,8 +13,8 @@ use crate::primitives::{TimeIntervalEvent, TimePointEvent, Timestamp};
 use crate::processing::{
     render, Condition, Events, Formula, Group, Kind, OpenEnd, Pattern, ProcessError, Recipe,
 };
-use crate::sequence_system::{Key, Sequence, SequenceSystem};
 use crate::sequences::{Extent, TimeIntervalSequence, TimePointSequence};
+use crate::store::{Key, Sequence, Store};
 use crate::values::Value;
 use crate::AnyPointSequence;
 
@@ -118,8 +118,8 @@ fn records(random: &mut Random, label: &str) -> TimePointSequence<Value> {
     TimePointSequence::from_events(label, events).with_observed(extent(random))
 }
 
-fn system(random: &mut Random) -> SequenceSystem {
-    let mut system = SequenceSystem::new();
+fn system(random: &mut Random) -> Store {
+    let mut system = Store::new();
     system.insert("a", timeline(random, "a"));
     system.insert("b", timeline(random, "b"));
     system.insert("p", points(random, "p"));
@@ -279,7 +279,7 @@ impl Stepper for OnlinePoints {
 /// different points.
 fn run_online(
     plan: &TimelinePlan,
-    system: &SequenceSystem,
+    system: &Store,
     read: &[Key],
     stops: &BTreeMap<Key, Vec<Timestamp>>,
 ) -> Result<Chunk, ProcessError> {
@@ -289,7 +289,7 @@ fn run_online(
 /// Step `node` over `system` as [`run_online`] does, and join the chunks.
 fn drive(
     mut node: impl Stepper,
-    system: &SequenceSystem,
+    system: &Store,
     read: &[Key],
     stops: &BTreeMap<Key, Vec<Timestamp>>,
 ) -> Result<Chunk, ProcessError> {
@@ -337,7 +337,7 @@ fn drive(
 /// [`run_online`] with every member of `system` stopping at the same `stops`.
 fn run_together(
     plan: &TimelinePlan,
-    system: &SequenceSystem,
+    system: &Store,
     stops: &[Timestamp],
 ) -> Result<Chunk, ProcessError> {
     let read: Vec<Key> = system.keys().cloned().collect();
@@ -349,7 +349,7 @@ fn run_together(
 }
 
 /// Every member of `system` with its own stops.
-fn stops_of(random: &mut Random, system: &SequenceSystem) -> BTreeMap<Key, Vec<Timestamp>> {
+fn stops_of(random: &mut Random, system: &Store) -> BTreeMap<Key, Vec<Timestamp>> {
     let landmarks: Vec<Timestamp> = system
         .keys()
         .filter_map(|key| match system.get(key.as_str()) {
@@ -521,7 +521,7 @@ fn joined_online_chunks_of_shift_equal_batch() {
 
 #[test]
 fn a_look_ahead_shift_lags_its_input() {
-    let mut system = SequenceSystem::new();
+    let mut system = Store::new();
     system.insert(
         "a",
         TimeIntervalSequence::from_spans("a", vec![TimeIntervalEvent::raw(10, 20)]),
@@ -540,8 +540,8 @@ fn a_look_ahead_shift_lags_its_input() {
     assert_eq!(bounds(chunk.timeline().expect("a timeline")), [(5, 17)]);
 }
 
-fn between_system() -> SequenceSystem {
-    let mut system = SequenceSystem::new();
+fn between_system() -> Store {
+    let mut system = Store::new();
     let events = vec![
         TimePointEvent::new(2, 1),
         TimePointEvent::new(5, 2),
@@ -613,7 +613,7 @@ fn a_timeout_cut_at_a_chunk_boundary_is_kept() {
 
 #[test]
 fn a_span_cut_at_a_boundary_merges_back() {
-    let mut system = SequenceSystem::new();
+    let mut system = Store::new();
     system.insert(
         "up",
         TimeIntervalSequence::from_spans("up", vec![TimeIntervalEvent::raw(0, 10)]),
@@ -628,7 +628,7 @@ fn a_span_cut_at_a_boundary_merges_back() {
 
 #[test]
 fn a_missing_or_misshapen_member_is_refused() {
-    let mut system = SequenceSystem::new();
+    let mut system = Store::new();
     system.insert("p", points(&mut Random::new(1), "p"));
 
     let missing = TimelinePlan::compile(&Formula::state("up"));
@@ -748,7 +748,7 @@ fn appending_points_of_another_value_type_changes_nothing() {
 
 #[test]
 fn edges_stepped_in_chunks_have_no_edge_at_a_cut_and_forget_a_closed_span() {
-    let mut system = SequenceSystem::new();
+    let mut system = Store::new();
     system.insert(
         "a",
         TimeIntervalSequence::from_spans(
@@ -861,7 +861,7 @@ fn recipe_keys(recipe: &Recipe) -> Vec<Key> {
 /// member, by the name of its entity.
 fn drive_recipe(
     mut node: OnlineRecipe,
-    system: &SequenceSystem,
+    system: &Store,
     read: &[Key],
     stops: &BTreeMap<Key, Vec<Timestamp>>,
 ) -> Result<BTreeMap<String, Chunk>, ProcessError> {
@@ -972,7 +972,7 @@ fn joined_online_entity_chunks_equal_batch() {
 
 #[test]
 fn an_entity_seen_mid_stream_is_unobserved_before_its_first_record() {
-    let mut system = SequenceSystem::new();
+    let mut system = Store::new();
     system.insert(
         "r",
         TimePointSequence::from_events(
@@ -1007,7 +1007,7 @@ fn an_entity_seen_mid_stream_is_unobserved_before_its_first_record() {
 
 #[test]
 fn entities_that_share_a_name_are_refused() {
-    let mut system = SequenceSystem::new();
+    let mut system = Store::new();
     system.insert(
         "r",
         TimePointSequence::from_events(

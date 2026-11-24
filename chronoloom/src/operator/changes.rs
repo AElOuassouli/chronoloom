@@ -2,7 +2,7 @@
 
 use crate::primitives::Timestamp;
 use crate::processing::ProcessError;
-use crate::sequence_system::{AnyPointSequence, Key, Sequence, SequenceSystem};
+use crate::store::{AnyPointSequence, Key, Sequence, Store};
 
 use super::chunk::{Chunk, Inputs};
 use super::online_points::OnlinePoints;
@@ -28,7 +28,7 @@ impl Changes {
         })
     }
 
-    pub(super) fn batch(&self, inputs: &SequenceSystem) -> Result<AnyPointSequence, ProcessError> {
+    pub(super) fn batch(&self, inputs: &Store) -> Result<AnyPointSequence, ProcessError> {
         let mut changes = points(&self.key, inputs)?.changes();
         changes.set_attribute(self.label.clone());
 

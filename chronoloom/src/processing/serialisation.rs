@@ -4,7 +4,7 @@
 
 use serde::{de, ser, Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::sequence_system::Key;
+use crate::store::Key;
 use crate::values::Value;
 
 use super::condition::{Condition, FieldCondition, Pattern};

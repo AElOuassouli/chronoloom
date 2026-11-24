@@ -2,8 +2,8 @@
 
 use crate::primitives::Timestamp;
 use crate::processing::ProcessError;
-use crate::sequence_system::SequenceSystem;
 use crate::sequences::TimeIntervalSequence;
+use crate::store::Store;
 
 use super::chunk::{Chunk, Inputs};
 use super::combination::Combination;
@@ -31,10 +31,7 @@ impl Or {
         )))
     }
 
-    pub(super) fn batch(
-        &self,
-        inputs: &SequenceSystem,
-    ) -> Result<TimeIntervalSequence, ProcessError> {
+    pub(super) fn batch(&self, inputs: &Store) -> Result<TimeIntervalSequence, ProcessError> {
         let mut parts = self.parts.iter();
         let Some(first) = parts.next() else {
             // The identity of the union: active nowhere.

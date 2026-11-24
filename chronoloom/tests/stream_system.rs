@@ -12,7 +12,7 @@ use chronoloom::processor::Processor;
 use chronoloom::stream_system::{StreamSystem, Update, UpdateError};
 use chronoloom::{
     Condition, Events, Extent, Formula, Group, Pattern, ProcessError, Recipe, Schema,
-    SequenceSystem, TimeIntervalSequence, TimePointEvent, TimePointSequence, Value,
+    TimeIntervalSequence, TimePointEvent, TimePointSequence, Value,
 };
 
 use common::{bounds, for_each_seed, span, Random};
@@ -408,16 +408,22 @@ fn a_slice_cuts_the_derived_streams_of_the_whole_system() {
 }
 
 /// The streams the generator's processors read, empty.
-fn empty_streams() -> SequenceSystem {
-    let mut streams = SequenceSystem::new();
+fn empty_streams() -> StreamSystem {
+    let mut streams = StreamSystem::new();
     for key in POINT_INPUTS {
-        streams.insert(key, TimePointSequence::<i64>::new(key));
+        streams
+            .insert_stream(key, TimePointSequence::<i64>::new(key))
+            .unwrap();
     }
     for key in RECORD_INPUTS {
-        streams.insert(key, TimePointSequence::<Value>::new(key));
+        streams
+            .insert_stream(key, TimePointSequence::<Value>::new(key))
+            .unwrap();
     }
     for key in STATE_INPUTS {
-        streams.insert(key, TimeIntervalSequence::new(key));
+        streams
+            .insert_stream(key, TimeIntervalSequence::new(key))
+            .unwrap();
     }
     streams
 }
@@ -481,11 +487,11 @@ fn derived_streams_always_equal_the_processors_run_from_scratch() {
 
         for (update, for_oracle) in updates(random, &stream) {
             let previous = system.clone();
-            oracle.record_update(for_oracle).unwrap();
+            oracle.update(for_oracle).unwrap();
             let report = system.update(update).unwrap();
 
             // From scratch: every processor added to the streams as they are.
-            let expected = update::run(&update::streams_of(&oracle), &list).unwrap();
+            let expected = update::run(&oracle, &list).unwrap();
             let derived: Vec<&str> = system.derived().map(|key| key.as_str()).collect();
             let wanted: Vec<&str> = expected.derived().map(|key| key.as_str()).collect();
             assert_eq!(derived, wanted);
@@ -505,8 +511,8 @@ fn derived_streams_always_equal_the_processors_run_from_scratch() {
         if stream.from < stream.horizon {
             let window = Extent::from_spans(vec![span(stream.from, stream.horizon)]);
             system.observe(&window).unwrap();
-            oracle.observe(&window);
-            let expected = update::run(&update::streams_of(&oracle), &list).unwrap();
+            oracle.observe(&window).unwrap();
+            let expected = update::run(&oracle, &list).unwrap();
             for key in expected.derived() {
                 assert_eq!(
                     system.get(key.as_str()),

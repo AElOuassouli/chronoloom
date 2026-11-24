@@ -15,8 +15,8 @@ use chronoloom::serialisation::FORMAT_VERSION;
 use chronoloom::stream_system::{StreamSystem, Update};
 use chronoloom::{
     Condition, Edge, Events, Extent, Formula, Group, Input, Kind, OpenEnd, Pattern, Processor,
-    Recipe, Schema, Sequence, SequenceSystem, TimeIntervalEvent, TimeIntervalSequence,
-    TimePointEvent, TimePointSequence, Value,
+    Recipe, Schema, Sequence, TimeIntervalEvent, TimeIntervalSequence, TimePointEvent,
+    TimePointSequence, Value,
 };
 
 use common::{bounds, extent, for_each_seed, span, spans, Random, DOMAIN_END, DOMAIN_START};
@@ -869,8 +869,8 @@ fn formula(random: &mut Random, depth: u32) -> Formula {
     }
 }
 
-fn world(random: &mut Random) -> SequenceSystem {
-    let mut system = SequenceSystem::new();
+fn world(random: &mut Random) -> StreamSystem {
+    let mut system = StreamSystem::new();
     for key in ["p", "q"] {
         let events = (0..random.below(8))
             .map(|_| {
@@ -880,16 +880,21 @@ fn world(random: &mut Random) -> SequenceSystem {
                 )
             })
             .collect();
-        system.insert(
-            key,
-            TimePointSequence::from_events(key, events).with_observed(extent(random)),
-        );
+        system
+            .insert_stream(
+                key,
+                TimePointSequence::from_events(key, events).with_observed(extent(random)),
+            )
+            .unwrap();
     }
     for key in ["s", "t"] {
-        system.insert(
-            key,
-            TimeIntervalSequence::from_spans(key, spans(random, 4)).with_observed(extent(random)),
-        );
+        system
+            .insert_stream(
+                key,
+                TimeIntervalSequence::from_spans(key, spans(random, 4))
+                    .with_observed(extent(random)),
+            )
+            .unwrap();
     }
 
     system
@@ -897,13 +902,8 @@ fn world(random: &mut Random) -> SequenceSystem {
 
 /// What `processor` derives from the members of `world`: the sequence it
 /// produces, or the message of the failure.
-fn derive(processor: &Processor, world: &SequenceSystem) -> Result<Sequence, String> {
-    let mut system = StreamSystem::new();
-    for (key, sequence) in world {
-        system
-            .insert_stream(key.clone(), sequence.clone())
-            .map_err(|error| error.to_string())?;
-    }
+fn derive(processor: &Processor, world: &StreamSystem) -> Result<Sequence, String> {
+    let mut system = world.clone();
     system
         .add_processor(processor.clone())
         .map_err(|error| error.to_string())?;
@@ -1181,10 +1181,7 @@ fn a_saved_system_and_processor_reproduce_a_derived_result() {
     let processor = Processor::new("a", Formula::state("s").or(Formula::state("t")));
 
     let derived = derive(&processor, &world).unwrap();
-    let mut system = StreamSystem::new();
-    for (key, sequence) in &world {
-        system.insert_stream(key.clone(), sequence.clone()).unwrap();
-    }
+    let mut system = world.clone();
     system.add_processor(processor.clone()).unwrap();
     let loaded = round_trip(&system);
     assert_eq!(loaded.get("a"), Some(&derived));

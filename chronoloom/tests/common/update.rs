@@ -6,8 +6,7 @@
 
 use chronoloom::stream_system::{StreamSystem, UpdateError};
 use chronoloom::{
-    Events, Formula, ProcessError, Processor, Recipe, Sequence, SequenceSystem,
-    TimeIntervalSequence,
+    Events, Formula, ProcessError, Processor, Recipe, Sequence, TimeIntervalSequence,
 };
 
 /// A batch stream system of `streams` and `processors`, or the error of the
@@ -41,18 +40,6 @@ pub fn run(streams: &StreamSystem, processors: &[Processor]) -> Result<StreamSys
         }
     }
     Ok(system)
-}
-
-/// The streams of a sequence system, as a batch stream system, for the tests
-/// that still feed a sequence system by hand.
-pub fn streams_of(system: &SequenceSystem) -> StreamSystem {
-    let mut streams = StreamSystem::new();
-    for (key, sequence) in system {
-        streams
-            .insert_stream(key.clone(), sequence.clone())
-            .expect("a system with no processor takes any stream");
-    }
-    streams
 }
 
 /// A recipe evaluated once over a stream system, through

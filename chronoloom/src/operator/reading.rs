@@ -4,8 +4,8 @@ use core::any;
 
 use crate::primitives::Timestamp;
 use crate::processing::{Pattern, ProcessError};
-use crate::sequence_system::{AnyPointSequence, Key, Sequence, SequenceSystem};
 use crate::sequences::{Extent, TimePointSequence};
+use crate::store::{AnyPointSequence, Key, Sequence, Store};
 use crate::values::Value;
 
 /// Whether each point of a member matches, in the member's order, and where it
@@ -20,7 +20,7 @@ pub(super) struct Marks<'a> {
 /// The record points of the member `key`.
 pub(crate) fn records<'a>(
     key: &Key,
-    system: &'a SequenceSystem,
+    system: &'a Store,
 ) -> Result<&'a TimePointSequence<Value>, ProcessError> {
     records_of(key, system.get(key.as_str()))
 }
@@ -48,7 +48,7 @@ pub(super) fn records_of<'a>(
 /// The point sequence of the member `key`.
 pub(super) fn points<'a>(
     key: &Key,
-    system: &'a SequenceSystem,
+    system: &'a Store,
 ) -> Result<&'a AnyPointSequence, ProcessError> {
     match system.get(key.as_str()) {
         Some(Sequence::TimePoint(points)) => Ok(points),
@@ -68,10 +68,7 @@ pub(super) fn mismatch(pattern: &Pattern, points: &AnyPointSequence) -> ProcessE
 }
 
 /// Which points of the member a pattern reads match, and where it was observed.
-pub(super) fn read<'a>(
-    pattern: &Pattern,
-    system: &'a SequenceSystem,
-) -> Result<Marks<'a>, ProcessError> {
+pub(super) fn read<'a>(pattern: &Pattern, system: &'a Store) -> Result<Marks<'a>, ProcessError> {
     let points = points(&pattern.key, system)?;
     let marks = pattern
         .condition

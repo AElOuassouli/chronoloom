@@ -1,9 +1,9 @@
-//! The identity of a member of a system.
+//! The identity of a stream.
 
 use core::borrow::Borrow;
 use core::fmt;
 
-/// What identifies a sequence inside a [`SequenceSystem`].
+/// What identifies a sequence inside a [`StreamSystem`].
 ///
 /// A key is the sequence's identity and its attribute is its description. The
 /// two are kept apart because they behave differently: an identity is stable
@@ -15,14 +15,14 @@ use core::fmt;
 /// system's methods look members up by `&str`.
 ///
 /// ```
-/// use chronoloom::sequence_system::Key;
+/// use chronoloom::Key;
 ///
 /// let key = Key::from("sensor-3");
 /// assert_eq!(key.as_str(), "sensor-3");
 /// assert_eq!(key.to_string(), "sensor-3");
 /// ```
 ///
-/// [`SequenceSystem`]: super::SequenceSystem
+/// [`StreamSystem`]: crate::StreamSystem
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "json-schema", derive(schemars::JsonSchema))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]

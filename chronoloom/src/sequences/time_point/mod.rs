@@ -53,7 +53,7 @@ mod traits;
 /// as `temperature` or `log`. There is no sequence without one, which is why
 /// the constructors ask for the attribute before they ask for events, and why
 /// there is no [`collect`][Iterator::collect] into one. The attribute is what a
-/// [`SequenceSystem`] files the sequence under.
+/// [`StreamSystem`] files the sequence under.
 ///
 /// Because the attribute is part of what a sequence *is*, it is part of equality
 /// too: `temperature` and `humidity` are two records even when they happen to
@@ -74,7 +74,7 @@ mod traits;
 /// [`from_events`]: TimePointSequence::from_events
 /// [`insert`]: TimePointSequence::insert
 /// [`remove`]: TimePointSequence::remove
-/// [`SequenceSystem`]: crate::sequence_system::SequenceSystem
+/// [`StreamSystem`]: crate::StreamSystem
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TimePointSequence<T> {
     /// Sorted by timestamp, and stable within one instant: events sharing a

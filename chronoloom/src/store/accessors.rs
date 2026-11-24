@@ -1,12 +1,11 @@
 //! Reading a system: which keys it records, and the sequence for each.
 
-use crate::processing::Recipe;
 use crate::sequences::{TimeIntervalSequence, TimePointSequence};
 use crate::values::{Schema, Value};
 
-use super::{Iter, Key, Metadata, Sequence, SequenceSystem};
+use super::{Key, Metadata, Sequence, Store};
 
-impl SequenceSystem {
+impl Store {
     /// How many sequences the system holds.
     #[must_use]
     pub fn len(&self) -> usize {
@@ -25,20 +24,18 @@ impl SequenceSystem {
         self.members.contains_key(key)
     }
 
-    /// The output that produced the member under `key`, if a processor wrote
-    /// it and nothing has been recorded into it since.
+    /// Whether a processor wrote the member under `key` and nothing has been
+    /// recorded into it since.
     #[must_use]
-    pub(crate) fn lineage(&self, key: &str) -> Option<&Recipe> {
-        self.members
-            .get(key)
-            .and_then(|member| member.lineage.as_ref())
+    pub(crate) fn is_derived(&self, key: &str) -> bool {
+        self.members.get(key).is_some_and(|member| member.derived)
     }
 
     /// The entity the member under `key` is the timeline of, if it was written
-    /// by a [`PerEntity`](Recipe::PerEntity) output and nothing has been recorded
+    /// by a per-entity output and nothing has been recorded
     /// into it since.
     #[must_use]
-    pub(crate) fn lineage_entity(&self, key: &str) -> Option<&Value> {
+    pub(crate) fn derived_entity(&self, key: &str) -> Option<&Value> {
         self.members
             .get(key)
             .and_then(|member| member.entity.as_ref())
@@ -55,22 +52,7 @@ impl SequenceSystem {
     ///
     /// `None` does not say which of those failed; [`get`] does.
     ///
-    /// ```
-    /// use chronoloom::primitives::TimePointEvent;
-    /// use chronoloom::sequences::TimePointSequence;
-    /// use chronoloom::sequence_system::SequenceSystem;
-    ///
-    /// let mut system = SequenceSystem::new();
-    /// system.insert("temperature", TimePointSequence::from_events("temperature", vec![
-    ///     TimePointEvent::new(10, 21.5_f64),
-    /// ]));
-    ///
-    /// assert!(system.points::<f64>("temperature").is_some());
-    /// assert!(system.points::<String>("temperature").is_none());
-    /// assert!(system.points::<f64>("humidity").is_none());
-    /// ```
-    ///
-    /// [`get`]: SequenceSystem::get
+    /// [`get`]: Store::get
     #[must_use]
     pub fn points<T: 'static>(&self, key: &str) -> Option<&TimePointSequence<T>> {
         self.get(key)?.as_time_point()
@@ -85,11 +67,6 @@ impl SequenceSystem {
     /// Every key the system records, in order.
     pub fn keys(&self) -> impl DoubleEndedIterator<Item = &Key> + ExactSizeIterator {
         self.members.keys()
-    }
-
-    /// Walk every sequence with its key, in key order.
-    pub fn iter(&self) -> Iter<'_> {
-        Iter(self.members.iter())
     }
 
     /// The schema of the member for `key`, if the system records one and a

@@ -2,10 +2,10 @@
 
 use crate::primitives::{TimeIntervalEvent, Timestamp};
 use crate::processing::{OpenEnd, Pattern, ProcessError};
-use crate::sequence_system::{AnyPointSequence, Sequence, SequenceSystem};
 use crate::sequences::attribute::Attribute;
 use crate::sequences::interval::normalization::normalize;
 use crate::sequences::{Extent, TimeIntervalSequence};
+use crate::store::{AnyPointSequence, Sequence, Store};
 
 use super::chunk::{Chunk, Inputs};
 use super::online::OnlineNode;
@@ -36,10 +36,7 @@ impl Between {
         })
     }
 
-    pub(super) fn batch(
-        &self,
-        inputs: &SequenceSystem,
-    ) -> Result<TimeIntervalSequence, ProcessError> {
+    pub(super) fn batch(&self, inputs: &Store) -> Result<TimeIntervalSequence, ProcessError> {
         let (start, end) = (&self.start, &self.end);
         let opening = read(start, inputs)?;
         let closing = read(end, inputs)?;

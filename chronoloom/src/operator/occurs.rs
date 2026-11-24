@@ -52,6 +52,7 @@ impl Occurs {
 
 /// The running state of [`Occurs`]: each chunk of points read on its own.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub(crate) struct OnlineOccurs {
     pattern: Pattern,
     frontier: Timestamp,
@@ -97,5 +98,13 @@ impl OnlineOccurs {
 
     pub(super) const fn frontier(&self) -> Timestamp {
         self.frontier
+    }
+}
+
+#[cfg(feature = "serde")]
+impl OnlineOccurs {
+    /// Whether the fixed parts equal those of `fresh`, compiled from the processor.
+    pub(super) fn same_plan(&self, fresh: &Self) -> bool {
+        self.pattern == fresh.pattern
     }
 }

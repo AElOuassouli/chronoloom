@@ -4,6 +4,7 @@
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::primitives::{TimeIntervalEvent, TimePointEvent, Timestamp};
+use crate::processing::Edge;
 use crate::sequences::attribute::Attribute;
 use crate::sequences::interval::normalization::normalize;
 use crate::sequences::{Extent, TimeIntervalSequence, TimePointSequence};
@@ -44,11 +45,21 @@ impl<T> PointsBody<T> {
     /// only its data before the frontier is checked against the extent.
     pub(super) fn build(self, frontier: Option<Timestamp>) -> Result<TimePointSequence<T>, String> {
         let allowed = data_extent(&self.observed, frontier)?;
+        self.assemble(&allowed, |_| false)
+    }
 
+    /// The sequence, its events sorted; `lenient` says which values may lie
+    /// outside the extent.
+    fn assemble(
+        self,
+        allowed: &Extent,
+        lenient: impl Fn(&T) -> bool,
+    ) -> Result<TimePointSequence<T>, String> {
         let mut events = self.events;
         events.sort_by_key(TimePointEvent::timestamp);
         if let Some(event) = events.iter().find(|event| {
-            event.timestamp() != Timestamp::MAX && !allowed.contains(event.timestamp())
+            let at = event.timestamp();
+            at != Timestamp::MAX && !allowed.contains(at) && !lenient(event.value())
         }) {
             return Err(format!(
                 "the event at {} lies outside the extent the sequence was observed over",
@@ -61,6 +72,16 @@ impl<T> PointsBody<T> {
             events,
             self.observed,
         ))
+    }
+}
+
+impl<T: 'static> PointsBody<T> {
+    /// The sequence of a derived stream a live system holds: the `end` edge of
+    /// a span may lie where nothing was observed, at the end of a run of the
+    /// extent or past it.
+    pub(super) fn build_held(self) -> Result<TimePointSequence<T>, String> {
+        let allowed = data_extent(&self.observed, None)?;
+        self.assemble(&allowed, is_end)
     }
 }
 
@@ -101,7 +122,10 @@ impl IntervalsBody {
     /// The timeline, with its spans normalized and checked against the extent.
     pub(super) fn build(self, frontier: Option<Timestamp>) -> Result<TimeIntervalSequence, String> {
         let allowed = data_extent(&self.observed, frontier)?;
+        self.assemble(&allowed)
+    }
 
+    fn assemble(self, allowed: &Extent) -> Result<TimeIntervalSequence, String> {
         let spans = normalize(self.spans);
         if let Some(span) = spans
             .iter()
@@ -188,4 +212,11 @@ impl<'de> Deserialize<'de> for TimeIntervalSequence {
 
         body.build(None).map_err(de::Error::custom)
     }
+}
+
+/// Whether the value is the `end` edge of a span.
+fn is_end<T: 'static>(value: &T) -> bool {
+    (value as &dyn core::any::Any)
+        .downcast_ref::<Edge>()
+        .is_some_and(|edge| *edge == Edge::End)
 }

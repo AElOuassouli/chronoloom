@@ -1074,7 +1074,7 @@ dependency (`cargo add chronoloom --features serde`), every type that holds data
 implements `Serialize` and `Deserialize`, for any self-describing format. The
 examples use JSON, and need the feature, so they are marked `ignore` here and
 run as doctests of the `serialisation` module. A `TimePointSequence`, a
-`TimeIntervalSequence`, a `StreamSystem` in batch mode and a `Processor` are
+`TimeIntervalSequence`, a `StreamSystem` (in either mode) and a `Processor` are
 documents that start with a format version, `{ "format": 1, .. }`; what is nested
 in them carries none, and a reader refuses any version it does not know.
 A system is saved as its recorded streams (key, data, metadata and schema, a
@@ -1084,8 +1084,18 @@ processors in order, which evaluates them again over the saved streams, and the
 metadata of a derived stream is not kept. A `slice` of a system, or the part a
 live system `drain`s, holds derived streams that are not what the processors
 give over its own streams, so it loads with different derived streams. A
-processor that fails over the streams is an error of the load. A system in live
-mode has no document.
+processor that fails over the streams is an error of the load.
+
+A `StreamSystem<Live>` is saved the same way, with `"mode": "live"`, where it
+started (`from`), a `frontier` for each stream, the running state of each
+processor (`nodes`) and the derived streams as the processors made them
+(`derived`): a checkpoint. Nothing is run on load, and the restored system goes
+on exactly as one that never stopped, also after a `drain`. A document of one
+mode is refused as the other (`into_live` is the way across), and so is one
+whose parts contradict each other: a stream without a frontier or with one
+before `from`, a running state of another kind than its processor, derived
+streams that disagree with the entities the state has seen, a stream observed
+past its frontier, an input read past its frontier.
 
 ```rust,ignore
 use chronoloom::{
@@ -1170,8 +1180,7 @@ assert!(schema["properties"]["inputs"].is_object());
 
 What is open:
 
-- A `StreamSystem` in live mode does not run transforms, and has no saved
-  form yet: only a system in batch mode is a document.
+- A `StreamSystem` in live mode does not run transforms.
 - Record values have no lists, and a projection copies the values rather than
   viewing them in place.
 - A live system keeps every entity of a per-entity output it has seen. A way to

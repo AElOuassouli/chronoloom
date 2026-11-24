@@ -13,6 +13,8 @@ use super::project::OnlineProject;
 
 /// The running state of events.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 pub(crate) enum OnlinePoints {
     Edges(OnlineEdges),
     Matching(OnlineMatching),
@@ -45,6 +47,21 @@ impl OnlinePoints {
             Self::Matching(node) => node.frontier(),
             Self::Changes(node) => node.frontier(),
             Self::Project(node) => node.frontier(),
+        }
+    }
+}
+
+#[cfg(feature = "serde")]
+impl OnlinePoints {
+    /// Whether the node is of the same kind as `fresh`, compiled from the
+    /// processor, with the same fixed parts.
+    pub(crate) fn same_plan(&self, fresh: &Self) -> bool {
+        match (self, fresh) {
+            (Self::Edges(saved), Self::Edges(fresh)) => saved.same_plan(fresh),
+            (Self::Matching(saved), Self::Matching(fresh)) => saved.same_plan(fresh),
+            (Self::Changes(saved), Self::Changes(fresh)) => saved.same_plan(fresh),
+            (Self::Project(saved), Self::Project(fresh)) => saved.same_plan(fresh),
+            _ => false,
         }
     }
 }

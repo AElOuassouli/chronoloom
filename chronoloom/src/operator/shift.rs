@@ -58,6 +58,7 @@ impl Shift {
 /// timeline from `max(alpha, beta)` before the output frontier on, which is all
 /// a later instant can read.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub(crate) struct OnlineShift {
     inner: Box<OnlineNode>,
     alpha: Timestamp,
@@ -105,5 +106,13 @@ impl OnlineShift {
 
     pub(super) const fn frontier(&self) -> Timestamp {
         self.frontier
+    }
+}
+
+#[cfg(feature = "serde")]
+impl OnlineShift {
+    /// Whether the fixed parts equal those of `fresh`, compiled from the processor.
+    pub(super) fn same_plan(&self, fresh: &Self) -> bool {
+        self.alpha == fresh.alpha && self.beta == fresh.beta && self.inner.same_plan(&fresh.inner)
     }
 }

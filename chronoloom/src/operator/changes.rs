@@ -44,6 +44,7 @@ impl Changes {
 /// sample, and the extent that says whether the run it belongs to goes on into
 /// the next chunk.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub(crate) struct OnlineChanges {
     key: Key,
     label: String,
@@ -88,5 +89,13 @@ impl OnlineChanges {
 
     pub(super) const fn frontier(&self) -> Timestamp {
         self.frontier
+    }
+}
+
+#[cfg(feature = "serde")]
+impl OnlineChanges {
+    /// Whether the fixed parts equal those of `fresh`, compiled from the processor.
+    pub(super) fn same_plan(&self, fresh: &Self) -> bool {
+        self.key == fresh.key && self.label == fresh.label
     }
 }

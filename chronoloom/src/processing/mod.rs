@@ -30,6 +30,8 @@ pub use edge::Edge;
 pub use errors::ProcessError;
 pub use events::Events;
 pub use formula::{Formula, OpenEnd};
+#[cfg(feature = "serde")]
+pub(crate) use group::entity_id;
 pub use group::Group;
 pub(crate) use group::{entity_of, is_under, member_key, render, EntityId};
 pub use input::Input;

@@ -5,7 +5,7 @@
 //! `Deserialize`, so any self-describing format works; JSON is the one the
 //! tests and the examples use. Four types are documents on their own and
 //! start with a format version, `{ "format": 1, .. }`: [`TimePointSequence`],
-//! [`TimeIntervalSequence`], [`StreamSystem`] (in batch mode) and [`Processor`]. Everything
+//! [`TimeIntervalSequence`], [`StreamSystem`] (in either mode) and [`Processor`]. Everything
 //! nested inside them (extents, events, attributes, formulas, values) carries
 //! no version of its own, so the version belongs to the document and a nested
 //! value is the same in every document.
@@ -131,7 +131,16 @@
 //!   processors give over the saved ones, so it does not round trip. A
 //!   processor in a system is the body of its own document, without the format
 //!   number: its `output` key, its `formula` and, when it declares any, its
-//!   `inputs`. A system in live mode has no document.
+//!   `inputs`.
+//! - A system in live mode is the same document with `"mode": "live"`, the
+//!   instant it started at, `from`, and a `frontier` in each stream: a
+//!   checkpoint. It also holds the running state of each processor, `nodes`,
+//!   and the derived streams as the processors made them, `derived`; nothing
+//!   is run on load, and the system goes on as the saved one would have, also
+//!   after a [drain](crate::StreamSystem::drain). A stream without a frontier,
+//!   a frontier before `from`, a schema (a live system holds none), a running
+//!   state that contradicts its processor or the derived streams, and a
+//!   document of the other mode are refused.
 //!
 //! # JSON Schema
 //!
@@ -176,9 +185,16 @@
 //! crate can no longer be read by the next, and a reader refuses any number it
 //! does not know. Fields that are added with a default do not change it.
 //!
+//! The running state of a live system's processors (`nodes`, and the chunks they
+//! hold) is part of format 1, written from the private state of each operator. A
+//! change to the state of an operator, a field or a tag renamed, is a change of
+//! the format: decide whether the number must change. The test on
+//! `tests/fixtures/live_checkpoint.json` fails on any difference, and is
+//! rewritten like the processor schema, with `CHRONOLOOM_UPDATE_SCHEMA=1`.
+//!
 //! | format | change |
 //! |---|---|
-//! | 1 | the first version; a processor is one recipe (`output`, `formula`) and lists its declared `inputs`, left out when there are none; a system is its streams and processors, in batch mode |
+//! | 1 | the first version; a processor is one recipe (`output`, `formula`) and lists its declared `inputs`, left out when there are none; a system is its streams and processors, in batch mode or, with the running state of the processors and the derived streams, in live mode |
 //!
 //!
 //! [`Edge`]: crate::Edge
@@ -198,6 +214,7 @@ use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::primitives::Timestamp;
 
+mod chunk;
 mod extent;
 mod processor;
 #[cfg(feature = "json-schema")]

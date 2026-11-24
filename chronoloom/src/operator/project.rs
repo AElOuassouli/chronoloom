@@ -11,7 +11,8 @@ use super::chunk::{Chunk, Inputs};
 use super::online_points::OnlinePoints;
 use super::reading::{records, records_of};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub(super) struct Project {
     key: Key,
     path: String,
@@ -83,6 +84,7 @@ impl Project {
 
 /// The running state of [`Project`]: each chunk of records read on its own.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub(crate) struct OnlineProject {
     project: Project,
     frontier: Timestamp,
@@ -108,5 +110,13 @@ impl OnlineProject {
 
     pub(super) const fn frontier(&self) -> Timestamp {
         self.frontier
+    }
+}
+
+#[cfg(feature = "serde")]
+impl OnlineProject {
+    /// Whether the fixed parts equal those of `fresh`, compiled from the processor.
+    pub(super) fn same_plan(&self, fresh: &Self) -> bool {
+        self.project == fresh.project
     }
 }

@@ -21,6 +21,8 @@ use super::state::OnlineState;
 
 /// The running state of one node whose result is a timeline.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 pub(crate) enum OnlineNode {
     State(OnlineState),
     Occurs(OnlineOccurs),
@@ -65,6 +67,26 @@ impl OnlineNode {
             Self::Between(node) => node.frontier(),
             Self::While(node) => node.frontier(),
             Self::Shift(node) => node.frontier(),
+        }
+    }
+}
+
+#[cfg(feature = "serde")]
+impl OnlineNode {
+    /// Whether the node is of the same kind as `fresh`, compiled from the
+    /// processor, with the same fixed parts all the way down: the running state
+    /// is what may differ.
+    pub(crate) fn same_plan(&self, fresh: &Self) -> bool {
+        match (self, fresh) {
+            (Self::State(saved), Self::State(fresh)) => saved.same_plan(fresh),
+            (Self::Occurs(saved), Self::Occurs(fresh)) => saved.same_plan(fresh),
+            (Self::Not(saved), Self::Not(fresh)) => saved.same_plan(fresh),
+            (Self::And(saved), Self::And(fresh)) => saved.same_plan(fresh),
+            (Self::Or(saved), Self::Or(fresh)) => saved.same_plan(fresh),
+            (Self::Between(saved), Self::Between(fresh)) => saved.same_plan(fresh),
+            (Self::While(saved), Self::While(fresh)) => saved.same_plan(fresh),
+            (Self::Shift(saved), Self::Shift(fresh)) => saved.same_plan(fresh),
+            _ => false,
         }
     }
 }

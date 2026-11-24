@@ -147,6 +147,7 @@ impl Between {
 /// written up to that end and continues in the next chunk while the run of the
 /// extent does.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub(crate) struct OnlineBetween {
     start: Pattern,
     end: Pattern,
@@ -364,4 +365,12 @@ fn marks(
         .condition
         .marks(points)
         .ok_or_else(|| mismatch(pattern, points))
+}
+
+#[cfg(feature = "serde")]
+impl OnlineBetween {
+    /// Whether the fixed parts equal those of `fresh`, compiled from the processor.
+    pub(super) fn same_plan(&self, fresh: &Self) -> bool {
+        self.start == fresh.start && self.end == fresh.end && self.open == fresh.open
+    }
 }

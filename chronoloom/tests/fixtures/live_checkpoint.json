@@ -1,0 +1,1498 @@
+{
+  "derived": [
+    {
+      "key": "agents",
+      "metadata": {},
+      "sequence": {
+        "attribute": {
+          "name": "gate.agent"
+        },
+        "events": [
+          {
+            "timestamp": 1,
+            "value": 7
+          },
+          {
+            "timestamp": 4,
+            "value": 9
+          }
+        ],
+        "observed": [
+          [
+            -9223372036854775808,
+            5
+          ]
+        ],
+        "type": "i64"
+      }
+    },
+    {
+      "key": "anyone",
+      "metadata": {},
+      "sequence": {
+        "attribute": {
+          "name": "any(between(gate.direction = \"in\", gate.direction = \"out\")) per gate.agent"
+        },
+        "observed": [
+          [
+            -9223372036854775808,
+            5
+          ]
+        ],
+        "spans": [
+          [
+            1,
+            5
+          ]
+        ],
+        "transformation": [
+          0,
+          0
+        ],
+        "type": "intervals"
+      }
+    },
+    {
+      "key": "busy",
+      "metadata": {},
+      "sequence": {
+        "attribute": {
+          "name": "while(count > 5)"
+        },
+        "observed": [
+          [
+            2,
+            8
+          ]
+        ],
+        "spans": [
+          [
+            2,
+            6
+          ]
+        ],
+        "transformation": [
+          0,
+          0
+        ],
+        "type": "intervals"
+      }
+    },
+    {
+      "key": "crowd",
+      "metadata": {},
+      "sequence": {
+        "attribute": {
+          "name": "count(between(gate.direction = \"in\", gate.direction = \"out\")) per gate.agent"
+        },
+        "events": [
+          {
+            "timestamp": -9223372036854775808,
+            "value": 0
+          },
+          {
+            "timestamp": 1,
+            "value": 1
+          },
+          {
+            "timestamp": 4,
+            "value": 2
+          }
+        ],
+        "observed": [
+          [
+            -9223372036854775808,
+            5
+          ]
+        ],
+        "type": "i64"
+      }
+    },
+    {
+      "key": "edges",
+      "metadata": {},
+      "sequence": {
+        "attribute": {
+          "name": "edges(mixed)"
+        },
+        "events": [
+          {
+            "timestamp": 4,
+            "value": "start"
+          },
+          {
+            "timestamp": 6,
+            "value": "end"
+          }
+        ],
+        "observed": [
+          [
+            2,
+            8
+          ]
+        ],
+        "type": "edge"
+      }
+    },
+    {
+      "key": "held",
+      "metadata": {},
+      "sequence": {
+        "attribute": {
+          "name": "while(count > 5, within 4)"
+        },
+        "observed": [
+          [
+            2,
+            8
+          ]
+        ],
+        "spans": [
+          [
+            2,
+            6
+          ]
+        ],
+        "transformation": [
+          0,
+          0
+        ],
+        "type": "intervals"
+      }
+    },
+    {
+      "key": "mixed",
+      "metadata": {},
+      "sequence": {
+        "attribute": {
+          "name": "(busy ∧ ¬held) ∨ seen"
+        },
+        "observed": [
+          [
+            2,
+            8
+          ]
+        ],
+        "spans": [
+          [
+            4,
+            6
+          ]
+        ],
+        "transformation": [
+          0,
+          0
+        ],
+        "type": "intervals"
+      }
+    },
+    {
+      "entity": 7,
+      "key": "presence/7",
+      "metadata": {},
+      "sequence": {
+        "attribute": {
+          "name": "between(gate.direction = \"in\", gate.direction = \"out\")"
+        },
+        "observed": [
+          [
+            1,
+            5
+          ]
+        ],
+        "spans": [
+          [
+            1,
+            5
+          ]
+        ],
+        "transformation": [
+          0,
+          0
+        ],
+        "type": "intervals"
+      }
+    },
+    {
+      "entity": 9,
+      "key": "presence/9",
+      "metadata": {},
+      "sequence": {
+        "attribute": {
+          "name": "between(gate.direction = \"in\", gate.direction = \"out\")"
+        },
+        "observed": [
+          [
+            4,
+            5
+          ]
+        ],
+        "spans": [
+          [
+            4,
+            5
+          ]
+        ],
+        "transformation": [
+          0,
+          0
+        ],
+        "type": "intervals"
+      }
+    },
+    {
+      "key": "seen",
+      "metadata": {},
+      "sequence": {
+        "attribute": {
+          "name": "occurs(count > 5)[2, 3]"
+        },
+        "observed": [
+          [
+            -9223372036854775808,
+            8
+          ]
+        ],
+        "spans": [
+          [
+            4,
+            6
+          ]
+        ],
+        "transformation": [
+          0,
+          0
+        ],
+        "type": "intervals"
+      }
+    },
+    {
+      "key": "steps",
+      "metadata": {},
+      "sequence": {
+        "attribute": {
+          "name": "changes(count)"
+        },
+        "events": [
+          {
+            "timestamp": 2,
+            "value": 9
+          },
+          {
+            "timestamp": 6,
+            "value": 1
+          }
+        ],
+        "observed": [
+          [
+            -9223372036854775808,
+            8
+          ]
+        ],
+        "type": "i64"
+      }
+    }
+  ],
+  "format": 1,
+  "from": 0,
+  "metadata": {},
+  "mode": "live",
+  "nodes": [
+    {
+      "read": {
+        "count": 8
+      },
+      "recipe": {
+        "timeline": {
+          "while": {
+            "frontier": 8,
+            "pattern": {
+              "condition": {
+                "greater": 5
+              },
+              "key": "count",
+              "type": "i64"
+            },
+            "sample": [
+              6,
+              false
+            ],
+            "timeout": null
+          }
+        }
+      }
+    },
+    {
+      "read": {
+        "count": 8
+      },
+      "recipe": {
+        "timeline": {
+          "while": {
+            "frontier": 8,
+            "pattern": {
+              "condition": {
+                "greater": 5
+              },
+              "key": "count",
+              "type": "i64"
+            },
+            "sample": [
+              6,
+              false
+            ],
+            "timeout": 4
+          }
+        }
+      }
+    },
+    {
+      "read": {
+        "count": 8
+      },
+      "recipe": {
+        "timeline": {
+          "shift": {
+            "alpha": 2,
+            "beta": 3,
+            "frontier": 8,
+            "held": {
+              "from": 5,
+              "sequence": {
+                "attribute": {
+                  "name": "occurs(count > 5)"
+                },
+                "observed": [
+                  [
+                    5,
+                    8
+                  ]
+                ],
+                "spans": [],
+                "transformation": [
+                  0,
+                  0
+                ],
+                "type": "intervals"
+              },
+              "to": 8
+            },
+            "inner": {
+              "occurs": {
+                "frontier": 8,
+                "pattern": {
+                  "condition": {
+                    "greater": 5
+                  },
+                  "key": "count",
+                  "type": "i64"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "read": {
+        "busy": 8,
+        "held": 8,
+        "seen": 8
+      },
+      "recipe": {
+        "timeline": {
+          "or": {
+            "frontier": 8,
+            "identity": {
+              "attribute": {
+                "name": "⊥"
+              },
+              "format": 1,
+              "observed": [
+                [
+                  -9223372036854775808,
+                  9223372036854775807
+                ]
+              ],
+              "spans": [],
+              "transformation": [
+                0,
+                0
+              ]
+            },
+            "parts": [
+              {
+                "and": {
+                  "frontier": 8,
+                  "identity": {
+                    "attribute": {
+                      "name": "⊤"
+                    },
+                    "format": 1,
+                    "observed": [
+                      [
+                        -9223372036854775808,
+                        9223372036854775807
+                      ]
+                    ],
+                    "spans": [
+                      [
+                        -9223372036854775808,
+                        9223372036854775807
+                      ]
+                    ],
+                    "transformation": [
+                      0,
+                      0
+                    ]
+                  },
+                  "parts": [
+                    {
+                      "state": {
+                        "frontier": 8,
+                        "key": "busy"
+                      }
+                    },
+                    {
+                      "not": {
+                        "input": {
+                          "state": {
+                            "frontier": 8,
+                            "key": "held"
+                          }
+                        }
+                      }
+                    }
+                  ],
+                  "pending": [
+                    {
+                      "from": 8,
+                      "sequence": {
+                        "attribute": {
+                          "name": "while(count > 5)"
+                        },
+                        "observed": [],
+                        "spans": [],
+                        "transformation": [
+                          0,
+                          0
+                        ],
+                        "type": "intervals"
+                      },
+                      "to": 8
+                    },
+                    {
+                      "from": 8,
+                      "sequence": {
+                        "attribute": {
+                          "complement": {
+                            "of": {
+                              "name": "while(count > 5, within 4)"
+                            }
+                          }
+                        },
+                        "observed": [],
+                        "spans": [],
+                        "transformation": [
+                          0,
+                          0
+                        ],
+                        "type": "intervals"
+                      },
+                      "to": 8
+                    }
+                  ]
+                }
+              },
+              {
+                "state": {
+                  "frontier": 8,
+                  "key": "seen"
+                }
+              }
+            ],
+            "pending": [
+              {
+                "from": 8,
+                "sequence": {
+                  "attribute": {
+                    "combined": {
+                      "left": {
+                        "combined": {
+                          "left": {
+                            "name": "⊤"
+                          },
+                          "operation": "intersection",
+                          "right": {
+                            "name": "while(count > 5)"
+                          }
+                        }
+                      },
+                      "operation": "intersection",
+                      "right": {
+                        "complement": {
+                          "of": {
+                            "name": "while(count > 5, within 4)"
+                          }
+                        }
+                      }
+                    }
+                  },
+                  "observed": [],
+                  "spans": [],
+                  "transformation": [
+                    0,
+                    0
+                  ],
+                  "type": "intervals"
+                },
+                "to": 8
+              },
+              {
+                "from": 8,
+                "sequence": {
+                  "attribute": {
+                    "name": "occurs(count > 5)[2, 3]"
+                  },
+                  "observed": [],
+                  "spans": [],
+                  "transformation": [
+                    0,
+                    0
+                  ],
+                  "type": "intervals"
+                },
+                "to": 8
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "read": {
+        "mixed": 8
+      },
+      "recipe": {
+        "points": {
+          "edges": {
+            "inner": {
+              "state": {
+                "frontier": 8,
+                "key": "mixed"
+              }
+            },
+            "label": "edges(mixed)",
+            "open": null
+          }
+        }
+      }
+    },
+    {
+      "read": {
+        "count": 8
+      },
+      "recipe": {
+        "points": {
+          "changes": {
+            "frontier": 8,
+            "key": "count",
+            "label": "changes(count)",
+            "last_sample": {
+              "from": 6,
+              "sequence": {
+                "attribute": {
+                  "name": "count"
+                },
+                "events": [
+                  {
+                    "timestamp": 6,
+                    "value": 1
+                  }
+                ],
+                "observed": [
+                  [
+                    6,
+                    8
+                  ]
+                ],
+                "type": "i64"
+              },
+              "to": 8
+            }
+          }
+        }
+      }
+    },
+    {
+      "read": {
+        "gate": 5
+      },
+      "recipe": {
+        "points": {
+          "project": {
+            "frontier": 5,
+            "project": {
+              "into": "integer",
+              "key": "gate",
+              "label": "gate.agent",
+              "path": "agent"
+            }
+          }
+        }
+      }
+    },
+    {
+      "read": {
+        "gate": 5
+      },
+      "recipe": {
+        "per_entity": {
+          "label": "between(gate.direction = \"in\", gate.direction = \"out\")",
+          "population": {
+            "by": {
+              "key": "gate",
+              "path": "agent"
+            },
+            "entities": [
+              {
+                "first": 1,
+                "held": {
+                  "from": 5,
+                  "sequence": {
+                    "attribute": {
+                      "name": "between(gate.direction = \"in\", gate.direction = \"out\")"
+                    },
+                    "observed": [],
+                    "spans": [],
+                    "transformation": [
+                      0,
+                      0
+                    ],
+                    "type": "intervals"
+                  },
+                  "to": 5
+                },
+                "name": "7",
+                "state": {
+                  "between": {
+                    "end": {
+                      "condition": {
+                        "equals": "out"
+                      },
+                      "key": "gate",
+                      "path": "direction",
+                      "type": "value"
+                    },
+                    "end_held": null,
+                    "frontier": 5,
+                    "latest": 1,
+                    "open": "extent",
+                    "opened": 1,
+                    "start": {
+                      "condition": {
+                        "equals": "in"
+                      },
+                      "key": "gate",
+                      "path": "direction",
+                      "type": "value"
+                    },
+                    "start_held": {
+                      "from": 5,
+                      "sequence": {
+                        "attribute": {
+                          "name": "gate"
+                        },
+                        "events": [],
+                        "observed": [],
+                        "type": "value"
+                      },
+                      "to": 5
+                    }
+                  }
+                },
+                "value": 7
+              },
+              {
+                "first": 4,
+                "held": {
+                  "from": 5,
+                  "sequence": {
+                    "attribute": {
+                      "name": "between(gate.direction = \"in\", gate.direction = \"out\")"
+                    },
+                    "observed": [],
+                    "spans": [],
+                    "transformation": [
+                      0,
+                      0
+                    ],
+                    "type": "intervals"
+                  },
+                  "to": 5
+                },
+                "name": "9",
+                "state": {
+                  "between": {
+                    "end": {
+                      "condition": {
+                        "equals": "out"
+                      },
+                      "key": "gate",
+                      "path": "direction",
+                      "type": "value"
+                    },
+                    "end_held": null,
+                    "frontier": 5,
+                    "latest": 4,
+                    "open": "extent",
+                    "opened": 4,
+                    "start": {
+                      "condition": {
+                        "equals": "in"
+                      },
+                      "key": "gate",
+                      "path": "direction",
+                      "type": "value"
+                    },
+                    "start_held": {
+                      "from": 5,
+                      "sequence": {
+                        "attribute": {
+                          "name": "gate"
+                        },
+                        "events": [],
+                        "observed": [],
+                        "type": "value"
+                      },
+                      "to": 5
+                    }
+                  }
+                },
+                "value": 9
+              }
+            ],
+            "frontier": 5,
+            "held": {
+              "from": 5,
+              "sequence": {
+                "attribute": {
+                  "name": "between(gate.direction = \"in\", gate.direction = \"out\")"
+                },
+                "observed": [],
+                "spans": [],
+                "transformation": [
+                  0,
+                  0
+                ],
+                "type": "intervals"
+              },
+              "to": 5
+            },
+            "observed": [],
+            "prototype": {
+              "between": {
+                "end": {
+                  "condition": {
+                    "equals": "out"
+                  },
+                  "key": "gate",
+                  "path": "direction",
+                  "type": "value"
+                },
+                "end_held": null,
+                "frontier": 5,
+                "latest": null,
+                "open": "extent",
+                "opened": null,
+                "start": {
+                  "condition": {
+                    "equals": "in"
+                  },
+                  "key": "gate",
+                  "path": "direction",
+                  "type": "value"
+                },
+                "start_held": {
+                  "from": 5,
+                  "sequence": {
+                    "attribute": {
+                      "name": "gate"
+                    },
+                    "events": [],
+                    "observed": [],
+                    "type": "value"
+                  },
+                  "to": 5
+                }
+              }
+            },
+            "unique_under": "presence"
+          }
+        }
+      }
+    },
+    {
+      "read": {
+        "gate": 5
+      },
+      "recipe": {
+        "any_entity": {
+          "label": "any(between(gate.direction = \"in\", gate.direction = \"out\")) per gate.agent",
+          "population": {
+            "by": {
+              "key": "gate",
+              "path": "agent"
+            },
+            "entities": [
+              {
+                "first": 1,
+                "held": {
+                  "from": 5,
+                  "sequence": {
+                    "attribute": {
+                      "name": "between(gate.direction = \"in\", gate.direction = \"out\")"
+                    },
+                    "observed": [],
+                    "spans": [],
+                    "transformation": [
+                      0,
+                      0
+                    ],
+                    "type": "intervals"
+                  },
+                  "to": 5
+                },
+                "name": "7",
+                "state": {
+                  "between": {
+                    "end": {
+                      "condition": {
+                        "equals": "out"
+                      },
+                      "key": "gate",
+                      "path": "direction",
+                      "type": "value"
+                    },
+                    "end_held": null,
+                    "frontier": 5,
+                    "latest": 1,
+                    "open": "extent",
+                    "opened": 1,
+                    "start": {
+                      "condition": {
+                        "equals": "in"
+                      },
+                      "key": "gate",
+                      "path": "direction",
+                      "type": "value"
+                    },
+                    "start_held": {
+                      "from": 5,
+                      "sequence": {
+                        "attribute": {
+                          "name": "gate"
+                        },
+                        "events": [],
+                        "observed": [],
+                        "type": "value"
+                      },
+                      "to": 5
+                    }
+                  }
+                },
+                "value": 7
+              },
+              {
+                "first": 4,
+                "held": {
+                  "from": 5,
+                  "sequence": {
+                    "attribute": {
+                      "name": "between(gate.direction = \"in\", gate.direction = \"out\")"
+                    },
+                    "observed": [],
+                    "spans": [],
+                    "transformation": [
+                      0,
+                      0
+                    ],
+                    "type": "intervals"
+                  },
+                  "to": 5
+                },
+                "name": "9",
+                "state": {
+                  "between": {
+                    "end": {
+                      "condition": {
+                        "equals": "out"
+                      },
+                      "key": "gate",
+                      "path": "direction",
+                      "type": "value"
+                    },
+                    "end_held": null,
+                    "frontier": 5,
+                    "latest": 4,
+                    "open": "extent",
+                    "opened": 4,
+                    "start": {
+                      "condition": {
+                        "equals": "in"
+                      },
+                      "key": "gate",
+                      "path": "direction",
+                      "type": "value"
+                    },
+                    "start_held": {
+                      "from": 5,
+                      "sequence": {
+                        "attribute": {
+                          "name": "gate"
+                        },
+                        "events": [],
+                        "observed": [],
+                        "type": "value"
+                      },
+                      "to": 5
+                    }
+                  }
+                },
+                "value": 9
+              }
+            ],
+            "frontier": 5,
+            "held": {
+              "from": 5,
+              "sequence": {
+                "attribute": {
+                  "name": "between(gate.direction = \"in\", gate.direction = \"out\")"
+                },
+                "observed": [],
+                "spans": [],
+                "transformation": [
+                  0,
+                  0
+                ],
+                "type": "intervals"
+              },
+              "to": 5
+            },
+            "observed": [],
+            "prototype": {
+              "between": {
+                "end": {
+                  "condition": {
+                    "equals": "out"
+                  },
+                  "key": "gate",
+                  "path": "direction",
+                  "type": "value"
+                },
+                "end_held": null,
+                "frontier": 5,
+                "latest": null,
+                "open": "extent",
+                "opened": null,
+                "start": {
+                  "condition": {
+                    "equals": "in"
+                  },
+                  "key": "gate",
+                  "path": "direction",
+                  "type": "value"
+                },
+                "start_held": {
+                  "from": 5,
+                  "sequence": {
+                    "attribute": {
+                      "name": "gate"
+                    },
+                    "events": [],
+                    "observed": [],
+                    "type": "value"
+                  },
+                  "to": 5
+                }
+              }
+            },
+            "unique_under": null
+          }
+        }
+      }
+    },
+    {
+      "read": {
+        "gate": 5
+      },
+      "recipe": {
+        "count_entities": {
+          "carried": 2,
+          "label": "count(between(gate.direction = \"in\", gate.direction = \"out\")) per gate.agent",
+          "population": {
+            "by": {
+              "key": "gate",
+              "path": "agent"
+            },
+            "entities": [
+              {
+                "first": 1,
+                "held": {
+                  "from": 5,
+                  "sequence": {
+                    "attribute": {
+                      "name": "between(gate.direction = \"in\", gate.direction = \"out\")"
+                    },
+                    "observed": [],
+                    "spans": [],
+                    "transformation": [
+                      0,
+                      0
+                    ],
+                    "type": "intervals"
+                  },
+                  "to": 5
+                },
+                "name": "7",
+                "state": {
+                  "between": {
+                    "end": {
+                      "condition": {
+                        "equals": "out"
+                      },
+                      "key": "gate",
+                      "path": "direction",
+                      "type": "value"
+                    },
+                    "end_held": null,
+                    "frontier": 5,
+                    "latest": 1,
+                    "open": "extent",
+                    "opened": 1,
+                    "start": {
+                      "condition": {
+                        "equals": "in"
+                      },
+                      "key": "gate",
+                      "path": "direction",
+                      "type": "value"
+                    },
+                    "start_held": {
+                      "from": 5,
+                      "sequence": {
+                        "attribute": {
+                          "name": "gate"
+                        },
+                        "events": [],
+                        "observed": [],
+                        "type": "value"
+                      },
+                      "to": 5
+                    }
+                  }
+                },
+                "value": 7
+              },
+              {
+                "first": 4,
+                "held": {
+                  "from": 5,
+                  "sequence": {
+                    "attribute": {
+                      "name": "between(gate.direction = \"in\", gate.direction = \"out\")"
+                    },
+                    "observed": [],
+                    "spans": [],
+                    "transformation": [
+                      0,
+                      0
+                    ],
+                    "type": "intervals"
+                  },
+                  "to": 5
+                },
+                "name": "9",
+                "state": {
+                  "between": {
+                    "end": {
+                      "condition": {
+                        "equals": "out"
+                      },
+                      "key": "gate",
+                      "path": "direction",
+                      "type": "value"
+                    },
+                    "end_held": null,
+                    "frontier": 5,
+                    "latest": 4,
+                    "open": "extent",
+                    "opened": 4,
+                    "start": {
+                      "condition": {
+                        "equals": "in"
+                      },
+                      "key": "gate",
+                      "path": "direction",
+                      "type": "value"
+                    },
+                    "start_held": {
+                      "from": 5,
+                      "sequence": {
+                        "attribute": {
+                          "name": "gate"
+                        },
+                        "events": [],
+                        "observed": [],
+                        "type": "value"
+                      },
+                      "to": 5
+                    }
+                  }
+                },
+                "value": 9
+              }
+            ],
+            "frontier": 5,
+            "held": {
+              "from": 5,
+              "sequence": {
+                "attribute": {
+                  "name": "between(gate.direction = \"in\", gate.direction = \"out\")"
+                },
+                "observed": [],
+                "spans": [],
+                "transformation": [
+                  0,
+                  0
+                ],
+                "type": "intervals"
+              },
+              "to": 5
+            },
+            "observed": [],
+            "prototype": {
+              "between": {
+                "end": {
+                  "condition": {
+                    "equals": "out"
+                  },
+                  "key": "gate",
+                  "path": "direction",
+                  "type": "value"
+                },
+                "end_held": null,
+                "frontier": 5,
+                "latest": null,
+                "open": "extent",
+                "opened": null,
+                "start": {
+                  "condition": {
+                    "equals": "in"
+                  },
+                  "key": "gate",
+                  "path": "direction",
+                  "type": "value"
+                },
+                "start_held": {
+                  "from": 5,
+                  "sequence": {
+                    "attribute": {
+                      "name": "gate"
+                    },
+                    "events": [],
+                    "observed": [],
+                    "type": "value"
+                  },
+                  "to": 5
+                }
+              }
+            },
+            "unique_under": null
+          }
+        }
+      }
+    }
+  ],
+  "processors": [
+    {
+      "formula": {
+        "state": {
+          "while": {
+            "pattern": {
+              "condition": {
+                "greater": 5
+              },
+              "key": "count",
+              "type": "i64"
+            },
+            "timeout": null
+          }
+        }
+      },
+      "output": "busy"
+    },
+    {
+      "formula": {
+        "state": {
+          "while": {
+            "pattern": {
+              "condition": {
+                "greater": 5
+              },
+              "key": "count",
+              "type": "i64"
+            },
+            "timeout": 4
+          }
+        }
+      },
+      "output": "held"
+    },
+    {
+      "formula": {
+        "state": {
+          "shift": {
+            "alpha": 2,
+            "beta": 3,
+            "formula": {
+              "occurs": {
+                "condition": {
+                  "greater": 5
+                },
+                "key": "count",
+                "type": "i64"
+              }
+            }
+          }
+        }
+      },
+      "output": "seen"
+    },
+    {
+      "formula": {
+        "state": {
+          "or": [
+            {
+              "and": [
+                {
+                  "state": "busy"
+                },
+                {
+                  "not": {
+                    "state": "held"
+                  }
+                }
+              ]
+            },
+            {
+              "state": "seen"
+            }
+          ]
+        }
+      },
+      "output": "mixed"
+    },
+    {
+      "formula": {
+        "events": {
+          "edges": {
+            "state": "mixed"
+          }
+        }
+      },
+      "output": "edges"
+    },
+    {
+      "formula": {
+        "events": {
+          "changes": {
+            "key": "count"
+          }
+        }
+      },
+      "output": "steps"
+    },
+    {
+      "formula": {
+        "events": {
+          "project": {
+            "into": "integer",
+            "key": "gate",
+            "path": "agent"
+          }
+        }
+      },
+      "output": "agents"
+    },
+    {
+      "formula": {
+        "per_entity": {
+          "by": {
+            "key": "gate",
+            "path": "agent"
+          },
+          "formula": {
+            "between": {
+              "end": {
+                "condition": {
+                  "equals": "out"
+                },
+                "key": "gate",
+                "path": "direction",
+                "type": "value"
+              },
+              "open": "extent",
+              "start": {
+                "condition": {
+                  "equals": "in"
+                },
+                "key": "gate",
+                "path": "direction",
+                "type": "value"
+              }
+            }
+          }
+        }
+      },
+      "output": "presence"
+    },
+    {
+      "formula": {
+        "any_entity": {
+          "by": {
+            "key": "gate",
+            "path": "agent"
+          },
+          "formula": {
+            "between": {
+              "end": {
+                "condition": {
+                  "equals": "out"
+                },
+                "key": "gate",
+                "path": "direction",
+                "type": "value"
+              },
+              "open": "extent",
+              "start": {
+                "condition": {
+                  "equals": "in"
+                },
+                "key": "gate",
+                "path": "direction",
+                "type": "value"
+              }
+            }
+          }
+        }
+      },
+      "output": "anyone"
+    },
+    {
+      "formula": {
+        "count_entities": {
+          "by": {
+            "key": "gate",
+            "path": "agent"
+          },
+          "formula": {
+            "between": {
+              "end": {
+                "condition": {
+                  "equals": "out"
+                },
+                "key": "gate",
+                "path": "direction",
+                "type": "value"
+              },
+              "open": "extent",
+              "start": {
+                "condition": {
+                  "equals": "in"
+                },
+                "key": "gate",
+                "path": "direction",
+                "type": "value"
+              }
+            }
+          }
+        }
+      },
+      "output": "crowd"
+    }
+  ],
+  "streams": [
+    {
+      "frontier": 8,
+      "key": "count",
+      "metadata": {},
+      "sequence": {
+        "attribute": {
+          "name": "count"
+        },
+        "events": [
+          {
+            "timestamp": 2,
+            "value": 9
+          },
+          {
+            "timestamp": 6,
+            "value": 1
+          },
+          {
+            "timestamp": 9,
+            "value": 7
+          }
+        ],
+        "observed": [
+          [
+            -9223372036854775808,
+            9223372036854775807
+          ]
+        ],
+        "type": "i64"
+      }
+    },
+    {
+      "frontier": 5,
+      "key": "gate",
+      "metadata": {},
+      "sequence": {
+        "attribute": {
+          "name": "gate"
+        },
+        "events": [
+          {
+            "timestamp": 1,
+            "value": {
+              "agent": 7,
+              "direction": "in"
+            }
+          },
+          {
+            "timestamp": 4,
+            "value": {
+              "agent": 9,
+              "direction": "in"
+            }
+          },
+          {
+            "timestamp": 8,
+            "value": {
+              "agent": 7,
+              "direction": "out"
+            }
+          }
+        ],
+        "observed": [
+          [
+            -9223372036854775808,
+            9223372036854775807
+          ]
+        ],
+        "type": "value"
+      }
+    }
+  ]
+}

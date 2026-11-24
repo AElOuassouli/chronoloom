@@ -55,7 +55,16 @@ impl And {
 
 /// The running state of [`And`]: the intersection of its parts' chunks.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(from = "Combination"))]
 pub(crate) struct OnlineAnd(Combination);
+
+#[cfg(feature = "serde")]
+impl From<Combination> for OnlineAnd {
+    fn from(combination: Combination) -> Self {
+        Self(combination.with(TimeIntervalSequence::intersection))
+    }
+}
 
 impl OnlineAnd {
     pub(super) fn step(&mut self, inputs: &Inputs, to: Timestamp) -> Result<Chunk, ProcessError> {
@@ -64,5 +73,13 @@ impl OnlineAnd {
 
     pub(super) const fn frontier(&self) -> Timestamp {
         self.0.frontier()
+    }
+}
+
+#[cfg(feature = "serde")]
+impl OnlineAnd {
+    /// Whether the fixed parts equal those of `fresh`, compiled from the processor.
+    pub(super) fn same_plan(&self, fresh: &Self) -> bool {
+        self.0.same_plan(&fresh.0)
     }
 }

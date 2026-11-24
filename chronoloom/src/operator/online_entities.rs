@@ -19,6 +19,7 @@ use super::reading::records_of;
 /// An entity seen: what names it, the instant of its first record, and the
 /// online state of the formula over its records.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 struct Born {
     value: Value,
     name: String,
@@ -62,6 +63,7 @@ struct Stepped {
 /// a copy of the prototype from then on, and its timeline is unobserved before
 /// its first record.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 struct Population {
     by: Group,
     /// The output a duplicate member of a per-entity output is reported under.
@@ -69,6 +71,7 @@ struct Population {
     prototype: OnlineNode,
     /// What the prototype gave beyond the output, as `Born::held`.
     held: Option<Chunk>,
+    #[cfg_attr(feature = "serde", serde(with = "as_list"))]
     entities: BTreeMap<EntityId, Born>,
     /// What the records were observed over, from the frontier on.
     observed: Extent,
@@ -213,6 +216,7 @@ impl Population {
 
 /// One timeline per entity, as the chunks of the entities.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub(crate) struct OnlinePerEntity {
     label: String,
     population: Population,
@@ -227,6 +231,16 @@ pub(crate) struct EntityChunk {
 }
 
 impl OnlinePerEntity {
+    /// The entities seen so far.
+    #[cfg(feature = "serde")]
+    pub(super) fn entities(&self) -> Vec<Value> {
+        self.population
+            .entities
+            .values()
+            .map(|born| born.value.clone())
+            .collect()
+    }
+
     pub(super) fn new(label: String, output: Key, by: Group, prototype: OnlineNode) -> Self {
         Self {
             label,
@@ -280,6 +294,7 @@ impl OnlinePerEntity {
 
 /// Active wherever some entity is.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub(crate) struct OnlineAnyEntity {
     label: String,
     population: Population,
@@ -312,6 +327,7 @@ impl OnlineAnyEntity {
 
 /// The number of entities active, as its changes.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub(crate) struct OnlineCountEntities {
     label: String,
     population: Population,
@@ -388,4 +404,81 @@ fn members_of(advance: &Advance) -> Vec<(Timestamp, &TimeIntervalSequence)> {
             (stepped.first, timeline)
         })
         .collect()
+}
+
+/// The entities of a population as a list: the identity of each follows from
+/// its value, so it is not stored.
+#[cfg(feature = "serde")]
+mod as_list {
+    use std::collections::BTreeMap;
+
+    use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
+
+    use crate::processing::{entity_id, EntityId};
+
+    use super::Born;
+
+    pub(super) fn serialize<S: Serializer>(
+        entities: &BTreeMap<EntityId, Born>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        entities.values().collect::<Vec<_>>().serialize(serializer)
+    }
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<BTreeMap<EntityId, Born>, D::Error> {
+        let mut entities = BTreeMap::new();
+        for born in Vec::<Born>::deserialize(deserializer)? {
+            let id = entity_id(&born.value).ok_or_else(|| {
+                de::Error::custom(format_args!(
+                    "`{}` is not a bool, a number or text, so it names no entity",
+                    born.value
+                ))
+            })?;
+            if entities.insert(id, born).is_some() {
+                return Err(de::Error::custom("an entity appears twice"));
+            }
+        }
+        Ok(entities)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl Population {
+    /// Whether the group, the prototype and the state of every entity have the
+    /// fixed parts of `fresh`.
+    fn same_plan(&self, fresh: &Self) -> bool {
+        self.by == fresh.by
+            && self.unique_under == fresh.unique_under
+            && self.prototype.same_plan(&fresh.prototype)
+            && self
+                .entities
+                .values()
+                .all(|born| born.state.same_plan(&fresh.prototype))
+    }
+}
+
+#[cfg(feature = "serde")]
+impl OnlinePerEntity {
+    /// Whether the fixed parts equal those of `fresh`, compiled from the processor.
+    pub(super) fn same_plan(&self, fresh: &Self) -> bool {
+        self.label == fresh.label && self.population.same_plan(&fresh.population)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl OnlineAnyEntity {
+    /// Whether the fixed parts equal those of `fresh`, compiled from the processor.
+    pub(super) fn same_plan(&self, fresh: &Self) -> bool {
+        self.label == fresh.label && self.population.same_plan(&fresh.population)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl OnlineCountEntities {
+    /// Whether the fixed parts equal those of `fresh`, compiled from the processor.
+    pub(super) fn same_plan(&self, fresh: &Self) -> bool {
+        self.label == fresh.label && self.population.same_plan(&fresh.population)
+    }
 }

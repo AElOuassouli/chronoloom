@@ -39,6 +39,7 @@ impl Not {
 /// The running state of [`Not`]: the complement of each chunk within its
 /// extent.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub(crate) struct OnlineNot {
     input: Box<OnlineNode>,
 }
@@ -64,5 +65,13 @@ impl OnlineNot {
 
     pub(super) fn frontier(&self) -> Timestamp {
         self.input.frontier()
+    }
+}
+
+#[cfg(feature = "serde")]
+impl OnlineNot {
+    /// Whether the fixed parts equal those of `fresh`, compiled from the processor.
+    pub(super) fn same_plan(&self, fresh: &Self) -> bool {
+        self.input.same_plan(&fresh.input)
     }
 }

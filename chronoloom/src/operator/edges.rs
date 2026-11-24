@@ -62,6 +62,7 @@ fn edges_of(timeline: &TimeIntervalSequence, label: &str) -> AnyPointSequence {
 /// end nor a start there. `open` is that span, as a chunk of the timeline from
 /// its start to the frontier, or `None` when no span reaches the frontier.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub(crate) struct OnlineEdges {
     inner: Box<OnlineNode>,
     label: String,
@@ -103,5 +104,13 @@ impl OnlineEdges {
 
     pub(super) fn frontier(&self) -> Timestamp {
         self.inner.frontier()
+    }
+}
+
+#[cfg(feature = "serde")]
+impl OnlineEdges {
+    /// Whether the fixed parts equal those of `fresh`, compiled from the processor.
+    pub(super) fn same_plan(&self, fresh: &Self) -> bool {
+        self.label == fresh.label && self.inner.same_plan(&fresh.inner)
     }
 }

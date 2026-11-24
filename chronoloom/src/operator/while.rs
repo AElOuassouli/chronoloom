@@ -92,6 +92,7 @@ impl While {
 /// The running state of [`While`]: the last sample, which holds into the next
 /// chunk when the run of the extent does and its timeout has not passed.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub(crate) struct OnlineWhile {
     pattern: Pattern,
     timeout: Option<Timestamp>,
@@ -194,5 +195,13 @@ impl OnlineWhile {
 
     pub(super) const fn frontier(&self) -> Timestamp {
         self.frontier
+    }
+}
+
+#[cfg(feature = "serde")]
+impl OnlineWhile {
+    /// Whether the fixed parts equal those of `fresh`, compiled from the processor.
+    pub(super) fn same_plan(&self, fresh: &Self) -> bool {
+        self.pattern == fresh.pattern && self.timeout == fresh.timeout
     }
 }

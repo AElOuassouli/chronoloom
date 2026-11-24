@@ -42,6 +42,7 @@ impl Matching {
 
 /// The running state of [`Matching`]: each chunk of points read on its own.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub(crate) struct OnlineMatching {
     pattern: Pattern,
     label: String,
@@ -76,5 +77,13 @@ impl OnlineMatching {
 
     pub(super) const fn frontier(&self) -> Timestamp {
         self.frontier
+    }
+}
+
+#[cfg(feature = "serde")]
+impl OnlineMatching {
+    /// Whether the fixed parts equal those of `fresh`, compiled from the processor.
+    pub(super) fn same_plan(&self, fresh: &Self) -> bool {
+        self.pattern == fresh.pattern && self.label == fresh.label
     }
 }

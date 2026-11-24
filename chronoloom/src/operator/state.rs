@@ -43,6 +43,7 @@ impl State {
 
 /// The running state of [`State`]: the member's chunks, as they come.
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub(crate) struct OnlineState {
     key: Key,
     frontier: Timestamp,
@@ -68,5 +69,13 @@ impl OnlineState {
 
     pub(super) const fn frontier(&self) -> Timestamp {
         self.frontier
+    }
+}
+
+#[cfg(feature = "serde")]
+impl OnlineState {
+    /// Whether the fixed parts equal those of `fresh`, compiled from the processor.
+    pub(super) fn same_plan(&self, fresh: &Self) -> bool {
+        self.key == fresh.key
     }
 }

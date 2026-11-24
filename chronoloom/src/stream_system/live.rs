@@ -11,6 +11,8 @@ use crate::processor::Processor;
 use crate::sequence_system::{Key, RecordError, Sequence, SequenceSystem};
 use crate::sequences::Extent;
 
+#[cfg(feature = "serde")]
+use super::checkpoint::Checkpoint;
 use super::mode::LiveNode;
 use super::pipeline::{writes, Pipeline};
 use super::update::Watermark;
@@ -254,6 +256,192 @@ impl StreamSystem<Live> {
             pipeline: self.pipeline.clone(),
             mode: Batch,
         }
+    }
+
+    /// Where the system started: the frontier of a stream added later.
+    #[cfg(feature = "serde")]
+    pub(crate) const fn origin(&self) -> Timestamp {
+        self.mode.from
+    }
+
+    /// The running state of each processor, in the order of the pipeline.
+    #[cfg(feature = "serde")]
+    pub(crate) fn nodes(&self) -> &[LiveNode] {
+        &self.mode.nodes
+    }
+
+    /// A system as a checkpoint holds it: it started at `from`, holds `streams`
+    /// with their frontiers, `processors` in order with the running state of
+    /// each in `nodes`, and the derived streams they made, `derived`.
+    ///
+    /// Nothing is run: what a checkpoint holds is what the system was.
+    ///
+    /// # Errors
+    ///
+    /// If the parts contradict each other: a frontier before `from`, a
+    /// processor the system refuses, a running state of another kind than its
+    /// processor, a derived stream that no processor writes or that a
+    /// processor lacks, entities that the running state and the derived streams
+    /// do not agree on, a derived stream observed past its frontier, or a
+    /// processor that has read an input further than its frontier.
+    #[cfg(feature = "serde")]
+    pub(crate) fn restore(parts: Checkpoint) -> Result<Self, String> {
+        let Checkpoint {
+            from,
+            metadata,
+            streams,
+            processors,
+            nodes,
+            mut derived,
+        } = parts;
+        if nodes.len() != processors.len() {
+            return Err(format!(
+                "{} processors but the running state of {}",
+                processors.len(),
+                nodes.len()
+            ));
+        }
+
+        let mut system = Self::live(from);
+        system.metadata_mut().clone_from(&metadata);
+        for stream in streams {
+            if stream.frontier < from {
+                return Err(format!(
+                    "stream `{}`: the frontier is {}, before where the system started, {from}",
+                    stream.key, stream.frontier
+                ));
+            }
+            system.members.insert(stream.key.clone(), stream.sequence);
+            system
+                .mode
+                .frontiers
+                .insert(stream.key.clone(), stream.frontier);
+            if let Some(kept) = system.members.member_metadata_mut(stream.key.as_str()) {
+                *kept = stream.metadata;
+            }
+        }
+
+        for (processor, node) in processors.into_iter().zip(nodes) {
+            let output = processor.output().clone();
+            let refused =
+                |problem: &dyn std::fmt::Display| format!("processor `{output}`: {problem}");
+            if processor.is_transform() {
+                return Err(refused(&"a live system does not run transforms"));
+            }
+            let under = matches!(processor.recipe(), Recipe::PerEntity { .. })
+                && system.members.keys().any(|key| writes(&processor, key));
+            if system.members.contains(output.as_str()) || under {
+                return Err(refused(&"its output is taken"));
+            }
+            system
+                .pipeline
+                .push(processor.clone())
+                .map_err(|error| refused(&error))?;
+            check_declared(
+                processor.declared_inputs(),
+                |key| key == &output,
+                &system.members,
+            )
+            .map_err(|error| refused(&error))?;
+            if let Some(key) = processor
+                .inputs()
+                .into_iter()
+                .find(|key| !system.members.contains(key.as_str()))
+            {
+                return Err(refused(&format_args!(
+                    "it reads `{key}`, which is not held"
+                )));
+            }
+
+            let fresh = compile_recipe(processor.recipe()).online(&output);
+            if !node.recipe.same_plan(&fresh) {
+                return Err(refused(
+                    &"its running state is of another kind, or holds a formula other than the \
+                      processor's",
+                ));
+            }
+            if let Some(key) = node
+                .read
+                .keys()
+                .find(|key| !processor.inputs().contains(key))
+            {
+                return Err(refused(&format_args!(
+                    "its state has read `{key}`, which it does not"
+                )));
+            }
+
+            let (mine, rest): (Vec<_>, Vec<_>) = derived
+                .into_iter()
+                .partition(|member| writes(&processor, &member.key));
+            derived = rest;
+            let per_entity = matches!(processor.recipe(), Recipe::PerEntity { .. });
+            let expected: BTreeMap<Key, Option<crate::values::Value>> = if per_entity {
+                node.recipe
+                    .entities()
+                    .into_iter()
+                    .map(|entity| (member_key(&output, &render(&entity)), Some(entity)))
+                    .collect()
+            } else {
+                BTreeMap::from([(output.clone(), None)])
+            };
+            if mine.len() != expected.len()
+                || mine
+                    .iter()
+                    .any(|member| expected.get(&member.key) != Some(&member.entity))
+            {
+                return Err(refused(
+                    &"its derived streams disagree with its running state",
+                ));
+            }
+            let frontier = node.recipe.frontier();
+            for member in mine {
+                if member.entity.is_some() != matches!(processor.recipe(), Recipe::PerEntity { .. })
+                {
+                    return Err(refused(&format_args!(
+                        "`{}` names the wrong entity",
+                        member.key
+                    )));
+                }
+                if member
+                    .sequence
+                    .observed()
+                    .as_slice()
+                    .iter()
+                    .any(|run| run.end() > frontier)
+                {
+                    return Err(refused(&format_args!(
+                        "`{}` is observed past its frontier {frontier}",
+                        member.key
+                    )));
+                }
+                system.members.insert_derived(
+                    member.key.clone(),
+                    member.sequence,
+                    processor.recipe().clone(),
+                    member.entity,
+                );
+                if let Some(kept) = system.members.member_metadata_mut(member.key.as_str()) {
+                    *kept = member.metadata;
+                }
+            }
+            system.mode.nodes.push(node);
+        }
+        if let Some(member) = derived.first() {
+            return Err(format!("`{}` is written by no processor", member.key));
+        }
+
+        for (index, node) in system.mode.nodes.iter().enumerate() {
+            for (key, read) in &node.read {
+                let reached = frontier_of(&system.mode, &system.pipeline, key);
+                if reached.is_none_or(|reached| *read > reached) {
+                    return Err(format!(
+                        "processor `{}` has read `{key}` up to {read}, past its frontier",
+                        system.pipeline.processors()[index].output()
+                    ));
+                }
+            }
+        }
+        Ok(system)
     }
 
     /// [`update`](StreamSystem::update) on the system itself, which the caller

@@ -8,8 +8,14 @@
   order. Derived streams are not stored but evaluated again on load over the
   saved streams, so a `slice` or a drained part, whose derived streams are not
   what the processors give over its own streams, loads with different ones. A
-  processor that fails over the streams is the error of the load. A
-  `StreamSystem<Live>` has no document yet.
+  processor that fails over the streams is the error of the load.
+- `StreamSystem<Live>` is a `serde` checkpoint: the batch document with
+  `"mode": "live"`, `from`, a `frontier` per stream, the running state of each
+  processor and the derived streams as made. A restored system goes on exactly
+  as one that never stopped, also after a `drain`. A document of the other mode
+  and one whose parts contradict each other (a state of another kind than its
+  processor, derived streams that disagree with the entities seen, a frontier
+  before `from`, a stream observed past its frontier) are refused.
 - `StreamSystem<Live>`, made by `StreamSystem::live(from)`: a system with a
   frontier per stream whose processors run incrementally over what became
   final, on the data held once in the system. `insert_stream`, `add_processor`

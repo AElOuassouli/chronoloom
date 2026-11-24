@@ -47,15 +47,16 @@ pub struct Live {
 
 /// The running state of one processor.
 #[derive(Debug, Clone)]
-pub(super) struct LiveNode {
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub(crate) struct LiveNode {
     /// What the recipe compiled into.
-    pub(super) recipe: OnlineRecipe,
+    pub(crate) recipe: OnlineRecipe,
     /// How far each member it reads has been given to it.
-    pub(super) read: BTreeMap<Key, Timestamp>,
+    pub(crate) read: BTreeMap<Key, Timestamp>,
 }
 
-/// Two live modes are equal when they have the same frontiers: the running
-/// state of the processors follows from the data and the frontiers.
+/// Two live modes are equal when they started at the same instant and have the
+/// same frontiers: the running state of the processors is not compared.
 impl PartialEq for Live {
     fn eq(&self, other: &Self) -> bool {
         self.from == other.from && self.frontiers == other.frontiers

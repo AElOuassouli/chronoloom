@@ -321,7 +321,7 @@ impl SequenceSystem {
     /// # Panics
     ///
     /// If no member is under `key`, or `next` is of another shape or value type
-    /// than the member: a live processor gives chunks of one shape.
+    /// than the member: a live stream system gives chunks of one shape.
     pub(crate) fn append_derived(&mut self, key: &str, next: &Sequence) {
         let held = self
             .member_mut(key)

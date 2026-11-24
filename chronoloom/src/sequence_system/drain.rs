@@ -3,9 +3,10 @@
 use std::collections::BTreeMap;
 
 use crate::primitives::Timestamp;
+use crate::sequences::Extent;
 
 use super::erased::AnyPointSequence;
-use super::{Member, Sequence, SequenceSystem};
+use super::{Key, Member, Sequence, SequenceSystem};
 
 impl Sequence {
     /// Take out the part final at `frontier`, leaving the rest in place.
@@ -51,14 +52,57 @@ impl SequenceSystem {
 }
 
 impl SequenceSystem {
-    /// Discard the part of the live member for `key` before `cut`, as draining
-    /// does but at an instant of the caller's choosing, never past the
-    /// member's frontier. A batch member or an unknown key is left alone.
-    pub(crate) fn discard_before(&mut self, key: &str, cut: Timestamp) {
+    /// Take the part of every member before the instant `cuts` gives for its
+    /// key out of the system, and return it as a system of batch members that
+    /// keep their metadata, lineage, entity and schema. A member without a cut
+    /// is left alone and absent from the result.
+    ///
+    /// As [`drain_finalised`](SequenceSystem::drain_finalised) does for the
+    /// frontier of a live member, a span reaching the cut stays whole.
+    pub(crate) fn drain_before(&mut self, cuts: &BTreeMap<Key, Timestamp>) -> Self {
+        let mut members = BTreeMap::new();
+
+        for (key, member) in &mut self.members {
+            let Some(&cut) = cuts.get(key) else {
+                continue;
+            };
+            let drained = Member {
+                sequence: member.sequence.split_finalised(cut),
+                metadata: member.metadata.clone(),
+                frontier: None,
+                lineage: member.lineage.clone(),
+                entity: member.entity.clone(),
+                schema: member.schema.clone(),
+            };
+            members.insert(key.clone(), drained);
+        }
+
+        Self {
+            members,
+            metadata: self.metadata.clone(),
+        }
+    }
+
+    /// Narrow the member for `key` to `extent`, as
+    /// [`observe`](SequenceSystem::observe) does for all of them. An unknown
+    /// key is left alone.
+    pub(crate) fn observe_member(&mut self, key: &str, extent: &Extent) {
         if let Some(member) = self.members.get_mut(key) {
-            if let Some(frontier) = member.frontier {
-                drop(member.sequence.split_finalised(cut.min(frontier)));
+            match &mut member.sequence {
+                Sequence::TimePoint(points) => points.as_erased_mut().observe(extent),
+                Sequence::TimeInterval(timeline) => timeline.observe(extent),
             }
+        }
+    }
+
+    /// Observe the member for `key` from `from` on, whatever it observed
+    /// before: what a stream that is going live has beyond its cut. An unknown
+    /// key is left alone.
+    pub(crate) fn observe_from(&mut self, key: &str, from: Timestamp) {
+        if let Some(member) = self.members.get_mut(key) {
+            member
+                .observed_mut()
+                .grow(Extent::of_range(&(from..)).as_slice());
         }
     }
 }

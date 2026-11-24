@@ -74,6 +74,16 @@ use super::{Batch, Mode};
 ///   frontier of each. The chunks joined end to end are what batch mode gives
 ///   over the same data, below the frontiers. A live system does not run
 ///   transforms yet, and starts at an instant, [`StreamSystem::live`].
+///   [`finish`](StreamSystem::finish) ends it, closing the streams at a
+///   horizon so that the derived streams are the batch result over what the
+///   streams hold. It keeps only what is not final once [`drain`] hands the
+///   final part over as a batch system, which bounds its memory over a stream
+///   that does not end: the processors carry their own state and never need
+///   the data drained, while a processor [added](StreamSystem::add_processor)
+///   to a live system starts over what the system still holds, so it sees
+///   nothing that was drained. [`StreamSystem::into_live`] goes from batch to
+///   live: the streams are cut to what lies before the instant, and the
+///   processors start by stepping over it.
 ///
 /// ```
 /// use chronoloom::processor::Processor;
@@ -141,6 +151,7 @@ use super::{Batch, Mode};
 /// ```
 ///
 /// [`Chunk`]: super::Chunk
+/// [`drain`]: StreamSystem::drain
 /// [`Live`]: super::Live
 /// [`LiveReport`]: super::LiveReport
 /// [`Report`]: super::Report

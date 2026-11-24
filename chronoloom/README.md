@@ -9,10 +9,11 @@ What it holds today: two event shapes and two sequence types, one for points
 and one for timelines; the instants a sequence was observed over, so that
 "inactive" and "unknown" differ; a `SequenceSystem` that files sequences under
 keys as one dataset; a `Processor`, a set of formulas that turns points into
-timelines and timelines into edges; a `LiveProcessor` that produces the same
-outputs as the data arrives; dynamic record values with a schema; and one
-timeline per entity of a record field. Behind features, systems, processors and
-live processors save and load, and a processor has a JSON Schema.
+timelines and timelines into edges; a `StreamSystem` that runs them over a
+finished dataset or, in live mode, produces the same outputs as the data
+arrives; dynamic record values with a schema; and one timeline per entity of a
+record field. Behind features, systems and processors save and load, and a
+processor has a JSON Schema.
 
 Intervals are **half-open**: `start` is included, `end` is excluded. Two
 intervals that merely touch (`[0, 5)` and `[5, 9)`) therefore share no instant.
@@ -549,7 +550,7 @@ A processor may say what it expects of the members it reads, with
 `Processor::with_input(key, Input)`: a timeline, points of a value type, edges,
 or records of a `Schema`. `Processor::validate` then lists every problem without
 a system, in a stable order (the cycle first, then the reads of the formula),
-and a `StreamSystem` or a `LiveProcessor` refuses a stream that contradicts a
+and a `StreamSystem`, in either mode, refuses a stream that contradicts a
 declaration. A processor with no declarations behaves as before.
 
 ```rust
@@ -626,55 +627,70 @@ assert_eq!(
 );
 ```
 
-## Running a processor online
+## Running processors online
 
-`LiveProcessor::new(&processors, from)` makes a `LiveProcessor`, the same outputs
-produced as the inputs arrive. It is a state machine with no clock, input or output, that a host
-drives: `on_point` and `on_span` record input events, `advance` moves the
-frontier (watermark) of one input, and each call returns the `Emission`s that
-became final. A state output emits `Edge`s, a `Start` once its instant is below
-the frontier of the output, so a start reaches the host before its span closes;
-`Events::Matching`, `Events::Changes` and `Events::Project` emit points with
-their values erased as `AnyValue`.
+`StreamSystem::live(from)` makes a stream system in live mode: the same
+processors, run as the data arrives. Each stream has a frontier (a watermark)
+before which everything is final, and it starts at `from`. An `Update` carries
+events and watermarks (`advance`, `advance_all`); `update` refuses an event
+before the frontier of its stream (`UpdateError::Late`), records the rest,
+moves the frontiers, and runs the processors that read a stream whose frontier
+moved over the range that became final. The `LiveReport` it returns gives, for
+each derived stream that made progress, the `Chunk` that became final: its
+sequence over `[old frontier, new frontier)`, which joined end to end give what
+batch mode gives over the same data, whatever order and watermarks the data
+arrives with. A state chunk gives its `edges()`, so a start reaches the host
+before its span closes.
 
-Every operator has a lag: the frontier of an output is a function of the
+Every operator has a lag: the frontier of a derived stream is a function of the
 frontiers of its inputs. Set operations take the smaller one, `Shift { alpha,
 beta }` adds `min(alpha, beta)`, and a chained output has the frontier of the
-output it reads. Everything before the frontier of an output is final, so the
-edges emitted are those of the batch evaluation over the whole stream, whatever order
-and watermarks the inputs arrive with. `finish(horizon)` ends the stream, and
-what was emitted then equals the batch result with the extent of each input
-ending at the horizon.
+output it reads. Each processor keeps a small running state of its own (an open
+span, the sample that holds a `While`, the entities seen) and reads only the
+newly final part of its inputs, so a step costs what is new.
+
+`finish(horizon)` ends the system: every stream is final up to the end of time,
+what they hold at or after the horizon is dropped, and the processors flush what
+they held back, so a span still open is closed at the horizon and the derived
+streams are the batch result over the streams as they are. Nothing is recorded
+after that.
 
 ```rust
-use chronoloom::{Processor};
-use chronoloom::{Condition, Edge, Emitted, Formula, LiveProcessor, Pattern, TimePointEvent};
+use chronoloom::{Condition, Formula, Pattern, Processor, StreamSystem, TimePointEvent};
+use chronoloom::{TimePointSequence, Update};
 
 let busy = Formula::while_matching(Pattern::new("count", Condition::Greater(5_i64)));
-let mut live = LiveProcessor::new(&[Processor::new("busy", busy)], 0).unwrap();
+let mut live = StreamSystem::live(0);
+live.insert_stream("count", TimePointSequence::<i64>::new("count")).unwrap();
+live.add_processor(Processor::new("busy", busy)).unwrap();
 
-live.on_point("count", TimePointEvent::new(7, 9_i64)).unwrap();
+let mut update = Update::new();
+update.points("count", [TimePointEvent::new(7, 9_i64)]).advance("count", 10);
+let report = live.update(update).unwrap();
 
 // The state became active at 7, and nothing before 10 can change.
-let emitted = live.advance("count", 10).unwrap();
-assert_eq!(emitted[0].item, Emitted::Edge(TimePointEvent::new(7, Edge::Start)));
+assert_eq!(report.chunks()["busy"].range(), 0..10);
 assert_eq!(live.frontier("busy"), Some(10));
 
 // Its end is not known yet; `finish` closes what is open at the horizon.
-assert!(live.advance("count", 20).unwrap().is_empty());
-let closing = live.finish(30).unwrap();
-assert_eq!(closing[0].item, Emitted::Edge(TimePointEvent::new(30, Edge::End)));
+live.finish(30).unwrap();
+assert_eq!(live.intervals("busy").unwrap()[0].bounds(), (7, 30));
 ```
 
-The processor keeps a retained window of its inputs: what the part not yet
-emitted can depend on (the reach of its shifts, the sample that holds a `While`,
-the events of a `Between` since its open span began) and the events that are not
-final. A late event is `ProcessError::Late`, and `retained` counts what is held.
-Unknown regions emit nothing, and the extent of an output is reported only as
-its `frontier`. With `OpenEnd::Head` the head is the frontier of the inputs.
+A live system holds what is not final, and `drain` keeps that bound over a
+stream that does not end: it hands over the final part of every stream and
+derived stream as a batch system, with the same processors, metadata and
+schemas, and keeps only the rest (a span that reaches the frontier stays whole,
+since it may still grow). The processors do not need the data drained, as each
+carries its own state, so what a live system holds stays under a bound whatever
+the length of the stream. A processor added later starts over what is still
+held. `StreamSystem::into_live(from)` goes the other way: a batch system cut to
+what lies before `from`, whose processors start by stepping over it and go on
+as a live system that was given the same events from the start.
 
-The state of a live processor can be saved and restored, as a checkpoint (see
-Saving and loading).
+A live system does not run transforms yet (`UpdateError::LiveTransform`), and
+unknown regions give nothing. With `OpenEnd::Head` the head is the frontier of
+the inputs.
 
 ## Record values
 
@@ -695,14 +711,14 @@ offending field, and a batch stays all or nothing.
 
 `Events::Project` reads one field of each record out into a point sequence of
 its own, of the type a `Kind` names. A record without the field is skipped, and
-a field of another kind is `ProcessError::ProjectionMismatch`. A live processor
-supports it like `Matching`, so what it emits equals the batch result.
+a field of another kind is `ProcessError::ProjectionMismatch`. A live stream system
+runs it like `Matching`, so what it appends equals the batch result.
 
 ```rust
 use chronoloom::{Processor, StreamSystem};
 use chronoloom::{
-    Condition, Emitted, Events, Formula, Kind, LiveProcessor, Pattern, RecordError, Schema,
-    SequenceSystem, TimePointEvent, TimePointSequence, Value,
+    Condition, Events, Formula, Kind, Pattern, RecordError, Schema, SequenceSystem,
+    TimePointEvent, TimePointSequence, Update, Value,
 };
 
 let message = |agent: i64, zone: &str| {
@@ -757,13 +773,18 @@ let agents = result.points::<i64>("agent").unwrap();
 assert_eq!(agents.iter().map(|event| *event.value()).collect::<Vec<_>>(), [7, 9]);
 assert!(result.intervals("far_agent").unwrap().contains(25));
 
-// Online, the same projection emits each point once it is final.
-let zone = Processor::new("zone", Events::project("sensor", "zone", Kind::Text));
-let mut live = LiveProcessor::new(&[zone], 0).unwrap();
-live.on_point("sensor", TimePointEvent::new(10, message(7, "gate"))).unwrap();
-let emitted = live.advance("sensor", 20).unwrap();
-let Emitted::Point(point) = &emitted[0].item else { panic!("a point") };
-assert_eq!(point.value().downcast_ref::<String>().map(String::as_str), Some("gate"));
+// Online, the same projection appends each point once it is final.
+let mut live = StreamSystem::live(0);
+live.insert_stream("sensor", TimePointSequence::<Value>::new("sensor")).unwrap();
+live.add_processor(Processor::new("zone", Events::project("sensor", "zone", Kind::Text)))
+    .unwrap();
+let mut update = Update::new();
+update
+    .points("sensor", [TimePointEvent::new(10, message(7, "gate"))])
+    .advance("sensor", 20);
+live.update(update).unwrap();
+let zone = live.points::<String>("zone").unwrap();
+assert_eq!(zone.iter().map(|event| event.value().as_str()).collect::<Vec<_>>(), ["gate"]);
 ```
 
 A `Pattern` can reach into a record too. `Pattern::field(key, path, condition)`
@@ -912,14 +933,13 @@ starting ones at one instant so that a hand-over counts once. Within a fully kno
 extent, the durations of the entities add up to the count times the duration it
 held.
 
-A `LiveProcessor` runs these outputs too. It makes an entity when the first record
-of it is fed, and emits its edges under the member key, `presence/agent-7`; what
-it emitted equals the batch result, and a union or a count is final up to the
-frontier of the records, since an entity may still appear there. It cannot read
-the members of a per-entity output (`ProcessError::GroupedRead`), since it only
-learns them as records arrive. Each entity is kept for good, with the retained
-window one formula would hold, so the state grows with the entities seen and an
-advance costs in proportion.
+A live `StreamSystem` runs these outputs too. It makes an entity when the first
+record of it is recorded, and files its timeline under the member key,
+`presence/agent-7`; what it gives equals the batch result, and a union or a
+count is final up to the frontier of the records, since an entity may still
+appear there. Each entity is kept for good, with the state one formula would
+hold, so the state grows with the entities seen and an update costs in
+proportion.
 
 ## Stream systems
 
@@ -1054,10 +1074,9 @@ dependency (`cargo add chronoloom --features serde`), every type that holds data
 implements `Serialize` and `Deserialize`, for any self-describing format. The
 examples use JSON, and need the feature, so they are marked `ignore` here and
 run as doctests of the `serialisation` module. A `TimePointSequence`, a
-`TimeIntervalSequence`, a `SequenceSystem`, a `Processor` and a `LiveProcessor`
-are documents that start with a format version, `{ "format": 1, .. }`; what is
-nested in them carries none (a checkpoint holds a processor and a system, which
-are documents of their own), and a reader refuses any version it does not know.
+`TimeIntervalSequence`, a `SequenceSystem` and a `Processor` are documents that
+start with a format version, `{ "format": 1, .. }`; what is nested in them
+carries none, and a reader refuses any version it does not know.
 A system is saved whole: members, metadata, frontiers of live members, the
 output each derived member came from (its lineage), entities and schemas.
 
@@ -1109,32 +1128,6 @@ any other type, or loading a document with another tag, is an error naming the
 key. The version history and the shapes are in the `serialisation` module
 documentation.
 
-A `LiveProcessor` is saved as a checkpoint: its processor, the retained window of
-its inputs, where each output has emitted up to, and the entities seen, which is
-what cannot be recomputed from the processor, so its size is the state bound of
-the live processor. A host stores it with its own input offsets, and a restored
-processor emits, and reports `frontier` and `retained`, exactly as one that never
-stopped. A checkpoint is validated on load like any document: its inputs must be
-those its processor reads, and its views, cursors and frontiers must agree. A
-processor holding an input of a value type outside the closed set above cannot
-be checkpointed, and the error names the key.
-
-```rust,ignore
-use chronoloom::{Condition, Formula, LiveProcessor, Pattern, TimePointEvent};
-
-let busy = Formula::while_matching(Pattern::new("count", Condition::Greater(5_i64)));
-let mut live = LiveProcessor::new(&[Processor::new("busy", busy)], 0).unwrap();
-live.on_point("count", TimePointEvent::new(7, 9_i64)).unwrap();
-live.advance("count", 10).unwrap();
-
-// The host saves it with its own offsets, and a new process loads it.
-let saved = serde_json::to_string(&live).unwrap();
-let mut restored: LiveProcessor = serde_json::from_str(&saved).unwrap();
-assert_eq!(restored.processors(), live.processors());
-assert_eq!(restored.frontier("busy"), Some(10));
-assert_eq!(restored.finish(30).unwrap(), live.finish(30).unwrap());
-```
-
 ### A JSON Schema
 
 The declarations of a processor (see Declared inputs) are saved in an `inputs`
@@ -1168,11 +1161,9 @@ What is open:
   a `StreamSystem` is not here yet.
 - Record values have no lists, and a projection copies the values rather than
   viewing them in place.
-- A live processor keeps every entity of a per-entity output it has seen. A way
-  to forget the inactive ones would cost a late record of such an entity its
+- A live system keeps every entity of a per-entity output it has seen. A way to
+  forget the inactive ones would cost a late record of such an entity its
   member, and does not exist yet.
-- A live processor evaluates its retained window again on each advance. Leaves
-  that update in constant state would replace that if it proves too costly.
 - Sequences have `range`, `nearest`, `slice` and `contains`, and no further
   queries such as the gaps or the coverage of a timeline, and the set algebra
   is defined for `TimeIntervalSequence` only, not for `TimePointSequence`.

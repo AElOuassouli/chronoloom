@@ -9,11 +9,12 @@ use crate::primitives::{TimeIntervalEvent, Timestamp};
 use crate::processing::{check_declared, member_key, render, ProcessError, Recipe};
 use crate::processor::Processor;
 use crate::sequence_system::{Key, RecordError, Sequence, SequenceSystem};
+use crate::sequences::Extent;
 
 use super::mode::LiveNode;
 use super::pipeline::{writes, Pipeline};
 use super::update::Watermark;
-use super::{Live, LiveReport, StreamSystem, Update, UpdateError};
+use super::{Batch, Live, LiveReport, StreamSystem, Update, UpdateError};
 
 impl StreamSystem<Live> {
     /// An empty system in live mode, whose streams are final before `from`:
@@ -198,10 +199,68 @@ impl StreamSystem<Live> {
         self.update(update)
     }
 
+    /// End the system at `horizon`: nothing more comes, so every stream is
+    /// final up to the end of time, and the processors flush what they held
+    /// back (a span still open, a head not yet known).
+    ///
+    /// What a stream holds at or after `horizon` is dropped, and its extent
+    /// stops there, so the end of what was observed is `horizon`; a stream
+    /// already final past `horizon` keeps what it has. The derived streams are
+    /// then what batch mode gives over the streams as they are, whole, and
+    /// the report gives the last chunk of each. A finished system refuses every
+    /// event as late, and a second call changes nothing.
+    ///
+    /// # Errors
+    ///
+    /// [`UpdateError::Process`] if a processor fails. Nothing changes then.
+    pub fn finish(&mut self, horizon: Timestamp) -> Result<LiveReport, UpdateError> {
+        let mut next = self.clone();
+        let report = next.close(horizon)?;
+
+        *self = next;
+        Ok(report)
+    }
+
+    /// Take the final part of every stream and derived stream out of the
+    /// system, and give it as a batch system with the same processors,
+    /// metadata and schemas. The live system keeps only what is not final, so
+    /// that its memory stays bounded over a stream that does not end.
+    ///
+    /// A span that reaches the frontier of its stream stays whole, as it may
+    /// still grow, so the two halves of a stream joined end to end are the
+    /// stream. Streams and derived streams keep their keys, empty when all was
+    /// final. The processors do not need the drained data, as each carries its
+    /// own state; a processor [added](StreamSystem::add_processor) later starts
+    /// over what is still held.
+    ///
+    /// The derived streams of the batch system are kept as the live system made
+    /// them, not recomputed from its streams: each is cut at its own frontier,
+    /// which lags those of the streams, so a span may be drained after the
+    /// event that started it. A derived stream is therefore not what the
+    /// processors give over the drained streams alone, and an update or an
+    /// added processor on the batch system evaluates over those streams and
+    /// rewrites it. Keep the parts, and join them end to end, for the whole.
+    #[must_use]
+    pub fn drain(&mut self) -> StreamSystem<Batch> {
+        let cuts: BTreeMap<Key, Timestamp> = self
+            .members
+            .keys()
+            .filter_map(|key| Some((key.clone(), frontier_of(&self.mode, &self.pipeline, key)?)))
+            .collect();
+
+        StreamSystem {
+            members: self.members.drain_before(&cuts),
+            raw: SequenceSystem::new(),
+            pipeline: self.pipeline.clone(),
+            mode: Batch,
+        }
+    }
+
     /// [`update`](StreamSystem::update) on the system itself, which the caller
     /// works on a copy of.
     fn apply(&mut self, update: Update) -> Result<LiveReport, UpdateError> {
         let Update { chunks, watermarks } = update;
+        let recorded: BTreeSet<Key> = chunks.iter().map(|(key, _)| key.clone()).collect();
 
         for (key, pending) in &chunks {
             if self.is_derived(key.as_str()) {
@@ -223,6 +282,27 @@ impl StreamSystem<Live> {
             chunks,
             watermarks: Vec::new(),
         })?;
+
+        // What was recorded is held to the declarations of the processors that
+        // read it, as when the processor was added.
+        for processor in self.pipeline.processors() {
+            let output = processor.output();
+            if processor
+                .declared_inputs()
+                .keys()
+                .any(|key| recorded.contains(key))
+            {
+                check_declared(
+                    processor.declared_inputs(),
+                    |key| key == output,
+                    &self.members,
+                )
+                .map_err(|error| UpdateError::Process {
+                    processor: output.clone(),
+                    error,
+                })?;
+            }
+        }
 
         let mut moved: BTreeSet<Key> = BTreeSet::new();
         for watermark in watermarks {
@@ -253,6 +333,29 @@ impl StreamSystem<Live> {
                 }
             }
         }
+
+        let mut chunks = BTreeMap::new();
+        for index in self.pipeline.affected(&moved) {
+            self.step(index, &mut chunks)?;
+        }
+        Ok(self.report(chunks))
+    }
+
+    /// [`finish`](StreamSystem::finish) on the system itself, which the caller
+    /// works on a copy of.
+    fn close(&mut self, horizon: Timestamp) -> Result<LiveReport, UpdateError> {
+        let mut moved: BTreeSet<Key> = BTreeSet::new();
+        for (key, frontier) in &mut self.mode.frontiers {
+            if *frontier == Timestamp::MAX {
+                continue;
+            }
+            let end = horizon.max(*frontier);
+            self.members
+                .observe_member(key.as_str(), &Extent::of_range(&(..end)));
+            *frontier = Timestamp::MAX;
+            moved.insert(key.clone());
+        }
+        self.mode.from = Timestamp::MAX;
 
         let mut chunks = BTreeMap::new();
         for index in self.pipeline.affected(&moved) {

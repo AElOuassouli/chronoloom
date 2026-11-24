@@ -117,10 +117,8 @@
 //! an event, or wherever other states are. A [`Processor`] is one recipe: the
 //! inputs it reads, a formula over them, and the one output it produces; it is
 //! how point sequences become timelines and timelines become [`Edge`] events.
-//! [`LiveProcessor::new`] runs a list of them online and produces the same
-//! outputs as in batch: a state machine with no clock, input or output that a host
-//! drives with events and watermarks, and that emits each [`Emission`] once it
-//! is final. What it emitted equals the batch result over the whole stream.
+//! A live [`StreamSystem`] runs them online and produces the same outputs as
+//! in batch, chunk by chunk, as watermarks make the data final.
 //! [`Processor::with_input`] declares what a processor expects of its inputs,
 //! and [`Processor::validate`] lists every problem without a system.
 //!
@@ -147,7 +145,7 @@
 //! entity each is about, and [`Recipe::per_entity`], [`Recipe::any_entity`] and
 //! [`Recipe::count_entities`] build on it: one timeline per entity under
 //! `<output key>/<entity>`, their union, and how many are active, as the changes
-//! of a count. A [`LiveProcessor`] makes an entity when its first record is fed.
+//! of a count. A live [`StreamSystem`] makes an entity when its first record is recorded.
 //! The README walks through a presence example.
 //!
 //! # Stream systems
@@ -163,8 +161,7 @@
 //!
 //! # Saving and loading
 //!
-//! With the `serde` feature, sequences, systems, processors and the state of a
-//! [`LiveProcessor`] (a checkpoint) are saved and loaded with any
+//! With the `serde` feature, sequences, systems and processors are saved and loaded with any
 //! self-describing format, as documents that start with a format version and
 //! are validated when read, so a document that loads is always a valid value.
 //! The `serialisation` module (present with the feature) documents the format,
@@ -227,8 +224,7 @@ pub mod values;
 
 pub use primitives::{IntervalError, TimeIntervalEvent, TimePointEvent, Timestamp};
 pub use processing::{
-    Condition, Edge, Emission, Emitted, Events, Formula, Group, Input, Kind, LiveProcessor,
-    OpenEnd, Pattern, ProcessError, Recipe,
+    Condition, Edge, Events, Formula, Group, Input, Kind, OpenEnd, Pattern, ProcessError, Recipe,
 };
 pub use processor::Processor;
 pub use sequence_system::{

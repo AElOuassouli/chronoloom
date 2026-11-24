@@ -150,7 +150,7 @@ impl SequenceSystem {
 }
 
 impl Member {
-    fn observed_mut(&mut self) -> &mut Extent {
+    pub(super) fn observed_mut(&mut self) -> &mut Extent {
         match &mut self.sequence {
             Sequence::TimePoint(points) => points.as_erased_mut().observed_mut(),
             Sequence::TimeInterval(timeline) => timeline.observed_mut(),

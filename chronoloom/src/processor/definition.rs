@@ -47,16 +47,15 @@ use crate::stream_system::{writes, Mode, StreamSystem};
 ///   declarations first: a declared input that is missing is
 ///   [`ProcessError::UnknownKey`], one of another shape or value type is as
 ///   above, and records not of the declared schema are
-///   [`ProcessError::SchemaMismatch`]. A [`LiveProcessor`] creates its inputs
-///   as declared, so a record not of the declared schema is refused when it is
-///   fed.
+///   [`ProcessError::SchemaMismatch`]. A live system holds a stream to them
+///   when the processor is added and again when an update records into it, so a
+///   record not of the declared schema is refused when it is fed.
 ///
 /// With the `serde` feature a processor is a document of its own: its
 /// `output`, its declared `inputs` (left out when there are none) and its
 /// `formula` (the wire name of the recipe).
 ///
 /// [`StreamSystem`]: crate::stream_system::StreamSystem
-/// [`LiveProcessor`]: crate::LiveProcessor
 /// [`Formula`]: crate::processing::Formula
 /// [`Events`]: crate::processing::Events
 #[derive(Debug, Clone, PartialEq)]
@@ -119,7 +118,7 @@ impl Processor {
     ///
     /// Every problem found, never an empty list.
     pub fn validate(&self) -> Result<(), Vec<ProcessError>> {
-        self.as_set().problems(false, self.is_transform())
+        processing::problems(self, false)
     }
 
     /// The first problem [`validate`](Processor::validate) would report, if
@@ -129,9 +128,7 @@ impl Processor {
     ///
     /// That problem.
     pub fn check(&self) -> Result<(), ProcessError> {
-        self.as_set()
-            .problems(true, self.is_transform())
-            .map_err(|mut problems| problems.swap_remove(0))
+        processing::problems(self, true).map_err(|mut problems| problems.swap_remove(0))
     }
 
     /// The sequence the recipe denotes over the members of `system`, once:
@@ -177,15 +174,6 @@ impl Processor {
     /// The inputs whose shape was declared.
     pub(crate) const fn declared_inputs(&self) -> &BTreeMap<Key, Input> {
         &self.declared
-    }
-
-    /// The same recipe as a set of one output, which is what the live
-    /// processor and the validation take.
-    pub(crate) fn as_set(&self) -> processing::ProcessorSet {
-        self.declared.iter().fold(
-            processing::ProcessorSet::new().with(self.output.clone(), self.recipe.clone()),
-            |set, (key, input)| set.with_input(key.clone(), input.clone()),
-        )
     }
 
     /// A new system holding the members of the output, each carrying the

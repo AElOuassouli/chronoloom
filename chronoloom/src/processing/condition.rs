@@ -181,9 +181,6 @@ pub(crate) trait ErasedCondition: fmt::Debug + Send + Sync {
     /// The matching points of `points`, values kept; `None` when the points
     /// carry another value type.
     fn matching(&self, points: &AnyPointSequence) -> Option<AnyPointSequence>;
-    /// A point sequence with no events, of the value type the condition is
-    /// over.
-    fn empty_points(&self, label: &str) -> AnyPointSequence;
 }
 
 impl<T: PointValue + PartialOrd> ErasedCondition for Condition<T> {
@@ -212,10 +209,6 @@ impl<T: PointValue + PartialOrd> ErasedCondition for Condition<T> {
 
     fn marks(&self, points: &AnyPointSequence) -> Option<Vec<(Timestamp, bool)>> {
         marks_with(points, |value| self.matches(value))
-    }
-
-    fn empty_points(&self, label: &str) -> AnyPointSequence {
-        TimePointSequence::<T>::new(label).into()
     }
 
     fn matching(&self, points: &AnyPointSequence) -> Option<AnyPointSequence> {
@@ -311,10 +304,6 @@ impl ErasedCondition for FieldCondition {
     fn matching(&self, points: &AnyPointSequence) -> Option<AnyPointSequence> {
         matching_with(points, |value| self.accepts(value))
     }
-
-    fn empty_points(&self, label: &str) -> AnyPointSequence {
-        TimePointSequence::<Value>::new(label).into()
-    }
 }
 
 /// Which points a formula reads: those of the member under `key` whose value
@@ -363,8 +352,7 @@ impl ErasedCondition for FieldCondition {
 /// - Numbers compare as numbers across `Integer` and `Float`, so
 ///   `Greater(Value::from(5))` matches `5.5`.
 /// - Only a member of `Value` points can be read: any other member is
-///   [`ProcessError::ValueTypeMismatch`], in batch and when a live processor
-///   is built.
+///   [`ProcessError::ValueTypeMismatch`], in batch and in live mode.
 ///
 /// `Between` and `While` over a field equal the same formulas over the field
 /// projected with `Kind::Value` and read with a plain pattern, provided every

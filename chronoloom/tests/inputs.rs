@@ -1,14 +1,14 @@
 //! Declared inputs and `Processor::validate`: every problem of a processor
-//! listed in a stable order, and a stream system or a live processor held to
+//! listed in a stable order, and a stream system, in either mode, held to
 //! the declarations.
 
 #[path = "common/update.rs"]
 mod update;
 
 use chronoloom::{
-    Condition, Events, Formula, Group, Input, Kind, LiveProcessor, Pattern, ProcessError,
-    Processor, Recipe, Schema, StreamSystem, TimeIntervalEvent, TimeIntervalSequence,
-    TimePointEvent, TimePointSequence, Value,
+    Condition, Events, Formula, Group, Input, Kind, Live, Pattern, ProcessError, Processor, Recipe,
+    Schema, StreamSystem, TimeIntervalEvent, TimeIntervalSequence, TimePointEvent,
+    TimePointSequence, Update, UpdateError, Value,
 };
 
 fn schema() -> Schema {
@@ -344,52 +344,113 @@ fn a_processor_without_declarations_reads_what_its_formula_reads() {
     );
 }
 
-#[test]
-fn live_refuses_reads_that_contradict_the_declarations() {
-    let contradicting = [declared(
-        "a",
-        Formula::while_matching(Pattern::new("temperature", Condition::Greater(5_i64))),
-    )];
-    assert!(matches!(
-        LiveProcessor::new(&contradicting, 0),
-        Err(ProcessError::ValueTypeMismatch { key, .. }) if key.as_str() == "temperature"
-    ));
-
-    let shape = [declared("a", Formula::state("temperature"))];
-    assert_eq!(
-        LiveProcessor::new(&shape, 0).err(),
-        Some(ProcessError::NotATimeline {
-            key: "temperature".into()
-        })
-    );
-
-    let shadowed = [declared("door", Formula::state("temperature"))];
-    assert_eq!(
-        LiveProcessor::new(&shadowed, 0).err(),
-        Some(ProcessError::InputIsOutput { key: "door".into() })
-    );
+/// A live system holding the three streams of the world, empty.
+fn live_world() -> StreamSystem<Live> {
+    let mut live = StreamSystem::live(0);
+    live.insert_stream("temperature", TimePointSequence::<f64>::new("temperature"))
+        .unwrap();
+    live.insert_stream("door", TimeIntervalSequence::from_spans("door", Vec::new()))
+        .unwrap();
+    live.insert_stream("records", TimePointSequence::<Value>::new("records"))
+        .unwrap();
+    live
 }
 
 #[test]
-fn live_creates_the_declared_inputs_and_refuses_records_off_the_schema() {
-    let processor = [declared("changes", Events::changes("temperature"))];
-    let mut live = LiveProcessor::new(&processor, 0).unwrap();
+fn live_refuses_reads_that_contradict_the_declarations() {
+    let mut live = live_world();
+    let before = live.clone();
 
-    // `door` is declared and read by nothing, and still an input.
-    live.on_span("door", TimeIntervalEvent::span(1, 2).unwrap())
-        .unwrap();
-    // The type of `temperature` comes from the declaration, not from the read.
+    let contradicting = declared(
+        "a",
+        Formula::while_matching(Pattern::new("temperature", Condition::Greater(5_i64))),
+    );
     assert!(matches!(
-        live.on_point("temperature", TimePointEvent::new(1, 5_i64)),
-        Err(ProcessError::ValueTypeMismatch { .. })
+        live.add_processor(contradicting),
+        Err(UpdateError::Process {
+            error: ProcessError::ValueTypeMismatch { key, .. },
+            ..
+        }) if key.as_str() == "temperature"
     ));
-    live.on_point("temperature", TimePointEvent::new(1, 5.0_f64))
-        .unwrap();
 
-    let stray = Value::record([("agent", Value::from(1))]);
+    let shape = declared("a", Formula::state("temperature"));
     assert!(matches!(
-        live.on_point("records", TimePointEvent::new(1, stray)),
-        Err(ProcessError::SchemaMismatch { key, .. }) if key.as_str() == "records"
+        live.add_processor(shape),
+        Err(UpdateError::Process {
+            error: ProcessError::NotATimeline { key },
+            ..
+        }) if key.as_str() == "temperature"
+    ));
+
+    let shadowed = declared("door", Formula::state("temperature"));
+    assert!(matches!(
+        live.add_processor(shadowed),
+        Err(UpdateError::Taken { key }) if key.as_str() == "door"
+    ));
+    assert_eq!(live, before);
+}
+
+#[test]
+fn live_holds_the_streams_to_the_declarations_when_a_processor_is_added() {
+    // `door` is declared and read by nothing, and still an input that must be there.
+    let mut missing = StreamSystem::live(0);
+    missing
+        .insert_stream("temperature", TimePointSequence::<f64>::new("temperature"))
+        .unwrap();
+    assert!(matches!(
+        missing.add_processor(declared("changes", Events::changes("temperature"))),
+        Err(UpdateError::Process {
+            error: ProcessError::UnknownKey { key },
+            ..
+        }) if key.as_str() == "door"
+    ));
+
+    // A record off the declared schema is refused when it is fed, and nothing
+    // is recorded.
+    let mut live = live_world();
+    live.add_processor(declared("changes", Events::changes("temperature")))
+        .unwrap();
+    let before = live.clone();
+    let mut stray_update = Update::new();
+    stray_update
+        .points(
+            "records",
+            [TimePointEvent::new(
+                1,
+                Value::record([("agent", Value::from(1))]),
+            )],
+        )
+        .advance("records", 2);
+    assert!(matches!(
+        live.update(stray_update),
+        Err(UpdateError::Process {
+            error: ProcessError::SchemaMismatch { key, .. },
+            ..
+        }) if key.as_str() == "records"
+    ));
+    assert_eq!(live, before);
+
+    // A stream whose records are not of the declared schema is refused.
+    let stray = Value::record([("agent", Value::from(1))]);
+    let mut off_schema = StreamSystem::live(0);
+    off_schema
+        .insert_stream("temperature", TimePointSequence::<f64>::new("temperature"))
+        .unwrap();
+    off_schema
+        .insert_stream("door", TimeIntervalSequence::from_spans("door", Vec::new()))
+        .unwrap();
+    off_schema
+        .insert_stream(
+            "records",
+            TimePointSequence::from_events("records", vec![TimePointEvent::new(1, stray)]),
+        )
+        .unwrap();
+    assert!(matches!(
+        off_schema.add_processor(declared("changes", Events::changes("temperature"))),
+        Err(UpdateError::Process {
+            error: ProcessError::SchemaMismatch { key, .. },
+            ..
+        }) if key.as_str() == "records"
     ));
 }
 

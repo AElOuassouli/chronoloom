@@ -12,7 +12,8 @@ use super::formula::Formula;
 use super::group;
 use super::input::Input;
 use super::kind::Kind;
-use super::processor::{ProcessorSet, Recipe};
+use super::processor::Recipe;
+use crate::processor::Processor;
 
 /// How a read uses the fields of the records it reaches.
 enum Usage<'a> {
@@ -249,69 +250,78 @@ fn check_read(read: &Read<'_>, input: &Input) -> Option<ProcessError> {
     }
 }
 
-impl ProcessorSet {
-    /// Every problem the processor has on its own, without a system, in a
-    /// stable order (see [`Processor`](crate::processor::Processor) for what is
-    /// checked and in what order), or only the first when `stop_at_first` is
-    /// set. A `transform` reads its own output on purpose: that is neither a
-    /// cycle nor a dead declaration, and a read of it is checked as any input.
-    ///
-    /// # Errors
-    ///
-    /// The problems found, never an empty list.
-    pub(crate) fn problems(
-        &self,
-        stop_at_first: bool,
-        transform: bool,
-    ) -> Result<(), Vec<ProcessError>> {
-        let mut problems = Vec::new();
-        let cycle = if transform { Ok(()) } else { self.check() };
-        if let Err(cycle) = cycle {
-            problems.push(cycle);
+/// Every problem `processor` has on its own, without a system, in a stable
+/// order (see [`Processor`] for what is checked and in what order), or only the
+/// first when `stop_at_first` is set. A transform reads its own output on
+/// purpose: that is neither a cycle nor a dead declaration, and a read of it is
+/// checked as any input.
+///
+/// # Errors
+///
+/// The problems found, never an empty list.
+pub(crate) fn problems(
+    processor: &Processor,
+    stop_at_first: bool,
+) -> Result<(), Vec<ProcessError>> {
+    let transform = processor.is_transform();
+    let output = processor.output();
+    let recipe = processor.recipe();
+    let per_entity = matches!(recipe, Recipe::PerEntity { .. });
+    let mut problems = Vec::new();
+
+    if !transform {
+        let mut read = Vec::new();
+        recipe.read_keys(&mut read);
+        let cyclic = read.into_iter().any(|key| {
+            if per_entity {
+                group::is_under(key, output)
+            } else {
+                key == output
+            }
+        });
+        if cyclic {
+            problems.push(ProcessError::Cycle {
+                keys: vec![output.clone()],
+            });
             if stop_at_first {
                 return Err(problems);
             }
         }
-        for key in self.inputs().keys() {
-            if !transform && self.outputs().contains_key(key) {
-                problems.push(ProcessError::InputIsOutput { key: key.clone() });
-                if stop_at_first {
-                    return Err(problems);
-                }
+    }
+    for key in processor.declared_inputs().keys() {
+        if !transform && key == output {
+            problems.push(ProcessError::InputIsOutput { key: key.clone() });
+            if stop_at_first {
+                return Err(problems);
             }
         }
+    }
 
-        for (output_key, output) in self.outputs() {
-            for read in output_reads(output) {
-                let key = read.key();
-                let own = self.outputs().iter().any(|(owner, other)| {
-                    (!transform && owner == key)
-                        || (matches!(other, Recipe::PerEntity { .. })
-                            && group::is_under(key, owner))
-                });
-                if own {
-                    continue;
-                }
-                let problem = match self.inputs().get(key) {
-                    Some(input) => check_read(&read, input),
-                    None if self.inputs().is_empty() => None,
-                    None => Some(ProcessError::UnknownKey { key: key.clone() }),
-                };
-                let found = problem.is_some();
-                problems.extend(problem.map(|error| ProcessError::InOutput {
-                    output: output_key.clone(),
-                    error: Box::new(error),
-                }));
-                if stop_at_first && found {
-                    return Err(problems);
-                }
-            }
+    for read in output_reads(recipe) {
+        let key = read.key();
+        let own = (!transform && output == key) || (per_entity && group::is_under(key, output));
+        if own {
+            continue;
         }
+        let declared = processor.declared_inputs();
+        let problem = match declared.get(key) {
+            Some(input) => check_read(&read, input),
+            None if declared.is_empty() => None,
+            None => Some(ProcessError::UnknownKey { key: key.clone() }),
+        };
+        let found = problem.is_some();
+        problems.extend(problem.map(|error| ProcessError::InOutput {
+            output: output.clone(),
+            error: Box::new(error),
+        }));
+        if stop_at_first && found {
+            return Err(problems);
+        }
+    }
 
-        if problems.is_empty() {
-            Ok(())
-        } else {
-            Err(problems)
-        }
+    if problems.is_empty() {
+        Ok(())
+    } else {
+        Err(problems)
     }
 }

@@ -12,7 +12,16 @@
   a live one refuses an event before the frontier of its stream with nothing
   recorded (`UpdateError::Late`). Its `update` returns a `LiveReport`, the
   newly final `Chunk` of each derived stream that made progress (`range`,
-  `sequence`, `edges`) and the frontier of every derived stream.
+  `sequence`, `edges`) and the frontier of every derived stream. `finish(horizon)`
+  ends it: every stream becomes final to the end of time, what lies at or after
+  the horizon is dropped, and the processors flush what they held back, so the
+  derived streams are the batch result over the streams as they are. `drain`
+  hands the final part of every stream and derived stream over as a
+  `StreamSystem<Batch>` and keeps only what is not final, so a live system's
+  memory stays bounded over a stream that does not end; a processor added later
+  starts over what is still held. `StreamSystem::into_live(from)` goes the other
+  way: the streams are cut to what lies before `from` and the processors start
+  by stepping over it.
   `SequenceSystem::record_update` refuses an update that carries watermarks
   (`RecordError::Watermark`).
 - Transformed streams in a `StreamSystem`: a processor whose output key is a
@@ -104,28 +113,9 @@
   `Recipe::count_entities` is a `TimePointSequence<i64>` of the number of
   entities active, as its changes. An entity exists, and is observed, from its
   first record. `StreamSystem::entity` gives the entity of a member, and
-  `ProcessError::DuplicateMember`,
-  `SeveralMembers` and `GroupedRead` report two members under one key, an
-  `Recipe::evaluate` of a per-entity output, and a live processor asked to read
-  a member of one.
-- `LiveProcessor`, from `LiveProcessor::new(&processors, from)`: it runs the
-  processors online, driven by its host, with no clock, input or output of its
-  own. `on_point` and `on_span` record input events (a late one is
-  `ProcessError::Late`), `advance(key, watermark)` returns the `Emission`s that became final, and
-  `finish(horizon)` ends the stream (`ProcessError::Finished` after that). A
-  state output emits `Emitted::Edge`s once their instant is below the frontier
-  of the output, which follows the lag of each node (a set operation takes the
-  smaller frontier, `Shift` adds `min(alpha, beta)`, a chained output has that
-  of the output it reads). `Events::Matching`, `Events::Changes` and
-  `Events::Project` emit `Emitted::Point`s with the value erased as `AnyValue`,
-  and a per-entity output emits under its member keys, counts as points of
-  `i64`. What is emitted equals the batch evaluation over the whole stream, below
-  each frontier and in the end, whatever order and watermarks the inputs arrive
-  with. `OpenEnd::Head` is the frontier of the inputs online, and unknown
-  regions emit nothing. Each advance evaluates the outputs again over a
-  retained window, cut to what the part not yet emitted needs; `frontier(output)`
-  and `retained()` read the output frontier and the size of that window. The
-  state of a per-entity output grows with the entities seen.
+  `ProcessError::DuplicateMember`
+  and `SeveralMembers` report two members under one key and an evaluation of a
+  per-entity output as one sequence.
 - Record values. `Value` (`Null`, `Bool`, `Integer`, `Float`, `Text`, `Record`)
   is a dynamic payload for a `TimePointSequence<Value>`, beside the sequences of
   one fixed value type: values of one kind compare naturally, an integer and a
@@ -153,14 +143,12 @@
   `inputs()`; a processor without declarations behaves as before.
   `Processor::validate` lists every problem without a system, in a stable order,
   with `ProcessError::{InOutput, InputIsOutput, MissingField, FieldMismatch}`,
-  and a `StreamSystem` and a `LiveProcessor` hold the streams to the
-  declarations.
+  and a `StreamSystem` holds the streams to the declarations.
 - The optional `serde` feature (the only dependency, off by default, which
   leaves the default build with none): `Serialize` and `Deserialize` for
-  sequences, extents, values, schemas, formulas, processors, systems and
-  `LiveProcessor`, with the `chronoloom::serialisation` module documenting the
-  format. A `TimePointSequence`, a `TimeIntervalSequence`, a `SequenceSystem`, a
-  `Processor` and a `LiveProcessor` are documents that start with `"format": 1`
+  sequences, extents, values, schemas, formulas, processors and systems, with the `chronoloom::serialisation` module documenting the
+  format. A `TimePointSequence`, a `TimeIntervalSequence`, a `SequenceSystem` and a
+  `Processor` are documents that start with `"format": 1`
   (`FORMAT_VERSION`), and a reader refuses any other number. Loading validates:
   spans and extents are normalized, a span that ends before it starts is
   refused, events are sorted, data outside the extent is refused (a point at
@@ -173,16 +161,6 @@
   left out when empty. `make lint` and `make test` also run with
   `--all-features`, and `make lint` asserts that the default build has no
   dependencies.
-- Checkpoints of a live processor, behind the `serde` feature: the document of a
-  `LiveProcessor` holds its processor, the retained window of its inputs (with
-  the placeholder inputs that no event has typed yet), where each output has
-  emitted up to and is trusted from, the entities seen and the points of each
-  count, and recomputes the rest on load. A restored processor emits, and
-  reports `frontier` and `retained`, exactly as one that never stopped. A
-  document is validated on load (inputs against the processor, views against
-  their entities, cursors against frontiers); an input of a value type outside
-  the closed set cannot be saved, and the error names its key.
-  `LiveProcessor::processors` reads the processors a live one was built from.
 - The optional `json-schema` feature (implies `serde`; adds `schemars` and
   `serde_json`): `serialisation::processor_json_schema()` returns the JSON
   Schema of the processor document.

@@ -3,6 +3,7 @@
 
 use std::collections::BTreeSet;
 
+use crate::primitives::Timestamp;
 use crate::sequence_system::{Key, Metadata, RecordError, Sequence, SequenceSystem};
 use crate::sequences::Extent;
 use crate::values::Schema;
@@ -12,7 +13,7 @@ use crate::processor::Processor;
 
 use super::pipeline::{writes, Pipeline};
 use super::shared::{evaluate, shelve, unshelve};
-use super::{Batch, Report, StreamSystem, Update, UpdateError};
+use super::{Batch, Live, Report, StreamSystem, Update, UpdateError};
 
 impl Default for StreamSystem<Batch> {
     fn default() -> Self {
@@ -277,6 +278,50 @@ impl StreamSystem<Batch> {
             raw.observe(extent);
             Ok(())
         })
+    }
+
+    /// This system in live mode, starting at `from`: every stream is cut to
+    /// what lies before `from`, which is final, and each processor starts by
+    /// stepping over it, so the derived streams are what the processors give
+    /// over the data so far. Later updates carry events at or after `from`, and
+    /// the result equals that of a live system which was given the same events
+    /// from the start.
+    ///
+    /// Beyond `from` each stream is observed everywhere, as a stream added to a
+    /// live system is.
+    ///
+    /// The derived streams are computed again, not cut: a presence that began
+    /// before `from` and is still open reaches `from` only. Metadata, labels
+    /// and schemas are kept, those of a derived stream too.
+    ///
+    /// # Errors
+    ///
+    /// [`UpdateError::LiveTransform`] if a processor transforms a stream,
+    /// which a live system does not run yet, and [`UpdateError::Process`] if a
+    /// processor fails over the cut streams.
+    pub fn into_live(self, from: Timestamp) -> Result<StreamSystem<Live>, UpdateError> {
+        let mut live = StreamSystem::live(from);
+        live.members = self.members.slice(..from);
+        for key in self.derived() {
+            live.members.remove(key.as_str());
+        }
+        let streams: Vec<Key> = live.members.keys().cloned().collect();
+        for key in streams {
+            live.members.observe_from(key.as_str(), from);
+            live.mode.frontiers.insert(key, from);
+        }
+
+        for processor in self.pipeline.processors() {
+            live.add_processor(processor.clone())?;
+        }
+        for key in self.derived() {
+            let metadata = self.member_metadata(key.as_str());
+            if let (Some(metadata), Some(kept)) = (metadata, live.member_metadata_mut(key.as_str()))
+            {
+                *kept = metadata.clone();
+            }
+        }
+        Ok(live)
     }
 
     /// Apply `edit` to a copy of the members, evaluate the processors it

@@ -45,12 +45,8 @@ pub(crate) trait ErasedPoints: fmt::Debug + Send + Sync {
     fn append(&mut self, next: &dyn ErasedPoints) -> bool;
     fn len(&self) -> usize;
     fn value_type_name(&self) -> &'static str;
-    /// The events at or after `from`, their values erased.
-    fn events_from(&self, from: Timestamp) -> Vec<TimePointEvent<AnyValue>>;
     /// The sequence without the points equal to the sample before them.
     fn changes(&self) -> Box<dyn ErasedPoints>;
-    /// The instant of the last event strictly before `instant`.
-    fn last_timestamp_before(&self, instant: Timestamp) -> Option<Timestamp>;
     /// The distinct instants holding an event in `[start, end)`, in order.
     fn instants_in(&self, start: Timestamp, end: Timestamp) -> Vec<Timestamp>;
 }
@@ -142,15 +138,6 @@ impl<T: PointValue> ErasedPoints for TimePointSequence<T> {
         any::type_name::<T>()
     }
 
-    fn events_from(&self, from: Timestamp) -> Vec<TimePointEvent<AnyValue>> {
-        self.iter()
-            .filter(|event| event.timestamp() >= from)
-            .map(|event| {
-                TimePointEvent::new(event.timestamp(), AnyValue::new(event.value().clone()))
-            })
-            .collect()
-    }
-
     fn changes(&self) -> Box<dyn ErasedPoints> {
         let events: Vec<&TimePointEvent<T>> = self.iter().collect();
         let mut kept = Vec::new();
@@ -185,13 +172,6 @@ impl<T: PointValue> ErasedPoints for TimePointSequence<T> {
             kept,
             self.observed().clone(),
         ))
-    }
-
-    fn last_timestamp_before(&self, instant: Timestamp) -> Option<Timestamp> {
-        self.iter()
-            .rev()
-            .map(TimePointEvent::timestamp)
-            .find(|&timestamp| timestamp < instant)
     }
 }
 
@@ -418,20 +398,10 @@ impl AnyPointSequence {
         }
     }
 
-    /// The events at or after `from`, with their values erased.
-    pub(crate) fn events_from(&self, from: Timestamp) -> Vec<TimePointEvent<AnyValue>> {
-        self.0.events_from(from)
-    }
-
     /// The sequence without the points equal to the sample before them, the
     /// first sample of each run of the extent kept.
     pub(crate) fn changes(&self) -> Self {
         Self(self.0.changes())
-    }
-
-    /// The instant of the last event strictly before `instant`.
-    pub(crate) fn last_timestamp_before(&self, instant: Timestamp) -> Option<Timestamp> {
-        self.0.last_timestamp_before(instant)
     }
 
     /// The distinct instants holding an event in `[start, end)`, in order.

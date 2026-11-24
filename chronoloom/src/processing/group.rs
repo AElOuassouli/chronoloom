@@ -5,7 +5,7 @@ use core::fmt;
 use crate::sequence_system::Key;
 use crate::values::Value;
 
-use super::condition::Pattern;
+#[cfg(doc)]
 use super::formula::Formula;
 
 /// The member of `Value` records that carries the entities, and the field of
@@ -84,7 +84,7 @@ use super::formula::Formula;
 /// that instant, so nothing is said about the entity before it, and
 /// [`Recipe::AnyEntity`] and [`Recipe::CountEntities`] count it from that
 /// instant too: an entity that has not appeared yet is inactive and adds no
-/// uncertainty. This is what lets a [`LiveProcessor`] learn entities as they
+/// uncertainty. This is what lets a live stream system learn entities as they
 /// arrive and still give what the batch evaluation gives. It changes nothing
 /// for a formula that is inactive before the first record of the entity, such
 /// as a `Between` of its records, which is what a presence is.
@@ -109,11 +109,8 @@ use super::formula::Formula;
 /// formula of the output that reads such a key is a [`ProcessError::Cycle`](super::ProcessError::Cycle).
 /// A key of an entity that does not exist is [`ProcessError::UnknownKey`](super::ProcessError::UnknownKey).
 /// The outputs [`Recipe::AnyEntity`] and [`Recipe::CountEntities`] are read by
-/// their own key, like any output. A [`LiveProcessor`] cannot read the members
-/// of a per-entity output, since it only learns the entities as events arrive:
-/// that is [`ProcessError::GroupedRead`](super::ProcessError::GroupedRead).
+/// their own key, like any output.
 ///
-/// [`LiveProcessor`]: super::LiveProcessor
 /// [`Recipe::AnyEntity`]: super::Recipe::AnyEntity
 /// [`Recipe::CountEntities`]: super::Recipe::CountEntities
 /// [`Recipe::PerEntity`]: super::Recipe::PerEntity
@@ -204,57 +201,4 @@ pub(crate) fn is_under(key: &Key, output: &Key) -> bool {
     key.as_str()
         .strip_prefix(output.as_str())
         .is_some_and(|rest| rest.starts_with('/'))
-}
-
-/// The formula with every pattern over `from` reading `to` instead.
-pub(super) fn retarget(formula: &Formula, from: &Key, to: &Key) -> Formula {
-    let pattern = |pattern: &Pattern| {
-        if &pattern.key == from {
-            Pattern {
-                key: to.clone(),
-                condition: pattern.condition.clone_box(),
-            }
-        } else {
-            pattern.clone()
-        }
-    };
-
-    match formula {
-        Formula::State(_) => formula.clone(),
-        Formula::Between { start, end, open } => Formula::Between {
-            start: pattern(start),
-            end: pattern(end),
-            open: *open,
-        },
-        Formula::While {
-            pattern: leaf,
-            timeout,
-        } => Formula::While {
-            pattern: pattern(leaf),
-            timeout: *timeout,
-        },
-        Formula::Occurs(leaf) => Formula::Occurs(pattern(leaf)),
-        Formula::Not(inner) => Formula::Not(Box::new(retarget(inner, from, to))),
-        Formula::And(formulas) => Formula::And(
-            formulas
-                .iter()
-                .map(|part| retarget(part, from, to))
-                .collect(),
-        ),
-        Formula::Or(formulas) => Formula::Or(
-            formulas
-                .iter()
-                .map(|part| retarget(part, from, to))
-                .collect(),
-        ),
-        Formula::Shift {
-            formula,
-            alpha,
-            beta,
-        } => Formula::Shift {
-            formula: Box::new(retarget(formula, from, to)),
-            alpha: *alpha,
-            beta: *beta,
-        },
-    }
 }

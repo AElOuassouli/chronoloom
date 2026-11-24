@@ -32,9 +32,8 @@ use super::kind::Kind;
 ///   than `into` (a float into `Integer`, text into `Bool`; an integer widens
 ///   into `Float`) is [`ProcessError::ProjectionMismatch`], and the member must
 ///   hold `Value` points ([`ProcessError::ValueTypeMismatch`] otherwise). A live
-///   processor supports it like `Matching`: it emits the projected points once
-///   final, as [`Emitted::Point`] of the type `into` stands for, and what it
-///   emitted equals the batch result.
+///   stream system runs it like `Matching`: the projected points are appended
+///   once final, and equal the batch result.
 ///
 /// - `Changes { key }` is the points of the member under `key` with the repeats
 ///   dropped: a point is kept when its value differs (by `PartialEq`) from the
@@ -45,12 +44,9 @@ use super::kind::Kind;
 ///   step value, a point sequence of changes read with sample and hold:
 ///   applying it twice changes nothing, and a `While` over the changes means
 ///   what it means over the original. The member may hold any value type, and
-///   the points and extent are the member's own. A live processor supports it
-///   like `Matching`: it emits each point of the result, erased as an
-///   [`Emitted::Point`], once it is final, which is when the frontier of the
-///   member passes it. A member that is only read by a `Changes` has no value
-///   type until its first event arrives, and takes that of the first
-///   `on_point`.
+///   the points and extent are the member's own. A live stream system runs it
+///   like `Matching`: each point of the result is appended once it is final,
+///   which is when the frontier of the member passes it.
 ///
 /// The label of the sequence an `Events` evaluates to is the formula written
 /// out: `edges(up)`, `matching(door = "open")`, `changes(count)`; for a projection it is the
@@ -82,7 +78,6 @@ use super::kind::Kind;
 ///
 /// [`Edge::End`]: super::Edge::End
 /// [`Edge::Start`]: super::Edge::Start
-/// [`Emitted::Point`]: super::Emitted::Point
 /// [`ProcessError::ProjectionMismatch`]: super::ProcessError::ProjectionMismatch
 /// [`ProcessError::ValueTypeMismatch`]: super::ProcessError::ValueTypeMismatch
 /// [`Value`]: crate::Value

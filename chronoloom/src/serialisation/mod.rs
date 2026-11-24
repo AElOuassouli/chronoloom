@@ -5,8 +5,7 @@
 //! `Deserialize`, so any self-describing format works; JSON is the one the
 //! tests and the examples use. Four types are documents on their own and
 //! start with a format version, `{ "format": 1, .. }`: [`TimePointSequence`],
-//! [`TimeIntervalSequence`], [`SequenceSystem`], [`Processor`] and
-//! [`LiveProcessor`], the checkpoint of an online run. Everything
+//! [`TimeIntervalSequence`], [`SequenceSystem`] and [`Processor`]. Everything
 //! nested inside them (extents, events, attributes, formulas, values) carries
 //! no version of its own, so the version belongs to the document and a nested
 //! value is the same in every document.
@@ -39,27 +38,6 @@
 //! // A reader refuses any format version it does not know.
 //! let future = saved.replacen(r#""format":1"#, r#""format":2"#, 1);
 //! assert!(serde_json::from_str::<SequenceSystem>(&future).is_err());
-//! ```
-//!
-//! A checkpoint of a live processor is saved and restored the same way, and the
-//! restored one goes on as one that never stopped:
-//!
-//! ```
-//! use chronoloom::{
-//!     Condition, Formula, LiveProcessor, Pattern, Processor, TimePointEvent,
-//! };
-//!
-//! let busy = Formula::while_matching(Pattern::new("count", Condition::Greater(5_i64)));
-//! let mut live = LiveProcessor::new(&[Processor::new("busy", busy)], 0).unwrap();
-//! live.on_point("count", TimePointEvent::new(7, 9_i64)).unwrap();
-//! live.advance("count", 10).unwrap();
-//!
-//! // The host saves it with its own offsets, and a new process loads it.
-//! let saved = serde_json::to_string(&live).unwrap();
-//! let mut restored: LiveProcessor = serde_json::from_str(&saved).unwrap();
-//! assert_eq!(restored.processors(), live.processors());
-//! assert_eq!(restored.frontier("busy"), Some(10));
-//! assert_eq!(restored.finish(30).unwrap(), live.finish(30).unwrap());
 //! ```
 //!
 //! A timeline, as the format writes it:
@@ -101,10 +79,6 @@
 //! - A processor passes [`Processor::check`], and no key appears twice in a
 //!   system or among the inputs a processor declares. A `While` timeout is positive.
 //!
-//! - A live processor passes the checks listed on [`LiveProcessor`]: its
-//!   processors are valid, its inputs are the ones they read, and its entities,
-//!   views, cursors and frontiers agree with each other.
-//!
 //! A refusal is the error of the format in use, and its message says what was
 //! wrong and, for a member of a system, under which key.
 //!
@@ -143,8 +117,7 @@
 //! - A system lists its members in key order, each with its key, its tagged
 //!   sequence, its metadata, and, when it has them, its frontier, lineage,
 //!   entity and schema. A processor is its `output` key, its `formula` and, when
-//!   it declares any, its `inputs`. A live processor nests its processors and a
-//!   system document, each with its own format number.
+//!   it declares any, its `inputs`.
 //!
 //! # JSON Schema
 //!
@@ -193,17 +166,8 @@
 //! |---|---|
 //! | 1 | the first version; a processor is one recipe (`output`, `formula`) and lists its declared `inputs`, left out when there are none |
 //!
-//! The live processor document was added under format 1 without changing it,
-//! since no document of an earlier version of the crate can be affected. It
-//! holds `processors` (a list of processor documents), `inputs` (a system document of
-//! the live inputs and the views of the entities), `untyped` (the inputs that
-//! have no value type yet, each with its key, frontier and events), `outputs`
-//! (per output, `through`, `trusted` and the `cuts` of its `Between` leaves),
-//! `groups` (per per-entity output, its entities in the order they were seen,
-//! each with its `entity` value and `first` instant), `counts` and `finished`.
 //!
 //! [`Edge`]: crate::Edge
-//! [`LiveProcessor`]: crate::LiveProcessor
 //! [`Extent`]: crate::Extent
 //! [`Pattern`]: crate::Pattern
 //! [`Processor`]: crate::Processor
@@ -221,7 +185,6 @@ use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use crate::primitives::Timestamp;
 
 mod extent;
-mod live;
 mod processor;
 #[cfg(feature = "json-schema")]
 mod schema;

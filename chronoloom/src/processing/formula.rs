@@ -3,13 +3,14 @@
 use core::fmt;
 use core::ops::Not;
 
-use crate::operator::TimelinePlan;
 use crate::primitives::Timestamp;
-use crate::sequence_system::{Key, SequenceSystem};
+use crate::sequence_system::Key;
+#[cfg(doc)]
+use crate::sequence_system::SequenceSystem;
+#[cfg(doc)]
 use crate::sequences::TimeIntervalSequence;
 
 use super::condition::Pattern;
-use super::errors::ProcessError;
 
 /// Where a [`Formula::Between`] span with no end stops.
 ///
@@ -118,7 +119,7 @@ pub enum OpenEnd {
 /// a sensor that may go silent: its last sample stops holding after that many
 /// ticks and what follows is unknown, not a value. [`Events::Changes`] is the
 /// canonical form of a step, the points with each repeat dropped, for a host
-/// that stores or streams only the changes. A live processor decides a
+/// that stores or streams only the changes. A live stream system decides a
 /// sample's hold once the frontier passes either its next sample or its
 /// timeout, so `While` has no lag with or without one.
 ///
@@ -244,33 +245,6 @@ impl Formula {
         }
     }
 
-    /// The formula with every `Between` that stops at the head stopping at the
-    /// end of the extent instead.
-    pub(super) fn open_until_extent(&self) -> Self {
-        match self {
-            Self::Between { start, end, .. } => Self::Between {
-                start: start.clone(),
-                end: end.clone(),
-                open: OpenEnd::Extent,
-            },
-            Self::State(_) | Self::While { .. } | Self::Occurs(_) => self.clone(),
-            Self::Not(inner) => Self::Not(Box::new(inner.open_until_extent())),
-            Self::And(formulas) => {
-                Self::And(formulas.iter().map(Self::open_until_extent).collect())
-            }
-            Self::Or(formulas) => Self::Or(formulas.iter().map(Self::open_until_extent).collect()),
-            Self::Shift {
-                formula,
-                alpha,
-                beta,
-            } => Self::Shift {
-                formula: Box::new(formula.open_until_extent()),
-                alpha: *alpha,
-                beta: *beta,
-            },
-        }
-    }
-
     /// The timeline member under `key`, as it is.
     #[must_use]
     pub fn state(key: impl Into<Key>) -> Self {
@@ -383,23 +357,6 @@ impl Formula {
             alpha,
             beta,
         }
-    }
-
-    /// The timeline the formula denotes over the members of `system`, labelled
-    /// with the formula written out.
-    ///
-    /// # Errors
-    ///
-    /// [`ProcessError::UnknownKey`] for a key the system does not record,
-    /// [`ProcessError::NotATimeline`] for a `State` of a point sequence,
-    /// [`ProcessError::NotPoints`] for a pattern over a timeline,
-    /// [`ProcessError::ValueTypeMismatch`] for a condition over another value
-    /// type than its member's.
-    pub(crate) fn evaluate(
-        &self,
-        system: &SequenceSystem,
-    ) -> Result<TimeIntervalSequence, ProcessError> {
-        TimelinePlan::compile(self).batch(system)
     }
 
     /// An `And` of `Or`s of literals that denotes the same timeline as this

@@ -35,6 +35,5 @@ mod r#while;
 
 pub use chunk::Chunk;
 pub(crate) use chunk::Inputs;
-pub(crate) use entities::{any_of, count_of};
 pub(crate) use online_recipe::OnlineRecipe;
-pub(crate) use plan::{compile_recipe, TimelinePlan};
+pub(crate) use plan::compile_recipe;

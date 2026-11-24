@@ -2,7 +2,6 @@
 
 use core::fmt;
 
-use crate::primitives::Timestamp;
 use crate::sequence_system::Key;
 use crate::values::SchemaError;
 
@@ -90,17 +89,6 @@ pub enum ProcessError {
     /// [`PerEntity`]: super::Recipe::PerEntity
     SeveralMembers,
 
-    /// A [`LiveProcessor`] cannot run an output that reads `key`: a member of a
-    /// [`PerEntity`] output, whose entities it only learns as events arrive, or
-    /// an output that a group is made of.
-    ///
-    /// [`LiveProcessor`]: super::LiveProcessor
-    /// [`PerEntity`]: super::Recipe::PerEntity
-    GroupedRead {
-        /// The key that is read.
-        key: Key,
-    },
-
     /// A declared [`Input`] has a schema with no field at `path`, which a
     /// field pattern, a projection or a group of the processor reads.
     ///
@@ -154,24 +142,6 @@ pub enum ProcessError {
         /// What is wrong with it.
         error: Box<ProcessError>,
     },
-
-    /// An event reached a [`LiveProcessor`] before the frontier of its input,
-    /// which is final up to there.
-    ///
-    /// [`LiveProcessor`]: super::LiveProcessor
-    Late {
-        /// The input the event was meant for.
-        key: Key,
-        /// The instant the rejected event starts at.
-        timestamp: Timestamp,
-        /// The frontier of the input: events must not start before it.
-        frontier: Timestamp,
-    },
-
-    /// A [`LiveProcessor`] was fed after `finish` closed it.
-    ///
-    /// [`LiveProcessor`]: super::LiveProcessor
-    Finished,
 }
 
 impl fmt::Display for ProcessError {
@@ -216,25 +186,12 @@ impl fmt::Display for ProcessError {
                     keys.join(", ")
                 )
             }
-            Self::Late {
-                key,
-                timestamp,
-                frontier,
-            } => write!(
-                f,
-                "an event at {timestamp} is late for `{key}`, whose data is final up to {frontier}"
-            ),
             Self::DuplicateMember { key } => {
                 write!(f, "two members of the result would be filed under `{key}`")
             }
             Self::SeveralMembers => {
                 f.write_str("an output per entity has one member per entity, not one sequence")
             }
-            Self::GroupedRead { key } => write!(
-                f,
-                "a live processor cannot read `{key}`, a member of a per-entity output \
-                 or the member a group is made of"
-            ),
             Self::MissingField { key, path } => {
                 write!(f, "the declared input `{key}` has no field `{path}`")
             }
@@ -260,7 +217,6 @@ impl fmt::Display for ProcessError {
                 "a transform of `{key}` must keep its shape, {expected}, but produced {found}"
             ),
             Self::InOutput { output, error } => write!(f, "in the output `{output}`: {error}"),
-            Self::Finished => f.write_str("the live processor was finished"),
         }
     }
 }

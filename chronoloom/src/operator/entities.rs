@@ -311,7 +311,7 @@ pub(crate) fn any_of(
 /// differs from the one before. At one instant the spans that end come before
 /// those that start, so a hand-over counts once.
 ///
-/// A count over timelines cut at `from` (a live processor's retained window)
+/// A count over timelines cut at `from` (a live system's window)
 /// starts there; a whole one is counted from `Timestamp::MIN`.
 pub(crate) fn count_of(
     label: String,

@@ -43,19 +43,3 @@ impl SequenceSystem {
         }
     }
 }
-
-impl SequenceSystem {
-    /// File one more member as a document stores it, with no check of its own:
-    /// the caller has validated it. A member under the same key is replaced.
-    pub(crate) fn insert_parts(&mut self, parts: MemberParts) {
-        let member = Member {
-            sequence: parts.sequence,
-            metadata: parts.metadata,
-            frontier: parts.frontier,
-            lineage: parts.lineage,
-            entity: parts.entity,
-            schema: parts.schema,
-        };
-        self.members.insert(parts.key, member);
-    }
-}

@@ -23,8 +23,7 @@ use super::online::OnlineNode;
 use super::online_points::OnlinePoints;
 use super::online_recipe::OnlineRecipe;
 use super::plan::PointsPlan;
-use super::plan::{compile_recipe, RecipePlan};
-use super::TimelinePlan;
+use super::plan::{compile_recipe, RecipePlan, TimelinePlan};
 
 /// First instant generated inputs use.
 const DOMAIN_START: i64 = 0;

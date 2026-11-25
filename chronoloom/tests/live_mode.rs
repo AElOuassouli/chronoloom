@@ -103,6 +103,11 @@ fn assert_equals_batch_below_frontiers(
                     expected.observed(),
                     "{key} observed below {frontier}: {context}"
                 );
+                assert_eq!(
+                    held.attribute(),
+                    expected.attribute(),
+                    "{key} attribute below {frontier}: {context}"
+                );
             }
             (held, expected) => {
                 assert_eq!(held, expected, "{key} below {frontier}: {context}");
@@ -194,48 +199,55 @@ fn live_streams_equal_batch_below_every_frontier_whatever_the_updates() {
     });
 }
 
+fn assert_the_cut_does_not_change_the_result(random: &mut Random) {
+    let processors = processors(random);
+    let stream = stream(random);
+
+    let run = |random: &mut Random, cut: u64| {
+        let mut live = live_streams(stream.from);
+        for processor in &processors {
+            live.add_processor(processor.clone()).expect("a processor");
+        }
+        let mut pending = Update::new();
+        for operation in &stream.ops {
+            push(&mut pending, operation);
+            if random.chance(1, cut) {
+                live.update(std::mem::take(&mut pending))
+                    .expect("an update");
+            }
+        }
+        live.update(pending).expect("an update");
+        live.advance_all(stream.horizon).expect("an advance");
+        live
+    };
+
+    let one_by_one = run(random, 1);
+    let rarely = run(random, 9);
+    let keys: Vec<_> = one_by_one.derived().cloned().collect();
+    assert_eq!(keys, rarely.derived().cloned().collect::<Vec<_>>());
+    for key in keys {
+        assert_eq!(
+            one_by_one.frontier(key.as_str()),
+            rarely.frontier(key.as_str())
+        );
+        assert_eq!(
+            one_by_one.get(key.as_str()),
+            rarely.get(key.as_str()),
+            "{key}"
+        );
+    }
+}
+
 #[test]
 fn the_cut_into_updates_does_not_change_the_result() {
-    // Known bug: seed 187 fails, because the attribute of a result depends on how the
-    // stream is cut into updates (flat name against nested combination). Kept at 100 seeds.
-    for_each_seed(100, |random, _| {
-        let processors = processors(random);
-        let stream = stream(random);
-
-        let run = |random: &mut Random, cut: u64| {
-            let mut live = live_streams(stream.from);
-            for processor in &processors {
-                live.add_processor(processor.clone()).expect("a processor");
-            }
-            let mut pending = Update::new();
-            for operation in &stream.ops {
-                push(&mut pending, operation);
-                if random.chance(1, cut) {
-                    live.update(std::mem::take(&mut pending))
-                        .expect("an update");
-                }
-            }
-            live.update(pending).expect("an update");
-            live.advance_all(stream.horizon).expect("an advance");
-            live
-        };
-
-        let one_by_one = run(random, 1);
-        let rarely = run(random, 9);
-        let keys: Vec<_> = one_by_one.derived().cloned().collect();
-        assert_eq!(keys, rarely.derived().cloned().collect::<Vec<_>>());
-        for key in keys {
-            assert_eq!(
-                one_by_one.frontier(key.as_str()),
-                rarely.frontier(key.as_str())
-            );
-            assert_eq!(
-                one_by_one.get(key.as_str()),
-                rarely.get(key.as_str()),
-                "{key}"
-            );
-        }
+    for_each_seed(property_cases(), |random, _| {
+        assert_the_cut_does_not_change_the_result(random);
     });
+}
+
+#[test]
+fn the_cut_does_not_change_the_attribute_for_the_seed_that_once_differed() {
+    assert_the_cut_does_not_change_the_result(&mut Random::new(187));
 }
 
 /// Motion events, a door timeline and presence between a start and an end of

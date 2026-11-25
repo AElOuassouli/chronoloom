@@ -273,6 +273,13 @@ impl OnlinePerEntity {
             .into_iter()
             .map(|stepped| {
                 let mut chunk = stepped.timeline;
+                // Labelled by the formula, as the batch timeline of the entity is.
+                let (from, to) = (chunk.from(), chunk.to());
+                let mut sequence = chunk.into_sequence();
+                if let Sequence::TimeInterval(timeline) = &mut sequence {
+                    timeline.set_attribute(self.label.clone());
+                }
+                chunk = Chunk::new(from, to, sequence);
                 if stepped.born && chunk.from() > Timestamp::MIN {
                     let nothing = TimeIntervalSequence::from_spans(self.label.clone(), Vec::new())
                         .with_observed(Extent::nothing());

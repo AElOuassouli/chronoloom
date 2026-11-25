@@ -176,6 +176,9 @@
 
 ## Fixed
 
+- A live per-entity output gives the same attribute (the formula) whether its entity
+  appeared in the first update or later, so the result no longer depends on how the
+  operations are cut into updates.
 - `any_entity` and `count_entities` no longer let an entity that has not
   appeared yet narrow what is known: wherever every entity that has appeared is
   known, the result is known, even where the records were unobserved, and

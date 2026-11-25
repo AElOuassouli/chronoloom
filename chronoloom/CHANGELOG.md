@@ -44,8 +44,8 @@
   changes the shape of its stream is `ProcessError::TransformShape`, and one
   added after a processor reads the stream is `UpdateError::Read`.
   `remove_processor` takes the last transform of a stream away, and `producer`
-  gives the last transform of a transformed stream, `transforms` the chain. The
-  version each reader reads is not tracked.
+  gives the last transform of a transformed stream. The version each reader
+  reads is not tracked.
 - `Processor::evaluate`, the output of a processor over a `StreamSystem`, once:
   nothing is stored and the system is not changed. It refuses what
   `add_processor` would refuse on its own (a per-entity output reading a member

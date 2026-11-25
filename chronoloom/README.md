@@ -802,7 +802,7 @@ processor reads the stream. The system does not track which version each reader
 reads: a transform is refused (`UpdateError::Read`) once another processor reads
 the stream, and a transform in the middle of a chain cannot be removed on its
 own. `producer(key)` gives the processor that derives a stream, or the last
-transform of a transformed one; `transforms(key)` gives the whole chain.
+transform of a transformed one.
 
 ```rust
 use chronoloom::{Condition, Events, Pattern, Processor, StreamSystem};

@@ -561,9 +561,7 @@ impl StreamSystem<Live> {
         }
 
         let mut chunks = BTreeMap::new();
-        for index in self.pipeline.affected(&moved) {
-            self.step(index, &mut chunks, journal)?;
-        }
+        self.step_affected(&moved, &mut chunks, journal)?;
         Ok(self.report(chunks))
     }
 
@@ -585,10 +583,45 @@ impl StreamSystem<Live> {
 
         let mut chunks = BTreeMap::new();
         let mut journal = Journal::default();
-        for index in self.pipeline.affected(&moved) {
-            self.step(index, &mut chunks, &mut journal)?;
-        }
+        self.step_affected(&moved, &mut chunks, &mut journal)?;
         Ok(self.report(chunks))
+    }
+
+    /// Step, in order, the processors that read a stream whose frontier moved
+    /// (`moved`) or a derived stream whose frontier a processor before them
+    /// moved. A reader of a derived stream that stayed where it was has
+    /// nothing new to read, so it is not stepped.
+    fn step_affected(
+        &mut self,
+        moved: &BTreeSet<Key>,
+        chunks: &mut BTreeMap<Key, Chunk>,
+        journal: &mut Journal,
+    ) -> Result<(), UpdateError> {
+        let affected = self.pipeline.affected(moved);
+        let mut advanced: BTreeSet<usize> = BTreeSet::new();
+        for index in affected {
+            let reads_news = self.pipeline.processors()[index]
+                .inputs()
+                .into_iter()
+                .any(|key| {
+                    moved.contains(key)
+                        || self
+                            .pipeline
+                            .processors()
+                            .iter()
+                            .position(|other| writes(other, key) && !other.is_transform())
+                            .is_some_and(|producer| advanced.contains(&producer))
+                });
+            if !reads_news {
+                continue;
+            }
+            let before = self.mode.nodes[index].recipe.frontier();
+            self.step(index, chunks, journal)?;
+            if self.mode.nodes[index].recipe.frontier() > before {
+                advanced.insert(index);
+            }
+        }
+        Ok(())
     }
 
     /// Run the processor at `index` over the range that became final in what

@@ -169,8 +169,8 @@
   formula over them, one output), whose derived streams are read-only and
   follow every change. `update(Update)` records into the streams, all or
   nothing, and evaluates again only the processors that read what changed,
-  directly or through another output, returning a `Report` of the derived
-  streams that changed. `insert_stream`, `remove_stream`, `add_processor` and
+  directly or through the output of a processor that changed, returning a
+  `Report` of the derived streams that changed. `insert_stream`, `remove_stream`, `add_processor` and
   `remove_processor` refuse what would break that (`UpdateError`). The mode is
   a type parameter: `Batch`, the default, and `Live`.
 
@@ -194,6 +194,11 @@
   changes, not all data recorded. An update with both a refused chunk (a schema
   mismatch, say) and a watermark naming an unknown key now reports the
   watermark error.
+- A batch update no longer evaluates a processor whose inputs came out
+  unchanged: it runs only if an input was updated or is the output of a
+  processor that changed. A live update likewise steps a processor only if a
+  stream it reads moved its frontier, or a processor before it moved the
+  frontier of the output it reads.
 
 ## Removed
 

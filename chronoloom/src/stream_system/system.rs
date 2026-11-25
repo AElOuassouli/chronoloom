@@ -21,7 +21,7 @@ use super::{Batch, Mode};
 /// - **Derived streams**, each the output of one [`Processor`]. They are
 ///   read-only and always current: whenever a stream a processor reads
 ///   changes, the system evaluates that processor again, and then every
-///   processor that reads its output, so a derived stream never goes stale.
+///   processor that reads its output, if that output changed, so a derived stream never goes stale.
 ///   Recording into one is [`UpdateError::Derived`].
 ///
 /// A processor may also rewrite a stream instead of deriving a new one: when
@@ -66,7 +66,8 @@ use super::{Batch, Mode};
 ///
 /// - [`Batch`], the default: a dataset held whole. An update records its
 ///   points and evaluates again the processors that read what changed,
-///   directly or through another processor's output, and no others. The
+///   directly or through the output of a processor that changed, and no
+///   others. The
 ///   [`Report`] it returns names the derived streams whose content changed.
 /// - [`Live`]: data arrives in time order. Each stream has a frontier, before
 ///   which everything is final, that watermarks in an [`Update`] move. An update

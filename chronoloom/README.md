@@ -833,8 +833,8 @@ be), and the one output it produces.
 
 Derived streams are read-only and always current. An `Update`, a set of points
 and spans by stream key recorded all or nothing, evaluates again the processors
-that read what it changed, directly or through another processor's output, and
-no others; the `Report` it returns names the derived streams that changed and
+that read what it changed, directly or through the output of a processor that
+changed, and no others; the `Report` it returns names the derived streams that changed and
 the outputs evaluated again. A processor reads only what the system already
 holds, and what a processor reads cannot be removed, so the list is always in an
 order the system can evaluate.

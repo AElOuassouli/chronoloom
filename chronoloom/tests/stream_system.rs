@@ -480,7 +480,7 @@ fn removing_a_per_entity_processor_removes_its_whole_family_and_nothing_else() {
 }
 
 #[test]
-fn a_processor_that_ran_is_evaluated_even_when_its_output_is_unchanged() {
+fn a_processor_reading_only_an_unchanged_output_is_not_evaluated() {
     let mut room = room();
     room.update(motion(&[(10, "start"), (25, "end")])).unwrap();
 
@@ -488,10 +488,64 @@ fn a_processor_that_ran_is_evaluated_even_when_its_output_is_unchanged() {
     let report = room.update(motion(&[(30, "noise")])).unwrap();
     assert!(report.evaluated().contains("presence"));
     assert!(!report.changed().contains("presence"));
-    // `occupied` reads `presence`, so it is evaluated too, and no more changed.
-    assert!(report.evaluated().contains("occupied"));
+    // `occupied` reads `presence`, which came out unchanged: it does not run.
+    assert!(!report.evaluated().contains("occupied"));
     assert!(!report.changed().contains("occupied"));
     assert_eq!(bounds(room.intervals("presence").unwrap()), [(10, 25)]);
+}
+
+#[test]
+fn a_changed_output_still_reaches_its_readers() {
+    let mut room = room();
+    room.update(motion(&[(10, "start"), (25, "end")])).unwrap();
+
+    let report = room.update(motion(&[(40, "start"), (50, "end")])).unwrap();
+    assert!(report.changed().contains("presence"));
+    assert!(report.evaluated().contains("occupied"));
+}
+
+#[test]
+fn a_per_entity_family_counts_as_changed_when_any_member_changes() {
+    let mut gate = StreamSystem::new();
+    gate.insert_stream("gate", TimePointSequence::<Value>::new("gate"))
+        .unwrap();
+    let pass = |agent: &str, direction: &str| {
+        Value::record([
+            ("agent", Value::from(agent)),
+            ("direction", Value::from(direction)),
+        ])
+    };
+    let inside = Formula::between(
+        Pattern::field("gate", "direction", Condition::Equals(Value::from("in"))),
+        Pattern::field("gate", "direction", Condition::Equals(Value::from("out"))),
+    );
+    gate.add_processor(Processor::new(
+        "presence",
+        Recipe::per_entity(Group::new("gate", "agent"), inside),
+    ))
+    .unwrap();
+    gate.insert_stream("noise", TimePointSequence::<Value>::new("noise"))
+        .unwrap();
+
+    let mut update = Update::new();
+    update.points("gate", [TimePointEvent::new(1, pass("ada", "in"))]);
+    let report = gate.update(update).unwrap();
+    assert!(report.changed().contains("presence/ada"));
+    gate.add_processor(Processor::new("watched", Formula::state("presence/ada")))
+        .unwrap();
+
+    // A member changes: the reader of the family runs.
+    let mut update = Update::new();
+    update.points("gate", [TimePointEvent::new(9, pass("ada", "out"))]);
+    let report = gate.update(update).unwrap();
+    assert!(report.changed().contains("presence/ada"));
+    assert!(report.evaluated().contains("watched"));
+
+    // An update to another stream does not reach the family's reader.
+    let mut update = Update::new();
+    update.points("noise", [TimePointEvent::new(3, Value::from("x"))]);
+    let report = gate.update(update).unwrap();
+    assert!(!report.evaluated().contains("watched"));
 }
 
 #[test]

@@ -365,6 +365,109 @@ fn processors_read_the_outputs_of_those_before_them_in_order() {
 }
 
 #[test]
+fn a_reader_of_a_derived_stream_that_did_not_move_has_nothing_new_to_read() {
+    let mut room = room();
+    room.add_processor(Processor::new(
+        "occupied",
+        Formula::state("presence").or(Formula::state("door")),
+    ))
+    .unwrap();
+
+    // Only motion moves: presence reaches 30, but occupied waits for the door.
+    let mut update = Update::new();
+    update
+        .points(
+            "motion",
+            [
+                TimePointEvent::new(10, "start"),
+                TimePointEvent::new(25, "end"),
+            ],
+        )
+        .advance("motion", 30);
+    let report = room.update(update).unwrap();
+    assert_eq!(report.frontiers()["presence"], 30);
+    assert_eq!(report.frontiers()["occupied"], 0);
+
+    // Nothing moves: no processor makes progress.
+    let report = room.advance("motion", 30).unwrap();
+    assert!(report.is_empty());
+    assert_eq!(report.frontiers()["occupied"], 0);
+
+    // The door catches up: occupied is final over what both hold.
+    let report = room.advance("door", 40).unwrap();
+    assert_eq!(report.frontiers()["presence"], 30);
+    assert_eq!(report.frontiers()["occupied"], 30);
+    assert_eq!(report.chunks()["occupied"].range(), 0..30);
+    assert_eq!(room.intervals("occupied").map(bounds), Some(vec![(10, 25)]));
+}
+
+#[test]
+fn finishing_reaches_a_reader_of_a_derived_stream_that_waited_for_another_input() {
+    let mut room = room();
+    room.add_processor(Processor::new(
+        "occupied",
+        Formula::state("presence").or(Formula::state("door")),
+    ))
+    .unwrap();
+    room.add_processor(Processor::new(
+        "alarm",
+        Formula::state("occupied").and(Formula::state("door")),
+    ))
+    .unwrap();
+
+    let mut update = Update::new();
+    update
+        .points(
+            "motion",
+            [
+                TimePointEvent::new(10, "start"),
+                TimePointEvent::new(25, "end"),
+            ],
+        )
+        .spans("door", [span(20, 28)])
+        .advance("motion", 30);
+    let report = room.update(update).unwrap();
+    assert_eq!(report.frontiers()["occupied"], 0);
+    assert_eq!(report.frontiers()["alarm"], 0);
+
+    // Closing moves every frontier: the whole chain is stepped, in order.
+    let report = room.finish(40).unwrap();
+    for key in ["presence", "occupied", "alarm"] {
+        assert_eq!(room.frontier(key), Some(Timestamp::MAX));
+        assert_eq!(report.frontiers()[key], Timestamp::MAX);
+    }
+    assert_eq!(room.intervals("alarm").map(bounds), Some(vec![(20, 28)]));
+    assert_eq!(room.intervals("occupied").map(bounds), Some(vec![(10, 28)]));
+}
+
+#[test]
+fn a_change_reaches_a_reader_two_levels_down_when_each_level_advances() {
+    let mut room = room();
+    room.add_processor(Processor::new("occupied", Formula::state("presence")))
+        .unwrap();
+    room.add_processor(Processor::new("alarm", Formula::state("occupied")))
+        .unwrap();
+
+    let mut update = Update::new();
+    update
+        .points(
+            "motion",
+            [
+                TimePointEvent::new(10, "start"),
+                TimePointEvent::new(25, "end"),
+            ],
+        )
+        .advance("motion", 30);
+    let report = room.update(update).unwrap();
+    assert_eq!(report.frontiers()["alarm"], 30);
+    assert_eq!(room.intervals("alarm").map(bounds), Some(vec![(10, 25)]));
+
+    // A second advance with no data still moves the whole chain.
+    let report = room.advance("motion", 50).unwrap();
+    assert_eq!(report.frontiers()["alarm"], 50);
+}
+
+#[test]
 fn a_late_event_is_refused_and_nothing_is_recorded() {
     let mut room = room();
     room.advance("motion", 10).unwrap();

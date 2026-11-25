@@ -10,10 +10,11 @@ use crate::store::Key;
 ///
 /// An [`update`](super::StreamSystem::update), `insert_stream` or
 /// `add_processor` of a batch system evaluates again only the processors that
-/// read what changed. A live system returns a [`LiveReport`] instead.
+/// read what changed: a processor runs only if one of its inputs was updated or
+/// is the output of a processor that changed. A live system returns a [`LiveReport`] instead.
 /// `changed` names the derived streams whose content differs afterwards, and
 /// `evaluated` the outputs of every processor that ran, whether or not its
-/// output differs, so a host can tell "unchanged" from "not looked at".
+/// output differs (a processor that reads only unchanged outputs does not run), so a host can tell "unchanged" from "not looked at".
 ///
 /// [`StreamSystem`]: super::StreamSystem
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -30,7 +31,8 @@ impl Report {
     }
 
     /// The outputs of the processors that were evaluated again, whether or
-    /// not their content changed.
+    /// not their content changed. A processor whose inputs all came out
+    /// unchanged is not among them.
     #[must_use]
     pub const fn evaluated(&self) -> &BTreeSet<Key> {
         &self.evaluated

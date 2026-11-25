@@ -34,7 +34,8 @@ impl StreamSystem<Batch> {
     }
 
     /// Record `update` into the streams, then evaluate again the processors
-    /// that read what it changed, directly or through another processor.
+    /// that read what it changed, directly or through the output of a
+    /// processor that changed.
     ///
     /// # Errors
     ///
@@ -180,7 +181,7 @@ impl StreamSystem<Batch> {
         } else {
             vec![last]
         };
-        let report = evaluate(&pipeline, &indices, &mut members, &raw)?;
+        let report = evaluate(&pipeline, &indices, &mut members, &raw, None)?;
 
         self.members = members;
         self.raw = raw;
@@ -210,7 +211,7 @@ impl StreamSystem<Batch> {
             if chain.is_empty() {
                 unshelve(&mut members, &mut raw, key);
             } else {
-                evaluate(&pipeline, &chain, &mut members, &raw)?;
+                evaluate(&pipeline, &chain, &mut members, &raw, None)?;
             }
         } else {
             let written: Vec<Key> = members
@@ -335,11 +336,17 @@ impl StreamSystem<Batch> {
         let mut members = self.members.clone();
         let mut raw = self.raw.clone();
         edit(&mut members, &mut raw)?;
-        let indices = changed.map_or_else(
+        let indices = changed.as_ref().map_or_else(
             || (0..self.pipeline.processors().len()).collect(),
-            |changed| self.pipeline.affected(&changed),
+            |changed| self.pipeline.affected(changed),
         );
-        let report = evaluate(&self.pipeline, &indices, &mut members, &raw)?;
+        let report = evaluate(
+            &self.pipeline,
+            &indices,
+            &mut members,
+            &raw,
+            changed.as_ref(),
+        )?;
 
         self.members = members;
         self.raw = raw;

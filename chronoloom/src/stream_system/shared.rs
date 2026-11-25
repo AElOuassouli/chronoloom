@@ -257,12 +257,18 @@ pub(super) fn unshelve(members: &mut Store, raw: &mut Store, key: &Key) {
 /// whole chain or none of it. Returns the derived and transformed streams whose
 /// content changed.
 ///
+/// With `updated`, the keys of the streams that were just changed, a processor
+/// that is not a transform runs only if one of its inputs is among them or is a
+/// stream a processor before it changed. The members of a per-entity output are
+/// matched one by one.
+///
 /// On an error, `members` may be half updated: callers work on a copy.
 pub(super) fn evaluate(
     pipeline: &Pipeline,
     indices: &[usize],
     members: &mut Store,
     raw: &Store,
+    updated: Option<&BTreeSet<Key>>,
 ) -> Result<Report, UpdateError> {
     let mut report = Report::default();
     let mut previous: BTreeMap<Key, Option<Sequence>> = BTreeMap::new();
@@ -271,6 +277,12 @@ pub(super) fn evaluate(
     for &index in indices {
         let processor = &pipeline.processors()[index];
         let output = processor.output();
+        if let Some(updated) = updated {
+            let moved = |key: &Key| updated.contains(key) || report.changed.contains(key);
+            if !processor.is_transform() && !processor.inputs().into_iter().any(moved) {
+                continue;
+            }
+        }
         report.evaluated.insert(output.clone());
         let failed = |error| UpdateError::Process {
             processor: output.clone(),

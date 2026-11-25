@@ -735,3 +735,6 @@ fn earliest(sequence: &Sequence) -> Option<Timestamp> {
         Sequence::TimeInterval(timeline) => timeline.iter().map(TimeIntervalEvent::start).min(),
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -5,6 +5,7 @@ use std::slice;
 
 use crate::primitives::{TimePointEvent, Timestamp};
 use crate::sequences::attribute::Attribute;
+use crate::sequences::extent::Extent;
 
 use super::TimePointSequence;
 
@@ -152,5 +153,46 @@ impl<T> TimePointSequence<T> {
     #[must_use]
     pub fn last(&self) -> Option<&TimePointEvent<T>> {
         self.events.last()
+    }
+
+    /// The instants this sequence was observed over.
+    #[must_use]
+    pub const fn observed(&self) -> &Extent {
+        &self.observed
+    }
+
+    /// The extent, for the system to move a live member's frontier without
+    /// cutting data.
+    pub(crate) fn observed_mut(&mut self) -> &mut Extent {
+        &mut self.observed
+    }
+
+    /// Whether `timestamp` was observed, so that holding no event there means
+    /// nothing happened rather than nothing is known.
+    #[must_use]
+    pub fn is_observed(&self, timestamp: Timestamp) -> bool {
+        self.observed.contains(timestamp)
+    }
+
+    /// This sequence observed over `extent` instead: the extent is set and the
+    /// events outside it are dropped.
+    #[must_use]
+    pub fn with_observed(mut self, extent: Extent) -> Self {
+        self.observed = extent;
+        self.clip();
+        self
+    }
+
+    /// Narrow the extent to its overlap with `extent`, dropping the events
+    /// outside it.
+    pub fn observe(&mut self, extent: &Extent) {
+        self.observed.narrow(extent);
+        self.clip();
+    }
+
+    fn clip(&mut self) {
+        let observed = &self.observed;
+        self.events
+            .retain(|event| observed.contains(event.timestamp()));
     }
 }

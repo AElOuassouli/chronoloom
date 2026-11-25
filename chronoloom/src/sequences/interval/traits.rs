@@ -43,6 +43,7 @@ impl PartialEq for TimeIntervalSequence {
         self.spans == other.spans
             && self.attribute == other.attribute
             && self.transformation == other.transformation
+            && self.observed == other.observed
     }
 }
 
@@ -58,11 +59,10 @@ impl Extend<TimeIntervalEvent<()>> for TimeIntervalSequence {
 
         // Marking more of a state covered does not change which state it is, so
         // the description carries over untouched.
-        *self = Self::from_parts(
-            self.attribute.clone(),
-            self.transformation,
-            normalize(combined),
-        );
+        let spans = normalize(combined);
+        let mut observed = std::mem::take(&mut self.observed);
+        observed.grow(&spans);
+        *self = Self::from_parts(self.attribute.clone(), self.transformation, spans, observed);
     }
 }
 

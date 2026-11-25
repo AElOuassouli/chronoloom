@@ -1,10 +1,27 @@
 # chronoloom
 
-Set algebra over time points and intervals — a small, dependency-free Rust
-library.
+Set algebra over time points and intervals, in a small Rust library with no
+dependencies unless you ask for the optional `serde` feature. Events become
+timelines, timelines combine with set operations, and the same formulas run on
+a finished recording or online, as the data arrives.
+
+What it holds today: two event shapes and two sequence types, one for points
+and one for timelines; the instants a sequence was observed over, so that
+"inactive" and "unknown" differ; a `Processor`, a set of formulas that turns points into
+timelines and timelines into edges; a `StreamSystem` that files sequences under
+keys as one dataset and runs processors over it, on a finished recording or, in
+live mode, as the data arrives; dynamic record values with a schema; and one timeline per entity of a
+record field. Behind features, systems and processors save and load, and a
+processor has a JSON Schema.
 
 Intervals are **half-open**: `start` is included, `end` is excluded. Two
 intervals that merely touch (`[0, 5)` and `[5, 9)`) therefore share no instant.
+
+The document goes from the parts to the whole: events and sequences, the
+algebra on timelines, what was observed, streams and the processors that derive
+one from another, record values and one timeline per entity, transforms, the
+two modes of a `StreamSystem` (batch, then live as the data arrives), and
+saving and checkpoints.
 
 ## Primitives
 
@@ -27,6 +44,32 @@ assert_eq!(phase.duration(), 60);
 
 assert!(TimeIntervalEvent::span(5, 5).is_err());
 ```
+
+## Operations on a pair of intervals
+
+Two `TimeIntervalEvent`s can be intersected — the span where both are active —
+or united — the spans covered by either, merged when nothing separates them.
+
+```rust
+use chronoloom::TimeIntervalEvent;
+
+let a = TimeIntervalEvent::new(0, 5, "a").unwrap();
+let b = TimeIntervalEvent::new(5, 9, "b").unwrap();
+
+// Half-open, so touching intervals share no instant.
+assert_eq!(a.intersection(&b), None);
+
+// But together they cover exactly [0, 9), so they merge.
+assert_eq!(a.union(&b), vec![TimeIntervalEvent::span(0, 9).unwrap()]);
+
+// A real gap keeps them apart, always ordered by start.
+let far = TimeIntervalEvent::new(20, 30, "c").unwrap();
+assert_eq!(a.union(&far).len(), 2);
+```
+
+Both work on the time dimension only: they accept intervals carrying different
+kinds of value, consume neither, and return valueless spans. Reattach a value
+with `map` if the result needs to mean something.
 
 ## Sequences
 
@@ -122,37 +165,6 @@ assert!(up.union(&maintenance).covers_same(&up));
 `symmetric_difference` is the XOR: the instants covered by exactly one of the
 two timelines.
 
-## Sequence systems
-
-A `SequenceSystem` holds the sequences describing one subject side by side, the
-way a sensor system holds its sensors: point sequences of any value type next to
-timelines, one sequence per attribute. Events are recorded into it as they
-arrive — one at a time, or a `Batch` at a time, all or nothing.
-
-```rust
-use chronoloom::{Batch, SequenceSystem, TimeIntervalEvent, TimeIntervalSequence};
-use chronoloom::{TimePointEvent, TimePointSequence};
-
-// Declare each sensor once, by the attribute it reports.
-let mut machine = SequenceSystem::new();
-machine.insert(TimePointSequence::<f64>::new("temperature"));
-machine.insert(TimePointSequence::<String>::new("log"));
-machine.insert(TimeIntervalSequence::new("up"));
-
-machine.record_point("temperature", TimePointEvent::new(10, 21.5_f64)).unwrap();
-
-let mut tick = Batch::new();
-tick.points("temperature", [TimePointEvent::new(11, 21.7_f64)])
-    .points("log", [TimePointEvent::new(11, String::from("fan on"))])
-    .spans("up", [TimeIntervalEvent::span(0, 20).unwrap()]);
-machine.record_batch(tick).unwrap();
-
-assert_eq!(machine.points::<f64>("temperature").map(|s| s.len()), Some(2));
-
-// Recording never creates a sequence, so a misspelt attribute is an error.
-assert!(machine.record_point("temprature", TimePointEvent::new(12, 0.0_f64)).is_err());
-```
-
 ## Moving a timeline in time
 
 `transform` shifts each bound of every span independently: `alpha` moves the
@@ -187,61 +199,910 @@ merge them, never both. It is a single pass, and the one operation that can fail
 a shift that pushes a bound outside the timestamp range returns
 `IntervalError::BoundOverflow`.
 
-## Operations on a pair of intervals
+## What was observed
 
-Two `TimeIntervalEvent`s can be intersected — the span where both are active —
-or united — the spans covered by either, merged when nothing separates them.
+A timeline with no span after `t` reads as "inactive after `t`", whether the
+data stopped, the sensor was offline, or it has not arrived yet. Every sequence
+therefore carries an `Extent`, the instants it was observed over, which starts
+as everything. Inside it, no span means inactive; outside it, nothing is known.
+`contains` keeps asking whether an instant is active, and `is_observed` tells
+inactive from unknown.
+
+Operations keep a result wherever it can be decided: a union is active where
+either side is known active, even where the other was not observed. `complement`
+is the observed instants that are not active, `¬A`.
 
 ```rust
-use chronoloom::TimeIntervalEvent;
+use chronoloom::{Extent, TimeIntervalEvent, TimeIntervalSequence};
 
-let a = TimeIntervalEvent::new(0, 5, "a").unwrap();
-let b = TimeIntervalEvent::new(5, 9, "b").unwrap();
+let span = |start, end| TimeIntervalEvent::span(start, end).unwrap();
+let seen = |start, end| Extent::from_spans(vec![span(start, end)]);
 
-// Half-open, so touching intervals share no instant.
-assert_eq!(a.intersection(&b), None);
+// Observed over [0, 10) only: what happens after that is unknown.
+let up = TimeIntervalSequence::from_spans("up", vec![span(2, 5)])
+    .with_observed(seen(0, 10));
+assert!(!up.contains(7) && up.is_observed(7));
+assert!(!up.contains(20) && !up.is_observed(20));
 
-// But together they cover exactly [0, 9), so they merge.
-assert_eq!(a.union(&b), vec![TimeIntervalEvent::span(0, 9).unwrap()]);
+let down = up.complement();
+assert!(down.contains(7) && !down.contains(3));
 
-// A real gap keeps them apart, always ordered by start.
-let far = TimeIntervalEvent::new(20, 30, "c").unwrap();
-assert_eq!(a.union(&far).len(), 2);
+// Another sensor watched [20, 30) and saw activity there. The union is active
+// there, and unknown in the gap between the two.
+let other = TimeIntervalSequence::from_spans("other", vec![span(22, 25)])
+    .with_observed(seen(20, 30));
+let either = up.union(&other);
+assert!(either.contains(23) && !either.is_observed(15));
+
+// An event outside the extent grows it, since it proves the instant was seen.
+let mut up = up;
+up.insert(span(40, 45));
+assert!(up.is_observed(42));
 ```
 
-Both work on the time dimension only: they accept intervals carrying different
-kinds of value, consume neither, and return valueless spans. Reattach a value
-with `map` if the result needs to mean something.
+`with_observed` sets the extent and cuts the data to it, and
+`StreamSystem::observe` narrows every member at once. Equality includes the
+extent; `covers_same` does not.
+
+## Streams and processors
+
+Sensors report transitions as point events, or values that cross a threshold.
+Turning them into a timeline does not happen on the sequence types, which hold
+data, extent and the set algebra and nothing else. It goes through a
+`Processor`, one recipe: a formula filed under the key of the one output it
+produces, evaluated by a `StreamSystem` (see Batch mode). A `Formula` is
+data: it can be compared, printed, evaluated against any stream system and
+later stored. `Processor::evaluate` gives the output over a system once,
+without storing it, and `add_processor` keeps it up to date. It reads points
+through a `Pattern`, a key and a `Condition` on the values (`Equals`, `Greater`, `Within`, `In`, `And`, `Not` and
+so on) over the value type of that member.
+
+`Between` is active from a point matching `start` until the next point matching
+`end`. A start while active and an end while inactive do nothing, so a stream
+with orphan ends is no error, and an end at the instant a span opened lasts one
+tick.
+
+```rust
+use chronoloom::{Processor, StreamSystem};
+use chronoloom::{Condition, Formula, Pattern};
+use chronoloom::{TimePointEvent, TimePointSequence};
+
+let mut room = StreamSystem::new();
+room.insert_stream("motion", TimePointSequence::from_events("motion", vec![
+    TimePointEvent::new(10, "motion_start"),
+    TimePointEvent::new(25, "motion_end"),
+])).unwrap();
+
+let present = Formula::between(
+    Pattern::new("motion", Condition::Equals("motion_start")),
+    Pattern::new("motion", Condition::Equals("motion_end")),
+);
+
+// The system evaluates the processor and keeps its output up to date.
+room.add_processor(Processor::new("present", present)).unwrap();
+assert_eq!(room.intervals("present").unwrap()[0].bounds(), (10, 25));
+assert!(room.is_derived("present"));
+```
+
+A processor can also be evaluated once, over a system, without adding it:
+
+```rust
+use chronoloom::{Condition, Formula, Pattern, Processor, StreamSystem};
+use chronoloom::{TimePointEvent, TimePointSequence};
+
+let mut room = StreamSystem::new();
+room.insert_stream("motion", TimePointSequence::from_events("motion", vec![
+    TimePointEvent::new(10, "motion_start"),
+    TimePointEvent::new(25, "motion_end"),
+])).unwrap();
+
+let present = Formula::between(
+    Pattern::new("motion", Condition::Equals("motion_start")),
+    Pattern::new("motion", Condition::Equals("motion_end")),
+);
+
+let sequence = Processor::new("present", present).evaluate(&room).unwrap();
+assert_eq!(sequence.as_time_interval().unwrap()[0].bounds(), (10, 25));
+assert!(!room.contains("present"));
+```
+
+`While` holds the last sample: a threshold is `Greater`, and a range is `Within`,
+which is half-open like a span. The formula is unknown before the first sample
+of a run of the extent, and the last sample holds to the end of the run.
+
+```rust
+use chronoloom::{Processor, StreamSystem};
+use chronoloom::{Condition, Formula, Pattern};
+use chronoloom::{TimePointEvent, TimePointSequence};
+
+let mut room = StreamSystem::new();
+room.insert_stream("temperature", TimePointSequence::from_events("temperature", vec![
+    TimePointEvent::new(0, 3.0),
+    TimePointEvent::new(10, 7.0),
+    TimePointEvent::new(20, 9.0),
+    TimePointEvent::new(30, 4.0),
+])).unwrap();
+
+let hot = Formula::while_matching(Pattern::new("temperature", Condition::Greater(5.0)));
+let mild = Formula::while_matching(Pattern::new(
+    "temperature",
+    Condition::Within { low: 5.0, high: 8.0 },
+));
+room.add_processor(Processor::new("hot", hot)).unwrap();
+room.add_processor(Processor::new("mild", mild)).unwrap();
+
+assert_eq!(room.intervals("hot").unwrap()[0].bounds(), (10, 30));
+assert_eq!(room.intervals("mild").unwrap()[0].bounds(), (10, 20));
+// Nothing is known before the first sample.
+assert!(!room.intervals("hot").unwrap().is_observed(-1));
+```
+
+A span with no end is active as long as no end event is observed, and
+`Between` carries an `OpenEnd` that says where it stops: `OpenEnd::Extent`, the
+default, at the end of the extent, and `OpenEnd::Head` at the instant up to which
+the inputs have been seen, with everything unknown from there on. `Occurs` is
+active for one tick at each matching point, and `Formula::hold(pattern, ticks)`
+is active for `ticks` ticks from each one, holds that overlap or touch merging
+(it is a `Shift` of `Occurs`, not a variant of its own, and `ticks` must be at
+least one: it panics otherwise). `Not`, `And`, `Or` and `Shift` mean exactly
+what `complement`, `intersection`, `union` and `transform` mean, three-valued
+extents included, except that a `Shift` never fails: a span that reaches the
+end of time keeps reaching it, and other bounds saturate.
+`conjunctive_normal_form` rewrites a formula as an `And` of `Or`s of literals
+that denotes the same timeline, and `Events::Edges` and `Events::Matching` are
+the outputs that are points rather than a timeline.
+
+```rust
+use chronoloom::{Processor, StreamSystem};
+use chronoloom::{Condition, Formula, Pattern};
+use chronoloom::{TimePointEvent, TimePointSequence};
+
+let mut room = StreamSystem::new();
+room.insert_stream("door", TimePointSequence::from_events("door", vec![
+    TimePointEvent::new(10, "open"),
+    TimePointEvent::new(12, "open"),
+    TimePointEvent::new(30, "open"),
+])).unwrap();
+
+// Recently opened: three ticks from each opening, merged where they overlap.
+let recent = Formula::hold(Pattern::new("door", Condition::Equals("open")), 3);
+room.add_processor(Processor::new("recent", recent)).unwrap();
+let spans: Vec<(i64, i64)> = room.intervals("recent").unwrap()
+    .iter().map(|span| span.bounds()).collect();
+assert_eq!(spans, [(10, 15), (30, 33)]);
+```
+
+A formula may name the key of the output of another processor, and then reads
+that output. A processor reads only what the system already holds, so the
+processors are added in the order they depend on each other. A formula reading
+its own output transforms that stream (see Transforms), and
+a per-entity output reading its own members is `ProcessError::Cycle`.
+
+```rust
+use chronoloom::{Processor, StreamSystem};
+use chronoloom::{Condition, Formula, Pattern};
+use chronoloom::{TimeIntervalEvent, TimeIntervalSequence, TimePointEvent, TimePointSequence};
+
+let mut room = StreamSystem::new();
+room.insert_stream("motion", TimePointSequence::from_events("motion", vec![
+    TimePointEvent::new(10, "motion_start"),
+    TimePointEvent::new(25, "motion_end"),
+])).unwrap();
+room.insert_stream("door", TimeIntervalSequence::from_spans("door", vec![
+    TimeIntervalEvent::span(40, 50).unwrap(),
+])).unwrap();
+
+room.add_processor(Processor::new("present", Formula::between(
+    Pattern::new("motion", Condition::Equals("motion_start")),
+    Pattern::new("motion", Condition::Equals("motion_end")),
+))).unwrap();
+// Reads the output `present`, which the system holds by now.
+room.add_processor(Processor::new(
+    "occupied",
+    Formula::state("present").or(Formula::state("door")),
+)).unwrap();
+assert_eq!(room.intervals("occupied").unwrap().len(), 2);
+
+// A formula reading its own output transforms that stream, so it needs one.
+let rewriting = Processor::new("loop", Formula::state("loop"));
+assert!(rewriting.check().is_ok());
+assert!(StreamSystem::new().add_processor(rewriting).is_err());
+```
+
+### Step values
+
+A value that holds until it changes (an occupancy, a counter) is not a third
+sequence shape: it is a point sequence of its changes read with `While`, as
+above. `Formula::while_within(pattern, timeout)` is for a sensor that may go
+silent: a sample stops holding `timeout` ticks after it was taken, and until the
+next one the formula is unknown, not inactive. `Events::changes(key)` is the
+canonical form of a step, the points of a member of any value type with each
+repeat dropped, for a host that stores or streams only the changes. Both work
+online, with no lag.
+
+```rust
+use chronoloom::{Processor, StreamSystem};
+use chronoloom::{Condition, Events, Formula, Pattern};
+use chronoloom::{TimePointEvent, TimePointSequence};
+
+let mut room = StreamSystem::new();
+room.insert_stream("count", TimePointSequence::from_events("count", vec![
+    TimePointEvent::new(0, 2_i64),
+    TimePointEvent::new(10, 9),
+    TimePointEvent::new(20, 9),
+    TimePointEvent::new(100, 1),
+])).unwrap();
+
+// Busy while the last count is above five, trusted for 30 ticks after it.
+let busy = Formula::while_within(Pattern::new("count", Condition::Greater(5_i64)), 30);
+room.add_processor(Processor::new("busy", busy)).unwrap();
+room.add_processor(Processor::new("steps", Events::changes("count"))).unwrap();
+
+let busy = room.intervals("busy").unwrap();
+assert_eq!(busy[0].bounds(), (10, 50));
+// From 50 to 100 the sensor was silent: unknown, not inactive.
+assert!(!busy.contains(70) && !busy.is_observed(70));
+
+// The repeat at 20 is dropped.
+let steps = room.points::<i64>("steps").unwrap();
+let changes: Vec<(i64, i64)> = steps.iter().map(|e| (e.timestamp(), *e.value())).collect();
+assert_eq!(changes, [(0, 2), (10, 9), (100, 1)]);
+```
+
+### Declared inputs
+
+A processor may say what it expects of the members it reads, with
+`Processor::with_input(key, Input)`: a timeline, points of a value type, edges,
+or records of a `Schema`. `Processor::validate` then lists every problem without
+a system, in a stable order (the cycle first, then the reads of the formula),
+and a `StreamSystem`, in either mode, refuses a stream that contradicts a
+declaration. A processor with no declarations behaves as before.
+
+```rust
+use chronoloom::{Processor, StreamSystem};
+use chronoloom::{Formula, Input, Kind, TimePointSequence};
+
+let processor = Processor::new("open", Formula::state("door").or(Formula::state("shut")))
+    .with_input("door", Input::Timeline)
+    .with_input("temperature", Input::Points(Kind::Float));
+
+// `shut` is neither the output nor a declared input.
+assert_eq!(processor.validate().unwrap_err().len(), 1);
+
+// A system whose `temperature` holds integers contradicts the declaration.
+let mut system = StreamSystem::new();
+system.insert_stream("temperature", TimePointSequence::<i64>::new("temperature")).unwrap();
+assert!(system.add_processor(processor).is_err());
+```
+
+### Datasets
+
+A `StreamSystem` with the pieces above describes a dataset: the recordings of
+one subject over a stretch of time. Each piece answers one question.
+
+- **Keys** say which sequence is which. The key is the identity; the label is
+  only a description.
+- **The observed extent** says what was seen. A dataset that stopped early is
+  the stream system narrowed with `observe`: every member ends at the same instant, and
+  after it `contains` and `is_observed` are both false.
+- **Metadata** says what the data means to you: a time unit, an origin, a unit
+  per sensor. `Metadata` is a string map, kept on the system and on each member.
+  chronoloom stores it and never reads it.
+- **A `Processor`** turns raw readings into timelines, so one dataset (a
+  `StreamSystem`) holds the readings and the states derived from them.
+- **`slice`** cuts every member to a window of time, keeping keys, labels and
+  metadata, and narrowing each extent to the window.
+
+```rust
+use chronoloom::{Processor, StreamSystem};
+use chronoloom::{Condition, Extent, Formula, Pattern};
+use chronoloom::{TimeIntervalEvent, TimePointEvent, TimePointSequence};
+
+let motion = TimePointSequence::from_events("motion", vec![
+    TimePointEvent::new(10, "motion_start"),
+    TimePointEvent::new(40, "motion_end"),
+]);
+
+let mut room = StreamSystem::new();
+room.insert_stream("motion", motion).unwrap();
+room.add_processor(Processor::new("presence", Formula::between(
+    Pattern::new("motion", Condition::Equals("motion_start")),
+    Pattern::new("motion", Condition::Equals("motion_end")),
+))).unwrap();
+room.metadata_mut().insert("unit".into(), "seconds".into());
+room.member_metadata_mut("motion")
+    .unwrap()
+    .insert("placement".into(), "door".into());
+
+// The recording stopped at 50: nothing is known after it.
+room.observe(&Extent::from_spans(vec![TimeIntervalEvent::span(i64::MIN, 50).unwrap()]))
+    .unwrap();
+assert!(!room.intervals("presence").unwrap().is_observed(60));
+
+// A playback window keeps keys, labels and metadata.
+let window = room.slice(20..45);
+let presence = window.intervals("presence").unwrap();
+assert_eq!(presence[0].bounds(), (20, 40));
+assert!(presence.is_observed(44) && !presence.is_observed(45));
+assert_eq!(window.points::<&str>("motion").map(|s| s.len()), Some(1));
+assert_eq!(window.metadata().get("unit").map(String::as_str), Some("seconds"));
+assert_eq!(
+    window.member_metadata("motion").and_then(|m| m.get("placement")).map(String::as_str),
+    Some("door"),
+);
+```
+
+## Record values
+
+A sensor message has several fields, and a processor written at run time must
+reach them by name. `Value` is a dynamic payload (`Null`, `Bool`, `Integer`,
+`Float`, `Text`, or a `Record` of named fields) that goes into a
+`TimePointSequence<Value>` beside the sequences of one fixed value type, which
+keep their own dense layout. Values of one kind compare naturally, an integer and
+a float compare as numbers, any other pair is unordered, so an ordering
+`Condition<Value>` matches the numbers it applies to and nothing else. `get`
+reaches a field by a dotted path, `"agent.id"`.
+
+A `Schema` says what shape the values of a member must have, and it belongs to
+the stream system. A record requires its fields and rejects unknown ones, `Optional`
+fields may be left out, and a `Float` accepts an integer. Once set, an
+update with a value without the shape is `UpdateError::Record` holding
+`RecordError::SchemaMismatch`, naming the path of the offending field, and an
+update stays all or nothing.
+
+`Events::Project` reads one field of each record out into a point sequence of
+its own, of the type a `Kind` names. A record without the field is skipped, and
+a field of another kind is `ProcessError::ProjectionMismatch`. A live stream system
+runs it like `Matching`, so what it appends equals the batch result.
+
+```rust
+use chronoloom::{Processor, StreamSystem};
+use chronoloom::{
+    Condition, Events, Formula, Kind, Pattern, RecordError, Schema, TimePointEvent,
+    TimePointSequence, Update, UpdateError, Value,
+};
+
+let message = |agent: i64, zone: &str| {
+    Value::record([
+        ("agent", Value::record([("id", Value::from(agent))])),
+        ("zone", Value::from(zone)),
+    ])
+};
+
+let mut result = StreamSystem::new();
+result.insert_stream("sensor", TimePointSequence::<Value>::new("sensor")).unwrap();
+result
+    .set_schema(
+        "sensor",
+        Schema::record([
+            ("agent", Schema::record([("id", Schema::Integer)])),
+            ("zone", Schema::Text),
+            ("dwell", Schema::optional(Schema::Float)),
+        ]),
+    )
+    .unwrap();
+
+let mut update = Update::new();
+update.points("sensor", [
+    TimePointEvent::new(10, message(7, "gate")),
+    TimePointEvent::new(20, message(9, "yard")),
+]);
+result.update(update).unwrap();
+
+// A value without the shape is refused, and nothing is recorded.
+let wrong = Value::record([("agent", Value::from(7)), ("zone", Value::from("gate"))]);
+let mut update = Update::new();
+update.points("sensor", [TimePointEvent::new(30, wrong)]);
+let refused = result.update(update);
+assert!(matches!(
+    refused,
+    Err(UpdateError::Record(RecordError::SchemaMismatch { error, .. })) if error.path == "agent"
+));
+
+// A field becomes a sequence of its own, and an ordinary processor reads it.
+result
+    .add_processor(Processor::new(
+        "agent",
+        Events::project("sensor", "agent.id", Kind::Integer),
+    ))
+    .unwrap();
+result
+    .add_processor(Processor::new(
+        "far_agent",
+        Formula::while_matching(Pattern::new("agent", Condition::Greater(8_i64))),
+    ))
+    .unwrap();
+
+let agents = result.points::<i64>("agent").unwrap();
+assert_eq!(agents.iter().map(|event| *event.value()).collect::<Vec<_>>(), [7, 9]);
+assert!(result.intervals("far_agent").unwrap().contains(25));
+
+// Online, the same projection appends each point once it is final.
+let mut live = StreamSystem::live(0);
+live.insert_stream("sensor", TimePointSequence::<Value>::new("sensor")).unwrap();
+live.add_processor(Processor::new("zone", Events::project("sensor", "zone", Kind::Text)))
+    .unwrap();
+let mut update = Update::new();
+update
+    .points("sensor", [TimePointEvent::new(10, message(7, "gate"))])
+    .advance("sensor", 20);
+live.update(update).unwrap();
+let zone = live.points::<String>("zone").unwrap();
+assert_eq!(zone.iter().map(|event| event.value().as_str()).collect::<Vec<_>>(), ["gate"]);
+```
+
+A `Pattern` can reach into a record too. `Pattern::field(key, path, condition)`
+applies a `Condition<Value>` to one field of each record of a member, so the
+formulas that read patterns (`Between`, `While`, `Occurs`, `hold`,
+`Events::Matching`) filter and derive states from a field without a projection
+first, in batch and online. A record without the field does not match, whatever
+the condition, and is not an error; for `While` it is a sample that does not
+satisfy the condition, so it ends a span, where a projection would skip it. A
+field that is `Null` is a value like another, so `Equals(Value::Null)` matches
+it and an ordering does not. A member that does not hold `Value` points is
+`ProcessError::ValueTypeMismatch`. A condition on two fields is two patterns
+combined by formulas, an `And` of `While`s:
+
+```rust
+use chronoloom::{Processor, StreamSystem};
+use chronoloom::{Condition, Formula, Pattern, TimePointEvent, TimePointSequence, Value};
+
+let reading = |count: i64, zone: &str| {
+    Value::record([("count", Value::from(count)), ("zone", Value::from(zone))])
+};
+
+let mut system = StreamSystem::new();
+system.insert_stream("motion", TimePointSequence::from_events("motion", vec![
+    TimePointEvent::new(10, reading(7, "gate")),
+    TimePointEvent::new(20, reading(9, "yard")),
+    TimePointEvent::new(30, reading(2, "yard")),
+    TimePointEvent::new(40, reading(8, "gate")),
+    TimePointEvent::new(50, Value::record([("zone", Value::from("gate"))])),
+])).unwrap();
+
+let busy = Pattern::field("motion", "count", Condition::Greater(Value::from(5)));
+let at_gate = Pattern::field("motion", "zone", Condition::Equals(Value::from("gate")));
+assert_eq!(busy.to_string(), "motion.count > 5");
+
+// Busy at the gate: both fields at once. The last record has no count.
+system
+    .add_processor(Processor::new(
+        "busy_at_gate",
+        Formula::And(vec![Formula::while_matching(busy), Formula::while_matching(at_gate)]),
+    ))
+    .unwrap();
+let spans: Vec<(i64, i64)> = system
+    .intervals("busy_at_gate")
+    .unwrap()
+    .iter()
+    .map(|span| (span.start(), span.end()))
+    .collect();
+assert_eq!(spans, [(10, 20), (40, 50)]);
+```
+
+## One timeline per entity
+
+Presence is one timeline per entity: an agent enters, an agent exits. Sessions
+per user and uptime per host have the same shape. It needs no sequence of its
+own: a `Group` names the member of `Value` records and the field that says which
+entity a record is about (`Group::new("gate", "agent")`), and three outputs of a
+processor are built on it. `Recipe::per_entity` evaluates a formula once per
+entity, and files each result under `<output key>/<entity>`; `Recipe::any_entity`
+is the union of those timelines, and `Recipe::count_entities` is how many are
+active, as a `TimePointSequence<i64>` of its changes, to be read with `While` like
+any step value.
+
+Inside the formula, the patterns over the member of the group read only the
+records of the entity, as if the member had been filtered by hand, and the
+patterns over any other member are shared: a door is the same door for every
+agent.
+
+```rust
+use chronoloom::{Processor, StreamSystem};
+use chronoloom::{Condition, Formula, Group, Recipe, Pattern};
+use chronoloom::{TimePointEvent, TimePointSequence, Value};
+
+let crossing = |agent: &str, direction: &str| {
+    Value::record([("agent", Value::from(agent)), ("direction", Value::from(direction))])
+};
+let mut gate = StreamSystem::new();
+gate.insert_stream("gate", TimePointSequence::from_events("gate", vec![
+    TimePointEvent::new(10, crossing("agent-7", "in")),
+    TimePointEvent::new(12, crossing("agent-9", "in")),
+    TimePointEvent::new(20, crossing("agent-7", "out")),
+    TimePointEvent::new(30, crossing("agent-9", "out")),
+])).unwrap();
+
+// Present from an "in" of an agent until the next "out" of the same agent.
+let direction = |text: &str| {
+    Pattern::field("gate", "direction", Condition::Equals(Value::from(text)))
+};
+let present = Formula::between(direction("in"), direction("out"));
+let by_agent = Group::new("gate", "agent");
+
+gate.add_processor(Processor::new("presence", Recipe::per_entity(by_agent.clone(), present.clone())))
+    .unwrap();
+gate.add_processor(Processor::new("anyone", Recipe::any_entity(by_agent.clone(), present.clone())))
+    .unwrap();
+gate.add_processor(Processor::new("crowd", Recipe::count_entities(by_agent, present)))
+    .unwrap();
+// A processor reads the others by key, the members of `presence` included.
+gate.add_processor(Processor::new(
+    "seven_after_hours",
+    Formula::state("presence/agent-7").shift(0, 60),
+))
+.unwrap();
+let result = &gate;
+
+assert_eq!(result.intervals("presence/agent-7").unwrap()[0].bounds(), (10, 20));
+assert_eq!(result.intervals("presence/agent-9").unwrap()[0].bounds(), (12, 30));
+assert_eq!(result.intervals("anyone").unwrap()[0].bounds(), (10, 30));
+assert_eq!(result.intervals("seven_after_hours").unwrap()[0].bounds(), (10, 80));
+
+// The count opens with a point at the start of its extent, then changes.
+let crowd: Vec<(i64, i64)> = result
+    .points::<i64>("crowd")
+    .unwrap()
+    .iter()
+    .map(|change| (change.timestamp(), *change.value()))
+    .collect();
+assert_eq!(crowd, [(i64::MIN, 0), (10, 1), (12, 2), (20, 1), (30, 0)]);
+
+// Each member is the timeline of one entity.
+assert_eq!(gate.entity("presence/agent-9"), Some(&Value::from("agent-9")));
+```
+
+An entity is a distinct value of the field: a boolean, a number or text. A record
+with no such field, or `Null`, a record or a `NaN` in it, belongs to no entity and
+is part of none of the restricted members, so it neither opens nor closes
+anything. The integer `5` and the float `5.0` are one entity. A member key writes
+text as it is and anything else as `Value` prints it, a `/` in the text is kept,
+and two entities that would share a key (the text `5` and the integer `5`), or an
+entity and another output, are `ProcessError::DuplicateMember`. Another formula of
+the processor may read a member by its key; the dependency order treats any key
+under `<output key>/` as a read of the whole output, so a key of an entity that
+does not exist is `ProcessError::UnknownKey` and a formula of the output reading
+its own members is a `Cycle`.
+
+An entity exists from its first record, and its timeline is observed from that
+instant. Before it, `any_entity` and `count_entities` treat it as inactive and
+known, so an entity that has not appeared adds no uncertainty to what the
+entities that have appeared give, and a count never changes for instants it has
+already given. Before any entity has appeared, the union and the count are known
+only where the records were observed. This changes nothing for a formula that
+is inactive before the first record of the entity, which a presence is.
+`count_entities` has a point where each run of its extent opens, the count being
+known there from every entity, and one at each later change, ending spans before
+starting ones at one instant so that a hand-over counts once. Within a fully known
+extent, the durations of the entities add up to the count times the duration it
+held.
+
+A live `StreamSystem` runs these outputs too. It makes an entity when the first
+record of it is recorded, and files its timeline under the member key,
+`presence/agent-7`; what it gives equals the batch result, and a union or a
+count is final up to the frontier of the records, since an entity may still
+appear there. Each entity is kept for good, with the state one formula would
+hold, so the state grows with the entities seen and an update costs in
+proportion.
+
+## Transforms
+
+In a `StreamSystem` (see Batch mode), a processor whose output key is a stream it reads rewrites that stream, instead
+of deriving a new one: it cleans, filters or projects it. The stream reads as
+its last version (`get`, `points`, `intervals`) while `raw` gives the recorded
+data, and recording into it records into that data, after which the transforms
+run again. Several transforms of one stream chain in the order they are added,
+each reading the version before it, and every other processor reads the last
+version, so a transform is added before the processors that read its stream.
+A transform keeps the shape of the stream, points as points and a timeline as a
+timeline (the value type may change, as a projection does); anything else is
+`ProcessError::TransformShape`. `transforms(key)` lists the chain, and
+`remove_processor` takes the last transform of a stream away, as long as no
+processor reads the stream. The system does not track which version each reader
+reads: a transform is refused (`UpdateError::Read`) once another processor reads
+the stream, and a transform in the middle of a chain cannot be removed on its
+own. `producer(key)` gives the processor that derives a stream, or the last
+transform of a transformed one.
+
+```rust
+use chronoloom::{Condition, Events, Pattern, Processor, StreamSystem};
+use chronoloom::{TimePointEvent, TimePointSequence, Update};
+
+let mut room = StreamSystem::new();
+room.insert_stream("motion", TimePointSequence::<&str>::new("motion")).unwrap();
+room.add_processor(Processor::new(
+    "motion",
+    Events::Matching(Pattern::new("motion", Condition::NotEquals("noise"))),
+)).unwrap();
+
+let mut update = Update::new();
+update.points("motion", [TimePointEvent::new(1, "noise"), TimePointEvent::new(2, "start")]);
+room.update(update).unwrap();
+
+assert_eq!(room.points::<&str>("motion").unwrap().len(), 1);
+assert_eq!(room.raw("motion").unwrap().len(), 2);
+```
+
+## Batch mode
+
+A `StreamSystem` puts the pieces above together: it holds the streams of a
+subject and a list of processors, and keeps what the processors derive up to
+date as data arrives. Each `Processor` has the inputs it
+reads, which are the keys its formula reads (`with_input` declares what one must
+be), and the one output it produces.
+
+Derived streams are read-only and always current. An `Update`, a set of points
+and spans by stream key recorded all or nothing, evaluates again the processors
+that read what it changed, directly or through the output of a processor that
+changed, and no others; the `Report` it returns names the derived streams that changed and
+the outputs evaluated again. A processor reads only what the system already
+holds, and what a processor reads cannot be removed, so the list is always in an
+order the system can evaluate.
+
+```rust
+use chronoloom::{Processor, StreamSystem, Update};
+use chronoloom::{Condition, Formula, Pattern, TimeIntervalEvent, TimeIntervalSequence};
+use chronoloom::{TimePointEvent, TimePointSequence};
+
+let mut room = StreamSystem::new();
+room.insert_stream("motion", TimePointSequence::<&str>::new("motion")).unwrap();
+room.insert_stream("door", TimeIntervalSequence::from_spans("door", vec![
+    TimeIntervalEvent::span(40, 50).unwrap(),
+])).unwrap();
+
+room.add_processor(Processor::new("presence", Formula::between(
+    Pattern::new("motion", Condition::Equals("start")),
+    Pattern::new("motion", Condition::Equals("end")),
+))).unwrap();
+room.add_processor(Processor::new(
+    "occupied",
+    Formula::state("presence").or(Formula::state("door")),
+)).unwrap();
+
+let mut update = Update::new();
+update.points("motion", [TimePointEvent::new(10, "start"), TimePointEvent::new(25, "end")]);
+let report = room.update(update).unwrap();
+
+assert_eq!(report.changed().len(), 2);
+assert_eq!(room.intervals("occupied").unwrap().len(), 2);
+assert!(room.is_derived("presence"));
+```
+
+The mode of a stream system is a type parameter, so what every mode shares is
+written once. Batch mode, `StreamSystem<Batch>` and the default, is a dataset
+held whole; live mode follows.
+
+## Live mode
+
+`StreamSystem::live(from)` makes a `StreamSystem<Live>`: the streams and
+processors of the batch mode, with a frontier per stream before which everything
+is final, and processors that run incrementally. An `Update` carries events and
+watermarks (`advance(key, watermark)`, `advance_all(watermark)`); `update`
+records the events, moves the frontiers, and runs the processors that read a
+stream whose frontier moved over the range that became final. An event before
+the frontier of its stream is `UpdateError::Late`, and a batch system refuses an
+update that carries a watermark. The `LiveReport` it returns has, for each
+derived stream that made progress, the new `Chunk` (its `range()`, its
+`sequence()` and its `edges()`), and the frontier of every derived stream.
+Joined end to end, the chunks are the batch result, which is what the live mode
+is tested against. Live mode does not run transforms yet (`UpdateError::LiveTransform`).
+
+```rust
+use chronoloom::stream_system::{Live, StreamSystem, Update};
+use chronoloom::{Condition, Formula, Pattern, Processor};
+use chronoloom::{TimePointEvent, TimePointSequence};
+
+let mut room: StreamSystem<Live> = StreamSystem::live(0);
+room.insert_stream("motion", TimePointSequence::<&str>::new("motion")).unwrap();
+room.add_processor(Processor::new("presence", Formula::between(
+    Pattern::new("motion", Condition::Equals("start")),
+    Pattern::new("motion", Condition::Equals("end")),
+))).unwrap();
+
+let mut update = Update::new();
+update
+    .points("motion", [TimePointEvent::new(10, "start"), TimePointEvent::new(25, "end")])
+    .advance("motion", 30);
+let report = room.update(update).unwrap();
+
+assert_eq!(report.chunks()["presence"].range(), 0..30);
+assert_eq!(report.frontiers()["presence"], 30);
+assert_eq!(room.intervals("presence").unwrap()[0].bounds(), (10, 25));
+
+// Everything before 30 is final, so an event there is late.
+let mut late = Update::new();
+late.points("motion", [TimePointEvent::new(29, "start")]);
+assert!(room.update(late).is_err());
+```
+
+### Lag, finishing and draining
+
+Every operator has a lag: the frontier of a derived stream is a function of the
+frontiers of its inputs. Set operations take the smaller one, `Shift { alpha,
+beta }` adds `min(alpha, beta)`, and a chained output has the frontier of the
+output it reads. Each processor keeps a small running state of its own (an open
+span, the sample that holds a `While`, the entities seen) and reads only the
+newly final part of its inputs, so a step costs what is new.
+
+`finish(horizon)` ends the system: every stream is final up to the end of time,
+what they hold at or after the horizon is dropped, and the processors flush what
+they held back, so a span still open is closed at the horizon and the derived
+streams are the batch result over the streams as they are. Nothing is recorded
+after that.
+
+```rust
+use chronoloom::{Condition, Formula, Pattern, Processor, StreamSystem, TimePointEvent};
+use chronoloom::{TimePointSequence, Update};
+
+let busy = Formula::while_matching(Pattern::new("count", Condition::Greater(5_i64)));
+let mut live = StreamSystem::live(0);
+live.insert_stream("count", TimePointSequence::<i64>::new("count")).unwrap();
+live.add_processor(Processor::new("busy", busy)).unwrap();
+
+let mut update = Update::new();
+update.points("count", [TimePointEvent::new(7, 9_i64)]).advance("count", 10);
+let report = live.update(update).unwrap();
+
+// The state became active at 7, and nothing before 10 can change.
+assert_eq!(report.chunks()["busy"].range(), 0..10);
+assert_eq!(live.frontier("busy"), Some(10));
+
+// Its end is not known yet; `finish` closes what is open at the horizon.
+live.finish(30).unwrap();
+assert_eq!(live.intervals("busy").unwrap()[0].bounds(), (7, 30));
+```
+
+A live system holds what is not final, and `drain` keeps that bound over a
+stream that does not end: it hands over the final part of every stream and
+derived stream as a batch system, with the same processors, metadata and
+schemas, and keeps only the rest (a span that reaches the frontier stays whole,
+since it may still grow). The processors do not need the data drained, as each
+carries its own state, so what a live system holds stays under a bound whatever
+the length of the stream. A processor added later starts over what is still
+held. `StreamSystem::into_live(from)` goes the other way: a batch system cut to
+what lies before `from`, whose processors start by stepping over it and go on
+as a live system that was given the same events from the start.
+
+Unknown regions give nothing. With `OpenEnd::Head` the head is the frontier of
+the inputs.
+
+## Saving and checkpoints
+
+Behind the `serde` feature, which is off by default and adds the `serde`
+dependency (`cargo add chronoloom --features serde`), every type that holds data
+implements `Serialize` and `Deserialize`, for any self-describing format. The
+examples use JSON, and need the feature, so they are marked `ignore` here and
+run as doctests of the `serialisation` module. A `TimePointSequence`, a
+`TimeIntervalSequence`, a `StreamSystem` (in either mode) and a `Processor` are
+documents that start with a format version, `{ "format": 1, .. }`; what is nested
+in them carries none, and a reader refuses any version it does not know.
+A system is saved as its recorded streams (key, data, metadata and schema, a
+transformed stream as it was recorded) and its processors, with
+`"mode": "batch"`. The derived streams are not saved: loading adds the
+processors in order, which evaluates them again over the saved streams, and the
+metadata of a derived stream is not kept. A `slice` of a system, or the part a
+live system `drain`s, holds derived streams that are not what the processors
+give over its own streams, so it loads with different derived streams. A
+processor that fails over the streams is an error of the load.
+
+A `StreamSystem<Live>` is saved the same way, with `"mode": "live"`, where it
+started (`from`), a `frontier` for each stream, the running state of each
+processor (`nodes`) and the derived streams as the processors made them
+(`derived`): a checkpoint. Nothing is run on load, and the restored system goes
+on exactly as one that never stopped, also after a `drain`. A document of one
+mode is refused as the other (`into_live` is the way across), and so is one
+whose parts contradict each other: a stream without a frontier or with one
+before `from`, a running state of another kind than its processor, derived
+streams that disagree with the entities the state has seen, a stream observed
+past its frontier, an input read past its frontier.
+
+```rust,ignore
+use chronoloom::{
+    Condition, Formula, Pattern, Processor, StreamSystem, TimePointEvent, TimePointSequence,
+};
+
+let mut system = StreamSystem::new();
+system.insert_stream("count", TimePointSequence::from_events("count", vec![
+    TimePointEvent::new(3, 4_i64),
+    TimePointEvent::new(9, 8_i64),
+]))?;
+system.add_processor(Processor::new(
+    "busy",
+    Formula::occurs(Pattern::new("count", Condition::Greater(5_i64))),
+))?;
+system.metadata_mut().insert("unit".to_owned(), "seconds".to_owned());
+
+// The derived stream is not saved: loading evaluates the processor again.
+let saved = serde_json::to_string(&system)?;
+let loaded: StreamSystem = serde_json::from_str(&saved)?;
+assert_eq!(loaded, system);
+
+// A processor is a document of its own, and a loaded one has been checked.
+let processor = Processor::new(
+    "busy",
+    Formula::occurs(Pattern::new("count", Condition::Greater(5_i64))),
+);
+let rules = serde_json::to_string(&processor)?;
+let rules: Processor = serde_json::from_str(&rules)?;
+assert_eq!(rules, processor);
+
+// A reader refuses any format version it does not know.
+let future = saved.replacen(r#""format":1"#, r#""format":2"#, 1);
+assert!(serde_json::from_str::<StreamSystem>(&future).is_err());
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+Loading validates. A document that loads gives values whose invariants hold, as
+though they had been built in code: spans that overlap, touch or come unsorted
+are normalized, and one that ends before it starts is refused; point events are
+sorted, ties keeping their stored order; data outside the extent a sequence was
+observed over is refused (a point stamped `i64::MAX` excepted, as documented);
+a schema must fit the data of its stream; and a processor must pass
+`Processor::check`, so a stored processor that loads is a valid one. A refusal
+says what was wrong and names the stream's key.
+
+A `Value` is plain JSON, `null`, `true`, `5`, `5.0`, `"text"` and `{..}`, and an
+integer and a float stay distinct on the way back although `5 == 5.0`. A float
+that is not finite is refused when saving. The point members of a system and the
+patterns of a processor are tagged with their value type, `"f64"`, `"i64"`,
+`"bool"`, `"text"`, `"value"` or `"edge"`: a closed set, so saving a member of
+any other type, or loading a document with another tag, is an error naming the
+key. The version history and the shapes are in the `serialisation` module
+documentation.
+
+### A JSON Schema
+
+The declarations of a processor (see Declared inputs) are saved in an `inputs`
+array of its document. Behind the `json-schema` feature, which implies `serde`
+and adds `schemars` and `serde_json`,
+`chronoloom::serialisation::processor_json_schema()` returns the JSON Schema of
+the processor document for editors and servers.
+
+```rust,ignore
+use chronoloom::serialisation::processor_json_schema;
+use chronoloom::{Formula, Input, Kind, Processor};
+
+let processor = Processor::new("open", Formula::state("door").or(Formula::state("shut")))
+    .with_input("door", Input::Timeline)
+    .with_input("temperature", Input::Points(Kind::Float));
+
+// Once inputs are declared, `shut` must be one of them.
+assert_eq!(processor.validate().unwrap_err().len(), 1);
+
+// The schema describes the document that is saved, `inputs` included.
+let schema = processor_json_schema();
+assert_eq!(schema["properties"]["format"]["const"], 1);
+assert!(schema["properties"]["inputs"].is_object());
+```
 
 ## Not here yet
 
-The wider algebra is still to come — window and containment queries over a
-sequence, coverage and gaps, complement, the same set algebra for
-`TimePointSequence`, and carrying values through any of it. What exists today is
-the vocabulary, the two sequence shapes, the pair-wise interval operations, the
-set algebra between two interval timelines, and systems that hold sequences of
-both shapes together.
+What is open:
 
-Every code block in this file is compiled and run by `make test`, so what is
-documented here is what is implemented.
+- A `StreamSystem` in live mode does not run transforms.
+- Record values have no lists, and a projection copies the values rather than
+  viewing them in place.
+- A live system keeps every entity of a per-entity output it has seen. A way to
+  forget the inactive ones would cost a late record of such an entity its
+  member, and does not exist yet.
+- Sequences have `range`, `nearest`, `slice` and `contains`, and no further
+  queries such as the gaps or the coverage of a timeline, and the set algebra
+  is defined for `TimeIntervalSequence` only, not for `TimePointSequence`.
+
+Every `rust` block in this file is compiled and run by `cargo test`; the blocks
+marked `ignore` need a feature and run as doctests of the `serialisation` module.
 
 ## Python
 
 Python bindings are published separately as
 [`chronoloompy`](https://pypi.org/project/chronoloompy/), an API over this
 crate that keeps data in Rust memory and hands Python zero-copy NumPy views of
-it. It lives in
-[`../chronoloompy`](../chronoloompy) in this repository.
+it.
 
 ## Development
 
-```sh
-make lint   # cargo fmt --check, clippy, and the "no pyo3" assertion
-make test   # unit and doc tests
-```
-
 This crate must never depend on pyo3 — that is what makes it usable from any
-Rust project. `make lint` enforces it.
+Rust project — and with default features it depends on nothing at all.
 
 ## License
 

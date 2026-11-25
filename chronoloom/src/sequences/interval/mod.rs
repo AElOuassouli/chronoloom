@@ -2,13 +2,15 @@
 
 use crate::primitives::{TimeIntervalEvent, Timestamp};
 use crate::sequences::attribute::Attribute;
+use crate::sequences::extent::Extent;
 
 use self::normalization::{normalize, span_ticks, OVERFLOW};
 
 mod accessors;
 mod mutation;
-mod normalization;
-mod operations;
+pub(crate) mod normalization;
+pub(crate) mod operations;
+mod slice;
 mod traits;
 mod transform;
 
@@ -83,6 +85,15 @@ mod transform;
 /// coincided, so they are never equal — [`covers_same`] is the question that
 /// asks only the second half.
 ///
+/// # What was observed
+///
+/// A timeline also knows the instants it was observed over, its
+/// [`observed`] [`Extent`], so that "inactive" can be told from "not observed"
+/// with [`is_observed`]. It starts as everything, and the set operations,
+/// [`transform`] and [`complement`] carry it through three-valued logic: see
+/// [`Extent`] for what each result is known over. Equality includes the extent;
+/// [`covers_same`] does not.
+///
 /// # Active duration
 ///
 /// The sequence carries the total time it covers as it goes, so
@@ -133,7 +144,10 @@ mod transform;
 ///
 /// [`active_duration`]: TimeIntervalSequence::active_duration
 /// [`attribute`]: TimeIntervalSequence::attribute
+/// [`complement`]: TimeIntervalSequence::complement
 /// [`covers_same`]: TimeIntervalSequence::covers_same
+/// [`is_observed`]: TimeIntervalSequence::is_observed
+/// [`observed`]: TimeIntervalSequence::observed
 /// [`len`]: TimeIntervalSequence::len
 /// [`transform`]: TimeIntervalSequence::transform
 /// [`transformation`]: TimeIntervalSequence::transformation
@@ -154,6 +168,9 @@ pub struct TimeIntervalSequence {
     /// so far, `(0, 0)` until one does. Kept beside the attribute rather than
     /// folded into it so the shift stays a number the caller can read back.
     transformation: (Timestamp, Timestamp),
+    /// The instants this was observed over. `spans` always lies inside it:
+    /// whatever sets the extent clips the spans, and inserting past it grows it.
+    observed: Extent,
 }
 
 impl TimeIntervalSequence {
@@ -165,6 +182,7 @@ impl TimeIntervalSequence {
             active_duration: 0,
             attribute: Attribute::name(attribute),
             transformation: (0, 0),
+            observed: Extent::everything(),
         }
     }
 
@@ -175,12 +193,17 @@ impl TimeIntervalSequence {
     /// then merged into canonical form in a single pass.
     #[must_use]
     pub fn from_spans(attribute: impl Into<String>, spans: Vec<TimeIntervalEvent<()>>) -> Self {
-        Self::from_parts(Attribute::name(attribute), (0, 0), normalize(spans))
+        Self::from_parts(
+            Attribute::name(attribute),
+            (0, 0),
+            normalize(spans),
+            Extent::everything(),
+        )
     }
 
     /// Wrap spans that are already in canonical form, under a description.
     ///
-    /// Private and unchecked: the caller must have produced them sorted,
+    /// Crate-private and unchecked: the caller must have produced them sorted,
     /// disjoint, and non-touching. Every use here either folds through
     /// [`absorb`] or walks two already-normalized sequences in order, both of
     /// which produce canonical output — so re-sorting would be wasted work.
@@ -189,10 +212,11 @@ impl TimeIntervalSequence {
     /// already linear in the spans, so it costs nothing asymptotically, and
     /// funnelling them all through here means no construction path can forget
     /// the total, or forget to say what the timeline describes.
-    fn from_parts(
+    pub(crate) fn from_parts(
         attribute: Attribute,
         transformation: (Timestamp, Timestamp),
         spans: Vec<TimeIntervalEvent<()>>,
+        observed: Extent,
     ) -> Self {
         let active_duration = spans.iter().fold(0u64, |total, span| {
             total.checked_add(span_ticks(span)).expect(OVERFLOW)
@@ -203,6 +227,7 @@ impl TimeIntervalSequence {
             active_duration,
             attribute,
             transformation,
+            observed,
         }
     }
 }

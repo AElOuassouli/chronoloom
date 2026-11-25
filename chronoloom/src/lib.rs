@@ -1,8 +1,10 @@
 //! Set algebra over time points and intervals.
 //!
-//! `chronoloom` is a small, dependency-free library for reasoning about
-//! temporal data: instants, half-open intervals, and the operations that
-//! combine them.
+//! `chronoloom` is a small library, with no dependencies unless the optional
+//! `serde` feature is on, for reasoning about temporal data: instants,
+//! half-open intervals, the operations that combine them, and processors that
+//! derive timelines from events, on a finished recording or online as the data
+//! arrives. This page names the types; the README walks through examples.
 //!
 //! # Primitives
 //!
@@ -65,30 +67,82 @@
 //! # Ok::<(), chronoloom::IntervalError>(())
 //! ```
 //!
-//! # Sequence systems
+//! # What was observed
 //!
-//! A [`SequenceSystem`] holds the sequences describing one subject side by
-//! side, the way a sensor system holds its sensors: point sequences of any
-//! value type next to timelines, one sequence per attribute. Events are
-//! recorded into it as they arrive, one at a time or a [`Batch`] at a time.
+//! Every sequence carries an [`Extent`], the instants it was observed over. An
+//! instant inside it with no span is inactive; outside it, nothing is known.
+//! Operations keep a result wherever it can be decided, and
+//! [`TimeIntervalSequence::complement`] is the observed instants that are not
+//! active.
 //!
-//! ```
-//! use chronoloom::{SequenceSystem, TimeIntervalEvent, TimeIntervalSequence};
-//! use chronoloom::{TimePointEvent, TimePointSequence};
+//! # Processors
 //!
-//! let mut machine = SequenceSystem::new();
-//! machine.insert(TimePointSequence::<f64>::new("temperature"));
-//! machine.insert(TimePointSequence::<String>::new("log"));
-//! machine.insert(TimeIntervalSequence::new("up"));
+//! A [`Formula`] describes a state as data: active between one kind of event
+//! and the next, while a value stays within bounds, held for a duration after
+//! an event, or wherever other states are. A [`Processor`] is one recipe: the
+//! inputs it reads, a formula over them, and the one output it produces; it is
+//! how point sequences become timelines and timelines become [`Edge`] events.
+//! A [`StreamSystem`] runs them, on a finished recording or online, and a live
+//! one produces the same outputs as in batch, chunk by chunk, as watermarks
+//! make the data final.
+//! [`Processor::with_input`] declares what a processor expects of its inputs,
+//! and [`Processor::validate`] lists every problem without a system.
 //!
-//! machine.record_point("temperature", TimePointEvent::new(10, 21.5_f64))?;
-//! machine.record_point("log", TimePointEvent::new(10, String::from("boot")))?;
-//! machine.record_span("up", TimeIntervalEvent::span(0, 60)?)?;
+//! # Datasets
 //!
-//! let attributes: Vec<&String> = machine.attributes().collect();
-//! assert_eq!(attributes, ["log", "temperature", "up"]);
-//! # Ok::<(), Box<dyn std::error::Error>>(())
-//! ```
+//! A [`StreamSystem`] is also a dataset. It files streams under a [`Key`],
+//! carries opaque [`Metadata`] on itself and on each stream, remembers which
+//! [`Processor`] a derived stream came from, and [`StreamSystem::observe`] and
+//! [`StreamSystem::slice`] narrow every stream to an extent or a window of
+//! time at once. The README walks through an example.
+//!
+//! # Record values
+//!
+//! A [`Value`] is a dynamic payload (null, bool, integer, float, text or a record
+//! of named fields) for a `TimePointSequence<Value>`, beside the sequences of
+//! one fixed value type. A [`Schema`] says what shape the values of a member
+//! must have ([`StreamSystem::set_schema`]), and [`Events::Project`] reads a
+//! field of each record out into a sequence of its own, online as well as in
+//! batch. The README walks through an example.
+//!
+//! # One timeline per entity
+//!
+//! A [`Group`] names a member of `Value` records and the field that says which
+//! entity each is about, and [`Recipe::per_entity`], [`Recipe::any_entity`] and
+//! [`Recipe::count_entities`] build on it: one timeline per entity under
+//! `<output key>/<entity>`, their union, and how many are active, as the changes
+//! of a count. A live [`StreamSystem`] makes an entity when its first record is recorded.
+//! The README walks through a presence example.
+//!
+//! # Stream systems
+//!
+//! A [`StreamSystem`] holds the streams of a subject and a list of
+//! [`Processor`]s, each one recipe: inputs, a formula, one output. Its derived
+//! streams are read-only and follow every change: an
+//! [`update`](StreamSystem::update) records into the streams, all or nothing,
+//! and evaluates again the processors that read what changed, and no others,
+//! returning a [`Report`]. A processor whose output is a stream it reads is a
+//! transform: it rewrites that stream, and the transforms of one stream chain
+//! in the order they are added.
+//!
+//! The mode is a type parameter. [`Batch`] holds a dataset whole. [`Live`],
+//! made by [`StreamSystem::live`], moves a frontier per stream with the
+//! watermarks of an [`Update`] and runs the processors incrementally over what
+//! became final, reporting a [`LiveReport`] of [`Chunk`]s that joined end to end
+//! are the batch result. [`StreamSystem::drain`] hands the final part of a live
+//! system over as a batch one, and [`StreamSystem::into_live`] goes the other
+//! way.
+//!
+//! # Saving and loading
+//!
+//! With the `serde` feature, sequences, systems and processors are saved and loaded with any
+//! self-describing format, as documents that start with a format version and
+//! are validated when read, so a document that loads is always a valid value.
+//! A live system is saved as a checkpoint, with the running state of its
+//! processors, and restored to go on exactly as one that never stopped.
+//! The `serialisation` module (present with the feature) documents the format,
+//! and with the `json-schema` feature it also gives the JSON Schema of a
+//! processor.
 //!
 //! # Intervals are half-open
 //!
@@ -133,12 +187,25 @@
 #[doc = include_str!("../README.md")]
 struct Readme;
 
+mod operator;
 pub mod primitives;
-pub mod sequence_system;
+pub mod processing;
+pub mod processor;
 pub mod sequences;
+#[cfg(feature = "serde")]
+pub mod serialisation;
+mod store;
+pub mod stream_system;
+pub mod values;
 
 pub use primitives::{IntervalError, TimeIntervalEvent, TimePointEvent, Timestamp};
-pub use sequence_system::{
-    AnyPointSequence, Batch, PointValue, RecordError, Sequence, SequenceSystem,
+pub use processing::{
+    Condition, Edge, Events, Formula, Group, Input, Kind, OpenEnd, Pattern, ProcessError, Recipe,
 };
-pub use sequences::{Attribute, SetOperation, TimeIntervalSequence, TimePointSequence};
+pub use processor::Processor;
+pub use sequences::{Attribute, Extent, SetOperation, TimeIntervalSequence, TimePointSequence};
+pub use stream_system::{
+    AnyPointSequence, AnyValue, Batch, Chunk, Key, Live, LiveReport, Metadata, Mode, PointValue,
+    RecordError, Report, Sequence, StreamSystem, Update, UpdateError,
+};
+pub use values::{Schema, SchemaError, Value};

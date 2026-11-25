@@ -2,10 +2,12 @@
 
 use crate::primitives::TimePointEvent;
 use crate::sequences::attribute::Attribute;
+use crate::sequences::extent::Extent;
 
 mod accessors;
 mod mutation;
 mod queries;
+mod slice;
 mod traits;
 
 /// A collection of [`TimePointEvent`]s that is always in time order.
@@ -51,17 +53,28 @@ mod traits;
 /// as `temperature` or `log`. There is no sequence without one, which is why
 /// the constructors ask for the attribute before they ask for events, and why
 /// there is no [`collect`][Iterator::collect] into one. The attribute is what a
-/// [`SequenceSystem`] files the sequence under.
+/// [`StreamSystem`] files the sequence under.
 ///
 /// Because the attribute is part of what a sequence *is*, it is part of equality
 /// too: `temperature` and `humidity` are two records even when they happen to
 /// hold the same events.
 ///
+/// # What was observed
+///
+/// A sequence also knows the instants it was observed over, its [`observed`]
+/// [`Extent`], so that "no event" can be told from "not observed" with
+/// [`is_observed`]. It starts as everything. Inserting an event outside it
+/// grows the extent to cover the event, and [`with_observed`] sets the extent
+/// and drops the events outside it. Equality includes the extent.
+///
 /// [`attribute`]: TimePointSequence::attribute
+/// [`is_observed`]: TimePointSequence::is_observed
+/// [`observed`]: TimePointSequence::observed
+/// [`with_observed`]: TimePointSequence::with_observed
 /// [`from_events`]: TimePointSequence::from_events
 /// [`insert`]: TimePointSequence::insert
 /// [`remove`]: TimePointSequence::remove
-/// [`SequenceSystem`]: crate::sequence_system::SequenceSystem
+/// [`StreamSystem`]: crate::StreamSystem
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TimePointSequence<T> {
     /// Sorted by timestamp, and stable within one instant: events sharing a
@@ -71,6 +84,9 @@ pub struct TimePointSequence<T> {
     /// What the sequence is a record of. Never absent, for the same reason a
     /// timeline always has one.
     attribute: Attribute,
+    /// The instants the sequence was observed over. `events` always lies inside
+    /// it, except an event stamped `i64::MAX`, which no extent can cover.
+    observed: Extent,
 }
 
 impl<T> TimePointSequence<T> {
@@ -80,6 +96,7 @@ impl<T> TimePointSequence<T> {
         Self {
             events: Vec::new(),
             attribute: Attribute::name(attribute),
+            observed: Extent::everything(),
         }
     }
 
@@ -114,6 +131,23 @@ impl<T> TimePointSequence<T> {
         Self {
             events,
             attribute: Attribute::name(attribute),
+            observed: Extent::everything(),
+        }
+    }
+
+    /// Wrap events already in time order, keeping `observed` as given.
+    ///
+    /// Unlike `with_observed` it does not clip, because the edges of a timeline
+    /// sit on the exclusive end of its extent.
+    pub(crate) const fn from_parts(
+        attribute: Attribute,
+        events: Vec<TimePointEvent<T>>,
+        observed: Extent,
+    ) -> Self {
+        Self {
+            events,
+            attribute,
+            observed,
         }
     }
 }
